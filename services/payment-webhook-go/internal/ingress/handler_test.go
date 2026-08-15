@@ -84,6 +84,48 @@ func TestHandlerPersistsBeforeAcknowledging(t *testing.T) {
 	}
 }
 
+func TestWebhookToWorkerPumpHTTPBoundaryPreservesTraceAndRetrySemantics(t *testing.T) {
+	var receivedTrace string
+	worker := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/internal/v1/tasks/pump" {
+			t.Errorf("unexpected worker request: %s %s", request.Method, request.URL.Path)
+		}
+		receivedTrace = request.Header.Get(traceHeader)
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer worker.Close()
+
+	pumper, err := NewWorkerPumpClient(worker.Client(), worker.URL+"/internal/v1/tasks/pump")
+	if err != nil {
+		t.Fatalf("configure worker pump: %v", err)
+	}
+	store := &fakeStore{}
+	recorder := httptest.NewRecorder()
+	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_http_boundary"))
+
+	if recorder.Code != http.StatusOK || store.calls != 1 || receivedTrace != "razorpay:event_http_boundary" {
+		t.Fatalf("status=%d store_calls=%d trace=%q", recorder.Code, store.calls, receivedTrace)
+	}
+}
+
+func TestWebhookToWorkerPumpHTTPFailureReturnsProviderRetry(t *testing.T) {
+	worker := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer worker.Close()
+
+	pumper, err := NewWorkerPumpClient(worker.Client(), worker.URL+"/internal/v1/tasks/pump")
+	if err != nil {
+		t.Fatalf("configure worker pump: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	Handler{Secret: "secret", Store: &fakeStore{}, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_http_failure"))
+
+	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Retry-After") != "5" {
+		t.Fatalf("status=%d retry-after=%q", recorder.Code, recorder.Header().Get("Retry-After"))
+	}
+}
+
 func TestHandlerFailsClosedWhenWorkerPumpIsMissing(t *testing.T) {
 	store := &fakeStore{}
 	recorder := httptest.NewRecorder()

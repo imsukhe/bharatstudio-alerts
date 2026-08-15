@@ -903,7 +903,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [payment-reconcile, refund-reconcile, outbox-recover, overlay-sessions, event-archive, audit-archive]
+            enum: [overlay-sessions]
       requestBody:
         required: true
         content:
@@ -1473,10 +1473,10 @@ components:
     CompanionActionRequest:
       type: object
       additionalProperties: false
-      required: [action]
+      required: [action, targetId]
       properties:
         action: { type: string, enum: [pause_queue, resume_queue, send_test_alert] }
-        targetId: { type: [string, 'null'], maxLength: 128 }
+        targetId: { type: string, format: uuid, description: Queue target required for every v1 Companion action. }
     CompanionActionResult:
       type: object
       additionalProperties: false

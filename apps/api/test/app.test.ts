@@ -950,7 +950,7 @@ test('authenticated alert and Companion routes expose bounded v1 operations', as
   assert.equal(missingKey.statusCode, 400);
   assert.equal(missingKey.json().errorCode, 'idempotency_key_required');
   assert.equal(missingTarget.statusCode, 400);
-  assert.equal(missingTarget.json().errorCode, 'companion_target_required');
+  assert.equal(missingTarget.json().errorCode, 'bad_request');
   assert.equal(unsupportedAction.statusCode, 400);
   assert.equal(overlay.statusCode, 201);
   assert.equal(overlay.json().overlayId, '00000000-0000-4000-8000-000000000061');

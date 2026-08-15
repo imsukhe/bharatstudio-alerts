@@ -433,7 +433,8 @@ export function updateCompanionLayout(channelId: string, version: number, pageSi
 export function createOverlaySession(channelId: string): Promise<OverlaySession> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/overlay/session`, { method: 'POST' }, parseOverlaySession); }
 export function rotateOverlaySession(overlayId: string): Promise<OverlaySession> { return apiFetch(`/v1/overlays/${pathSegment(overlayId)}/rotate`, { method: 'POST' }, parseOverlaySession); }
 export function revokeOverlaySession(overlayId: string): Promise<void> { return apiFetch<void>(`/v1/overlays/${pathSegment(overlayId)}`, { method: 'DELETE' }, rejectUnexpectedBody); }
-export function executeCompanionAction(channelId: string, action: CompanionAction, targetId: string | null = null): Promise<CompanionActionResult> {
+export function executeCompanionAction(channelId: string, action: CompanionAction, targetId: string): Promise<CompanionActionResult> {
+  if (!isUuid(targetId)) throw new Error('companion_target_required');
   if (!globalThis.crypto?.randomUUID) throw new Error('secure_random_unavailable');
   return apiFetch(`/v1/channels/${pathSegment(channelId)}/companion/actions`, { method: 'POST', headers: { 'Idempotency-Key': globalThis.crypto.randomUUID() }, body: JSON.stringify({ action, targetId }) }, parseCompanionActionResult);
 }

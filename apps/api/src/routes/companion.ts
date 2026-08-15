@@ -110,21 +110,20 @@ export async function registerCompanionRoutes(app: FastifyInstance, sessions?: S
     }
   });
 
-  app.post<{ Params: { channelId: string }; Headers: { 'idempotency-key'?: string }; Body: { action: CompanionAction; targetId?: string | null } }>('/v1/channels/:channelId/companion/actions', {
+  app.post<{ Params: { channelId: string }; Headers: { 'idempotency-key'?: string }; Body: { action: CompanionAction; targetId: string } }>('/v1/channels/:channelId/companion/actions', {
     preHandler: auth,
     schema: {
       params: channelParams,
       headers: { type: 'object', properties: { 'idempotency-key': { type: 'string', minLength: 16, maxLength: 128, pattern: idempotencyKeyPattern } } },
-      body: { type: 'object', additionalProperties: false, required: ['action'], properties: { action: { type: 'string', enum: actions }, targetId: { type: ['string', 'null'], format: 'uuid' } } },
+      body: { type: 'object', additionalProperties: false, required: ['action', 'targetId'], properties: { action: { type: 'string', enum: actions }, targetId: uuid } },
     },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
     const idempotencyKey = request.headers['idempotency-key'];
     if (typeof idempotencyKey !== 'string' || !idempotencyKey) return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'idempotency_key_required', message: 'Idempotency-Key is required', traceId: request.id });
     if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_idempotency_key', message: 'A valid Idempotency-Key header is required', traceId: request.id, retryable: false });
-    if (!request.body.targetId) return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'companion_target_required', message: 'A queue target is required for this Companion action', traceId: request.id, retryable: false });
     try {
-      return reply.code(202).send(await store.executeCompanionAction(request.auth.userId, request.params.channelId, request.body.action, request.body.targetId ?? null, idempotencyKey));
+      return reply.code(202).send(await store.executeCompanionAction(request.auth.userId, request.params.channelId, request.body.action, request.body.targetId, idempotencyKey));
     } catch (error) {
       logSafeError(request, 'companion_action_failed', error);
       return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'companion_action_rejected', message: 'Companion action could not be accepted', traceId: request.id, retryable: true });

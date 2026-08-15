@@ -846,6 +846,15 @@ test('protected current-user route rejects missing credentials', async () => {
   await app.close();
 });
 
+test('authenticated routes accept the HTTP case-insensitive Bearer scheme', async () => {
+  const app = await buildApp(config, { sessions: fakeSessions() });
+  const response = await app.inject({ method: 'GET', url: '/v1/me', headers: { authorization: `bearer ${'a'.repeat(48)}` } });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().schemaVersion, 'v1');
+  await app.close();
+});
+
 test('Google exchange creates an opaque session and returns current user', async () => {
   const google: GoogleIdentityVerifier = {
     async verify(idToken) {

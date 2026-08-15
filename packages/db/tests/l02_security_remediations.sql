@@ -8,6 +8,9 @@ begin
   if (select rolsuper or rolbypassrls from pg_roles where rolname = 'bsa_app') then
     raise exception 'bsa_app must not bypass RLS';
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'bsa_archive_owner' and not rolcanlogin and not rolsuper and not rolbypassrls) then
+    raise exception 'bsa_archive_owner must be a non-login, non-bypass-RLS SECURITY DEFINER owner';
+  end if;
   if not exists (select 1 from pg_roles where rolname = 'bsa_payment' and rolbypassrls) then
     raise exception 'bsa_payment bypass scope is not provisioned';
   end if;

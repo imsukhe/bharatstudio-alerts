@@ -19,7 +19,7 @@ begin
     create role bsa_migrator nologin nosuperuser nocreatedb nocreaterole noinherit noreplication bypassrls;
   end if;
   if not exists (select 1 from pg_roles where rolname = 'bsa_archive_owner') then
-    create role bsa_archive_owner nologin nosuperuser nocreatedb nocreaterole noinherit noreplication bypassrls;
+    create role bsa_archive_owner nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
   end if;
 end
 $$;

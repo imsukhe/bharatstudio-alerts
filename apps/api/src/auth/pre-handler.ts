@@ -24,7 +24,7 @@ export function requireAuth(store?: SessionStore) {
       return;
     }
     const header = request.headers.authorization;
-    const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, '').trim() : '';
     if (!token || token.length < 32) {
       await reply.code(401).send({
         schemaVersion: 'v1',

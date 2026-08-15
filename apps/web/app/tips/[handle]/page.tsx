@@ -1,29 +1,19 @@
 import { TopNav } from '../../components/TopNav';
 import { TipForm } from './TipForm';
-import { parsePublicChannel } from '../../lib/public-channel-contract';
-
-type PublicChannel = { displayName: string; acceptingTips: boolean; minimumTipPaise: number };
-
-async function loadChannel(handle: string): Promise<PublicChannel | null> {
-  const apiOrigin = process.env.API_ORIGIN;
-  if (!apiOrigin) return null;
-  try {
-    const response = await fetch(`${apiOrigin}/v1/public/channels/${encodeURIComponent(handle)}`, { cache: 'no-store' });
-    if (!response.ok) return null;
-    const value = parsePublicChannel(await response.json());
-    if (!value) return null;
-    return { displayName: value.displayName, acceptingTips: value.acceptingTips, minimumTipPaise: value.minimumTipPaise };
-  } catch {
-    return null;
-  }
-}
+import { loadPublicChannel } from './public-channel-loader';
 
 export default async function PublicTipsPage({ params }: { params: Promise<{ handle: string }> }) {
   const { handle } = await params;
-  const channel = await loadChannel(handle);
+  const result = await loadPublicChannel(process.env.API_ORIGIN, handle, fetch);
+  const channel = result.state === 'ready' ? result.channel : undefined;
   const displayName = channel?.displayName ?? handle;
   const acceptingTips = channel?.acceptingTips ?? false;
   const minimumTipPaise = channel?.minimumTipPaise ?? 1000;
+  const stateMessage = result.state === 'ready'
+    ? acceptingTips ? 'Tips are open' : 'Tips are currently closed'
+    : result.state === 'not_found'
+      ? 'Creator page not found'
+      : 'Tips are temporarily unavailable';
 
   return (
     <main className="public-shell">
@@ -35,7 +25,7 @@ export default async function PublicTipsPage({ params }: { params: Promise<{ han
         <p className="lede">Your message can appear in the creator’s approved alert experience.</p>
         <div className="tip-state" role="status">
           <span className={`state-dot ${acceptingTips ? 'is-live' : ''}`} aria-hidden="true" />
-          {acceptingTips ? 'Tips are open' : 'Tips are currently closed'}
+          {stateMessage}
         </div>
         <TipForm handle={handle} acceptingTips={acceptingTips} minimumTipPaise={minimumTipPaise} />
       </section>

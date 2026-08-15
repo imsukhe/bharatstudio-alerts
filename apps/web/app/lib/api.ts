@@ -6,6 +6,8 @@ export type CurrentUser = {
   channels: Array<{ channelId: string; role: ChannelRole }>;
 };
 export type AccountSession = { sessionId: string; createdAt: string; lastSeenAt: string; current: boolean; deviceLabel: string | null };
+export type NotificationPreferences = { schemaVersion: 'v1'; connectionAlerts: boolean; securityAlerts: boolean; actionFailures: boolean };
+export type NotificationDevice = { schemaVersion: 'v1'; deviceId: string; platform: 'ios' | 'android'; enabled: boolean; createdAt: string; lastSeenAt: string };
 
 export type ChannelDetails = { schemaVersion: 'v1'; channelId: string; handle: string; displayName: string; acceptingTips: boolean; publicConfigVersion: number; avatarUrl?: string | null; role?: ChannelRole };
 export type ConfigBracket = { amountMinPaise: number; amountMaxPaise: number | null; charLimit: number; ttsEligible: boolean; displayStyle: NonNullable<ChannelConfigValues['defaultStyle']>; displayMinMs: number; ttsOverflowPolicy: 'extend' | 'truncate_speech' | 'truncate_visual' | 'visual_only' | 'disable' };
@@ -198,6 +200,27 @@ export function parseSessionList(value: unknown): { schemaVersion: 'v1'; session
   return { schemaVersion: 'v1', sessions };
 }
 
+export function parseNotificationPreferences(value: unknown): NotificationPreferences {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'connectionAlerts', 'securityAlerts', 'actionFailures'])) || typeof value.connectionAlerts !== 'boolean' || typeof value.securityAlerts !== 'boolean' || typeof value.actionFailures !== 'boolean') invalidResponse();
+  return { schemaVersion: 'v1', connectionAlerts: value.connectionAlerts, securityAlerts: value.securityAlerts, actionFailures: value.actionFailures };
+}
+
+export function notificationPreferencesInput(value: NotificationPreferences): Omit<NotificationPreferences, 'schemaVersion'> {
+  return { connectionAlerts: value.connectionAlerts, securityAlerts: value.securityAlerts, actionFailures: value.actionFailures };
+}
+
+function parseNotificationDevice(value: unknown): NotificationDevice {
+  if (!isRecord(value) || !hasOnlyKeys(value, new Set(['schemaVersion', 'deviceId', 'platform', 'enabled', 'createdAt', 'lastSeenAt'])) || value.schemaVersion !== 'v1' || !isUuid(value.deviceId) || (value.platform !== 'ios' && value.platform !== 'android') || typeof value.enabled !== 'boolean' || !isIsoDate(value.createdAt) || !isIsoDate(value.lastSeenAt)) invalidResponse();
+  return { schemaVersion: 'v1', deviceId: value.deviceId, platform: value.platform, enabled: value.enabled, createdAt: value.createdAt, lastSeenAt: value.lastSeenAt };
+}
+
+export function parseNotificationDeviceList(value: unknown): { schemaVersion: 'v1'; devices: NotificationDevice[] } {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'devices'])) || !Array.isArray(value.devices) || value.devices.length > 64) invalidResponse();
+  return { schemaVersion: 'v1', devices: value.devices.map(parseNotificationDevice) };
+}
+
 export function parseCompanionState(value: unknown): CompanionState {
   requireV1(value);
   if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'overlayConnected', 'pendingAlerts', 'lastUpdatedAt'])) || !isUuid(value.channelId) || typeof value.overlayConnected !== 'boolean' || !isSafeInteger(value.pendingAlerts) || value.pendingAlerts < 0 || !isIsoDate(value.lastUpdatedAt)) invalidResponse();
@@ -347,6 +370,11 @@ export async function getCurrentUser(): Promise<CurrentUser> {
 
 export function getSessions(): Promise<{ schemaVersion: 'v1'; sessions: AccountSession[] }> { return apiFetch('/v1/me/sessions', {}, parseSessionList); }
 export function revokeSession(sessionId: string): Promise<void> { return apiFetch<void>(`/v1/me/sessions/${pathSegment(sessionId)}`, { method: 'DELETE' }, rejectUnexpectedBody); }
+export function getNotificationPreferences(): Promise<NotificationPreferences> { return apiFetch('/v1/me/notifications/preferences', {}, parseNotificationPreferences); }
+export function updateNotificationPreferences(preferences: Omit<NotificationPreferences, 'schemaVersion'>): Promise<NotificationPreferences> {
+  return apiFetch('/v1/me/notifications/preferences', { method: 'PUT', body: JSON.stringify(preferences) }, parseNotificationPreferences);
+}
+export function getNotificationDevices(): Promise<{ schemaVersion: 'v1'; devices: NotificationDevice[] }> { return apiFetch('/v1/me/notifications/devices', {}, parseNotificationDeviceList); }
 
 function rejectUnexpectedBody(_value: unknown): never {
   invalidResponse();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseOverlaySession, parseQueueList } from './api';
+import { notificationPreferencesInput, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parseQueueList } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -23,6 +23,16 @@ test('rejects expanded identity and companion projections', () => {
   assert.throws(() => parseCurrentUser({ schemaVersion: 'v1', userId: channelId, displayName: null, channels: [{ channelId, role: 'owner', email: 'private@example.test' }] }), /invalid_response/);
   assert.equal(parseCompanionState({ schemaVersion: 'v1', channelId, overlayConnected: false, pendingAlerts: 0, lastUpdatedAt: '2099-08-15T10:00:00.000Z' }).pendingAlerts, 0);
   assert.throws(() => parseCompanionState({ schemaVersion: 'v1', channelId, overlayConnected: false, pendingAlerts: 0, lastUpdatedAt: '2099-08-15T10:00:00.000Z', internalState: 'hidden' }), /invalid_response/);
+});
+
+test('accepts only privacy-minimised notification projections', () => {
+  const preferences = parseNotificationPreferences({ schemaVersion: 'v1', connectionAlerts: true, securityAlerts: false, actionFailures: true });
+  assert.equal(preferences.securityAlerts, false);
+  assert.deepEqual(notificationPreferencesInput(preferences), { connectionAlerts: true, securityAlerts: false, actionFailures: true });
+  assert.throws(() => parseNotificationPreferences({ schemaVersion: 'v1', connectionAlerts: true, securityAlerts: false, actionFailures: true, email: 'private@example.test' }), /invalid_response/);
+  const devices = parseNotificationDeviceList({ schemaVersion: 'v1', devices: [{ schemaVersion: 'v1', deviceId: overlayId, platform: 'android', enabled: true, createdAt: '2099-08-15T10:00:00.000Z', lastSeenAt: '2099-08-15T10:00:00.000Z' }] });
+  assert.equal(devices.devices[0]?.platform, 'android');
+  assert.throws(() => parseNotificationDeviceList({ schemaVersion: 'v1', devices: [{ schemaVersion: 'v1', deviceId: overlayId, platform: 'android', enabled: true, createdAt: '2099-08-15T10:00:00.000Z', lastSeenAt: '2099-08-15T10:00:00.000Z', token: 'must-not-cross' }] }), /invalid_response/);
 });
 
 test('rejects expanded binding list and nested binding projections', () => {

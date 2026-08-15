@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "test": "tsx --test \"app/**/*.test.ts\"",
     "build": "next build",
     "dev": "next dev --port 3100",
     "start": "next start --port 3100"
@@ -16,6 +17,8 @@
     "@types/node": "26.2.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "typescript": "7.0.2"
+    "tsx": "4.20.6",
+    "typescript": "7.0.2",
+    "tsx": "4.20.6"
   }
 }

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { TopNav } from '../components/TopNav';
-import { clearAccessToken, executeCompanionAction, getBilling, getCompanionLayout, getCompanionState, getCurrentUser, getHistory, getQueues, getSessions, revokeSession, updateCompanionLayout, type AccountSession, type AlertHistory, type BillingView, type CompanionAction, type CompanionLayout, type CompanionState, type CurrentUser, type Queue } from '../lib/api';
+import { clearAccessToken, executeCompanionAction, getBilling, getCompanionLayout, getCompanionState, getCurrentUser, getHistory, getNotificationPreferences, getQueues, getSessions, notificationPreferencesInput, revokeSession, updateCompanionLayout, updateNotificationPreferences, type AccountSession, type AlertHistory, type BillingView, type CompanionAction, type CompanionLayout, type CompanionState, type CurrentUser, type NotificationPreferences, type Queue } from '../lib/api';
 
 const operatorRoles = new Set(['owner', 'admin', 'operator']);
 const actions: Array<{ action: CompanionAction; label: string; description: string }> = [
@@ -29,6 +29,8 @@ export default function CompanionPage() {
   const [history, setHistory] = useState<AlertHistory[]>([]);
   const [billing, setBilling] = useState<BillingView | null>(null);
   const [sessions, setSessions] = useState<AccountSession[]>([]);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
+  const [savingNotifications, setSavingNotifications] = useState(false);
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
   const [message, setMessage] = useState('Loading authorised Companion state…');
   const [busy, setBusy] = useState<CompanionAction | null>(null);
@@ -75,12 +77,13 @@ export default function CompanionPage() {
         setSelectedQueueId(previous => nextQueues.queues.some(queue => queue.queueId === previous && queue.active)
           ? previous
           : nextQueues.queues.find(queue => queue.active)?.queueId ?? null);
-        const optional = await Promise.allSettled([getHistory(channelId), getBilling(channelId), getSessions()]);
+        const optional = await Promise.allSettled([getHistory(channelId), getBilling(channelId), getSessions(), getNotificationPreferences()]);
         if (cancelled) return;
-        const [historyResult, billingResult, sessionsResult] = optional;
+        const [historyResult, billingResult, sessionsResult, notificationResult] = optional;
         if (historyResult.status === 'fulfilled') setHistory(historyResult.value.items);
         if (billingResult.status === 'fulfilled') setBilling(billingResult.value);
         if (sessionsResult.status === 'fulfilled') setSessions(sessionsResult.value.sessions);
+        if (notificationResult.status === 'fulfilled') setNotificationPreferences(notificationResult.value);
         setMessage('Companion state is loaded from the server.');
       } catch (cause) {
         if (cancelled) return;
@@ -89,6 +92,7 @@ export default function CompanionPage() {
         setHistory([]);
         setBilling(null);
         setSessions([]);
+        setNotificationPreferences(null);
         setSelectedQueueId(null);
         setMessage(cause instanceof Error ? cause.message : 'Companion state could not be loaded.');
       }
@@ -110,6 +114,19 @@ export default function CompanionPage() {
       setMessage(cause instanceof Error ? cause.message : 'Command could not be accepted.');
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function saveNotificationPreferences(next: Omit<NotificationPreferences, 'schemaVersion'>) {
+    if (savingNotifications) return;
+    setSavingNotifications(true);
+    try {
+      setNotificationPreferences(await updateNotificationPreferences(next));
+      setMessage('Notification preferences saved on the server.');
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Notification preferences could not be saved.');
+    } finally {
+      setSavingNotifications(false);
     }
   }
 
@@ -223,7 +240,10 @@ export default function CompanionPage() {
         </article>
         <article className="panel" aria-labelledby="recovery-title">
           <div className="panel-heading"><div><p className="muted-label">Health and recovery</p><h2 id="recovery-title">Know what is safe to do next</h2></div></div>
-          <div className="status-list"><div><strong>Overlay health</strong><span>{state?.overlayConnected ? 'Connected' : 'Not connected'}</span></div><div><strong>Delivery state</strong><span>{state ? `${state.pendingAlerts} pending` : 'Unavailable'}</span></div><div><strong>Notifications</strong><span>Preferences service not enabled in v1</span></div></div>
+          <div className="status-list"><div><strong>Overlay health</strong><span>{state?.overlayConnected ? 'Connected' : 'Not connected'}</span></div><div><strong>Delivery state</strong><span>{state ? `${state.pendingAlerts} pending` : 'Unavailable'}</span></div><div><strong>Notifications</strong><span>{notificationPreferences ? 'Configured' : 'Unavailable'}</span></div></div>
+          {notificationPreferences && <div className="control-actions" aria-label="Notification preferences">
+            {([['connectionAlerts', 'Connection changes'], ['securityAlerts', 'Security events'], ['actionFailures', 'Action failures']] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={notificationPreferences[key]} disabled={savingNotifications} onChange={(event) => void saveNotificationPreferences(notificationPreferencesInput({ ...notificationPreferences, [key]: event.target.checked }))} /> {label}</label>)}
+          </div>}
           <details><summary>Recovery guidance</summary><p className="helper-text">If an overlay is disconnected, keep the browser source installed and reconnect it. Accepted alerts remain durable and replayable. If a session is unfamiliar, revoke it and sign in again. Companion never asks this browser to connect directly to OBS.</p></details>
         </article>
       </section>

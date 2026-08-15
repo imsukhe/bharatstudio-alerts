@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/payment-webhook-delivery.schema.json",
+  "title": "Payment webhook delivery",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "provider", "environment", "connectedAccountRef", "providerEventId", "entityType", "entityId", "signatureVerifiedAt", "receivedAt"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "provider": {"const": "razorpay"},
+    "environment": {"enum": ["test", "live"]},
+    "connectedAccountRef": {"type": "string", "minLength": 1, "maxLength": 160},
+    "providerEventId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "entityType": {"enum": ["payment", "refund", "subscription", "dispute"]},
+    "entityId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "rawBodyHash": {"type": ["string", "null"], "maxLength": 200},
+    "signatureVerifiedAt": {"type": "string", "format": "date-time"},
+    "receivedAt": {"type": "string", "format": "date-time"}
+  }
+}

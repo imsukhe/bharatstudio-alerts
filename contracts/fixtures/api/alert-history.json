@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "v1",
+  "items": [
+    {
+      "eventId": "00000000-0000-4000-8000-000000000031",
+      "sourceType": "payment",
+      "status": "acknowledged",
+      "createdAt": "2026-08-14T10:03:00Z",
+      "grossAmountPaise": 1000,
+      "currency": "INR",
+      "displayName": "Synthetic Donor",
+      "message": "Thank you"
+    }
+  ],
+  "nextCursor": null
+}

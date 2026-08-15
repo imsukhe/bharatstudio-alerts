@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/overlay-sse-event.schema.json",
+  "title": "Overlay SSE event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "cursor", "eventId", "eventType", "traceId", "createdAt", "payload"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "cursor": {"type": "string", "minLength": 1, "maxLength": 256},
+    "eventId": {"type": "string", "format": "uuid"},
+    "eventType": {"enum": ["alert.ready", "alert.update", "alert.hold", "alert.complete", "resync.required"]},
+    "traceId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "payload": {"type": "object", "additionalProperties": true}
+  }
+}

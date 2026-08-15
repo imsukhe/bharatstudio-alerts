@@ -1,0 +1,9 @@
+{
+  "channelId": "00000000-0000-4000-8000-000000000011",
+  "handle": "demo_creator",
+  "displayName": "Demo Creator",
+  "avatarUrl": null,
+  "acceptingTips": true,
+  "minimumTipPaise": 1000,
+  "publicConfigVersion": 1
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/error-envelope.schema.json",
+  "schemaVersion": "v1",
+  "errorCode": "RETRYABLE_PROVIDER_TIMEOUT",
+  "message": "The payment provider did not respond in time.",
+  "traceId": "trace_test_002",
+  "retryable": true
+}

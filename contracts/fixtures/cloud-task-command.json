@@ -1,0 +1,13 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/cloud-task-command.schema.json",
+  "schemaVersion": "v1",
+  "action": "deliver_overlay",
+  "eventId": "00000000-0000-4000-8000-000000000011",
+  "outboxId": "00000000-0000-4000-8000-000000000012",
+  "deliveryId": "00000000-0000-4000-8000-000000000013",
+  "attemptNumber": 1,
+  "expectedStateVersion": 2,
+  "traceId": "razorpay:event-test-001",
+  "createdAt": "2026-08-15T10:00:00Z",
+  "deadline": "2026-08-15T10:00:30Z"
+}

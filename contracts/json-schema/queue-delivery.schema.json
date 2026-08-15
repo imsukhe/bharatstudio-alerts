@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/queue-delivery.schema.json",
+  "title": "Per-queue alert delivery",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "eventId", "queueId", "deliveryId", "sourceId", "bindingId", "configSnapshotVersion", "status", "attemptCount", "overrideValues"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "eventId": {"type": "string", "format": "uuid"},
+    "queueId": {"type": "string", "format": "uuid"},
+    "deliveryId": {"type": "string", "format": "uuid"},
+    "sourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "bindingId": {"type": "string", "format": "uuid"},
+    "configSnapshotVersion": {"type": "integer", "minimum": 1},
+    "deliverySequence": {"type": "integer", "minimum": 1},
+    "sourcePriority": {"type": "integer", "minimum": 0, "maximum": 100000},
+    "overrideValues": {"type": "object", "additionalProperties": true},
+    "status": {"enum": ["pending", "ready", "held", "displayed", "acknowledged", "failed_retriable", "quarantined", "suppressed", "refunded_after_display"]},
+    "attemptCount": {"type": "integer", "minimum": 0},
+    "nextActionAt": {"type": ["string", "null"], "format": "date-time"},
+    "lastErrorCode": {"type": ["string", "null"], "maxLength": 80}
+  }
+}

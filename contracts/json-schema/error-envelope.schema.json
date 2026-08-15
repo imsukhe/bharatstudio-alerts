@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/error-envelope.schema.json",
+  "title": "API error envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "errorCode", "message", "traceId"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "errorCode": {"type": "string", "minLength": 1, "maxLength": 80},
+    "message": {"type": "string", "minLength": 1, "maxLength": 240},
+    "traceId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "retryable": {"type": "boolean"}
+  }
+}

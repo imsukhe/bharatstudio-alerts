@@ -1,0 +1,17 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/alert-event.schema.json",
+  "schemaVersion": "v1",
+  "eventId": "00000000-0000-4000-8000-000000000011",
+  "traceId": "trace_test_001",
+  "createdAt": "2026-08-14T10:03:00Z",
+  "channelId": "00000000-0000-4000-8000-000000000002",
+  "sourceType": "payment",
+  "sourceId": "pay_test_002",
+  "configSnapshotVersion": 1,
+  "payload": {
+    "amountPaise": 1000,
+    "currency": "INR",
+    "displayName": "Synthetic Donor",
+    "message": "Test alert"
+  }
+}

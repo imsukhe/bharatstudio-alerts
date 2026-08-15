@@ -1,0 +1,1571 @@
+openapi: 3.1.0
+info:
+  title: BharatStudio Alerts API
+  version: 1.0.0-draft
+  description: >-
+    Draft v1 REST contract for BharatStudio Alerts and Companion. This contract
+    is not approved for production until L01 review and verification pass.
+servers:
+  - url: https://api.example.invalid
+    description: Placeholder only; production domain is not yet approved.
+tags:
+  - name: Auth
+  - name: Public
+  - name: Creator
+  - name: Configuration
+  - name: Queues
+  - name: History
+  - name: Billing
+  - name: Overlay
+  - name: Companion
+  - name: Internal
+paths:
+  /v1/auth/google/exchange:
+    post:
+      tags: [Auth]
+      operationId: exchangeGoogleIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleExchangeRequest'
+      responses:
+        '201':
+          description: BharatStudio session created from a verified Google identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/public/channels/{handle}:
+    get:
+      tags: [Public]
+      operationId: getPublicChannel
+      parameters:
+        - $ref: '#/components/parameters/Handle'
+      responses:
+        '200':
+          description: Public channel presentation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicChannel'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/public/channels/{handle}/tips/orders:
+    post:
+      tags: [Public]
+      operationId: createTipOrder
+      parameters:
+        - $ref: '#/components/parameters/Handle'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTipOrderRequest'
+      responses:
+        '201':
+          description: Razorpay order created; payment is not considered captured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTipOrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/public/tip-orders/{orderId}/status:
+    get:
+      tags: [Public]
+      operationId: getPublicTipOrderStatus
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Donor-safe server-confirmed payment state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicTipOrderStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/me:
+    get:
+      tags: [Creator]
+      operationId: getCurrentUser
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Authenticated user and permitted channels.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/sessions:
+    get:
+      tags: [Creator]
+      operationId: listCurrentUserSessions
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Active sessions for the authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/me/sessions/{sessionId}:
+    delete:
+      tags: [Creator]
+      operationId: revokeCurrentUserSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Session revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/me/notifications/preferences:
+    get:
+      tags: [Companion]
+      operationId: getNotificationPreferences
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Account-scoped operational notification preferences.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPreferences' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [Companion]
+      operationId: updateNotificationPreferences
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNotificationPreferencesRequest' }
+      responses:
+        '200':
+          description: Saved account-scoped preferences.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPreferences' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/me/notifications/devices:
+    get:
+      tags: [Companion]
+      operationId: listNotificationDevices
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Safe metadata for the caller's active notification devices; tokens are never returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationDeviceList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [Companion]
+      operationId: registerNotificationDevice
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterNotificationDeviceRequest' }
+      responses:
+        '200':
+          description: Registered device metadata; the provider token is not returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationDevice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/me/notifications/devices/{deviceId}:
+    delete:
+      tags: [Companion]
+      operationId: revokeNotificationDevice
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Notification device revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels:
+    post:
+      tags: [Creator]
+      operationId: createChannel
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChannelRequest'
+      responses:
+        '201':
+          description: Channel created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}:
+    get:
+      tags: [Creator]
+      operationId: getChannelDetails
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Channel details visible to the authenticated member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelDetails'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Creator]
+      operationId: updateChannelDetails
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChannelRequest'
+      responses:
+        '200':
+          description: Updated channel details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/channels/{channelId}/config:
+    get:
+      tags: [Configuration]
+      operationId: getChannelConfig
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Versioned channel alert configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Configuration]
+      operationId: updateChannelConfig
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/IfMatchVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateChannelConfigRequest'
+      responses:
+        '200':
+          description: New immutable configuration version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/queues:
+    get:
+      tags: [Queues]
+      operationId: listQueues
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Queues visible to the authenticated member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Queues]
+      operationId: createQueue
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQueueRequest'
+      responses:
+        '201':
+          description: Queue created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/queues/{queueId}:
+    patch:
+      tags: [Queues]
+      operationId: updateQueue
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/QueueId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQueueRequest'
+      responses:
+        '200':
+          description: Updated queue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Queue'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/channels/{channelId}/bindings:
+    get:
+      tags: [Queues]
+      operationId: listQueueBindings
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Source-to-queue routing bindings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BindingList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Queues]
+      operationId: createQueueBinding
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBindingRequest'
+      responses:
+        '201':
+          description: Binding created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueBinding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/bindings/{bindingId}:
+    patch:
+      tags: [Queues]
+      operationId: updateQueueBinding
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: bindingId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBindingRequest'
+      responses:
+        '200':
+          description: Binding updated. Accepted delivery snapshots are unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueBinding'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/test-alert:
+    post:
+      tags: [Configuration]
+      operationId: createTestAlert
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestAlertRequest'
+      responses:
+        '202':
+          description: Test alert accepted into the durable alert path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/channels/{channelId}/alert-history:
+    get:
+      tags: [History]
+      operationId: listAlertHistory
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Paginated alert/payment history visible to the role.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertHistoryPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/channels/{channelId}/moderation/{alertId}:
+    post:
+      tags: [History]
+      operationId: moderateAlert
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModerationRequest'
+      responses:
+        '200':
+          description: Moderation action recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModerationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/channels/{channelId}/billing:
+    get:
+      tags: [Billing]
+      operationId: getBillingView
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Creator-safe billing and plan view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/channels/{channelId}/entitlements:
+    get:
+      tags: [Creator]
+      operationId: getChannelEntitlements
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Server-resolved channel entitlements.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/channels/{channelId}/billing/subscription:
+    post:
+      tags: [Billing]
+      operationId: createBillingSubscription
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBillingSubscriptionRequest'
+      responses:
+        '201':
+          description: Server-created Razorpay subscription projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingSubscriptionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
+  /v1/channels/{channelId}/overlay/session:
+    post:
+      tags: [Overlay]
+      operationId: createOverlaySession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '201':
+          description: Short-lived scoped overlay session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverlaySession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/overlays/{overlayId}:
+    delete:
+      tags: [Overlay]
+      operationId: revokeOverlaySession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '204':
+          description: Overlay session revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/overlays/{overlayId}/rotate:
+    post:
+      tags: [Overlay]
+      operationId: rotateOverlaySession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '201':
+          description: Replacement scoped overlay session; previous session is revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverlaySession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/overlays/{overlayId}/events:
+    get:
+      tags: [Overlay]
+      operationId: streamOverlayEvents
+      security: [{ overlayToken: [] }]
+      parameters:
+        - name: overlayId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Durable replay cursor returned by the previous SSE event.
+          schema: { type: string, maxLength: 256 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Server-sent overlay events.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Overlay-Stream-Version:
+              schema: { type: string }
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE frames whose data validates as OverlaySseEvent.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          description: Cursor is outside the replay window; client must resync.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/overlays/{overlayId}/cursor:
+    post:
+      tags: [Overlay]
+      operationId: acknowledgeOverlayCursor
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverlayCursorAcknowledgement'
+      responses:
+        '204':
+          description: Cursor acknowledgement stored.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
+  /v1/channels/{channelId}/companion/state:
+    get:
+      tags: [Companion]
+      operationId: getCompanionState
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Authorised operational state for the Web Companion Console.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanionState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/channels/{channelId}/companion/layout:
+    get:
+      tags: [Companion]
+      operationId: getCompanionLayout
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Server-owned Companion layout and tier allocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanionLayout'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    patch:
+      tags: [Companion]
+      operationId: updateCompanionLayout
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: If-Match-Version
+          in: header
+          required: true
+          schema: { type: integer, minimum: 0 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [pageSize, slots]
+              properties:
+                pageSize: { type: integer, enum: [4, 8, 16] }
+                slots:
+                  type: array
+                  maxItems: 64
+                  items:
+                    $ref: '#/components/schemas/CompanionActionSlot'
+      responses:
+        '200':
+          description: New append-only layout version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanionLayout'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/companion/actions:
+    post:
+      tags: [Companion]
+      operationId: executeCompanionAction
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanionActionRequest'
+      responses:
+        '202':
+          description: Authorised command accepted for execution/acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanionActionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/companion/control-session:
+    post:
+      tags: [Companion]
+      operationId: acquireCompanionControlSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompanionControlSessionRequest'
+      responses:
+        '201':
+          description: Short-lived server-owned Companion control lease.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanionControlSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/channels/{channelId}/companion/control-session/{sessionId}:
+    delete:
+      tags: [Companion]
+      operationId: revokeCompanionControlSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Control lease revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /internal/maintenance/{job}:
+    post:
+      tags: [Internal]
+      operationId: runMaintenanceJob
+      security: [{ serviceIdentity: [] }]
+      parameters:
+        - name: job
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [payment-reconcile, refund-reconcile, outbox-recover, overlay-sessions, event-archive, audit-archive]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalJobRequest'
+      responses:
+        '202':
+          description: Idempotent maintenance run accepted or already recorded.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
+  /internal/metrics:
+    get:
+      tags: [Internal]
+      operationId: scrapeInternalMetrics
+      security: [{ serviceIdentity: [] }]
+      responses:
+        '200':
+          description: Redacted Prometheus-compatible service metrics.
+          content:
+            text/plain:
+              schema: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  parameters:
+    Handle:
+      name: handle
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' }
+    ChannelId:
+      name: channelId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' }
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OverlayId:
+      name: overlayId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    QueueId:
+      name: queueId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AlertId:
+      name: alertId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IfMatchVersion:
+      name: If-Match-Version
+      in: header
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string, maxLength: 256 }
+      description: Opaque history cursor. Current form is ISO-8601 timestamp followed by "|" and the event UUID; timestamp-only legacy cursors remain readable during migration.
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-session-token
+    overlayToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-overlay-token
+    serviceIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: OIDC-service-identity-token
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: Authenticated identity lacks permission.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RateLimited:
+      description: Retryable rate limit.
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    RetryableFailure:
+      description: Temporary service failure; the client may retry.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Conflict:
+      description: Request conflicts with current resource/version state.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Unauthorized:
+      description: Missing or invalid authentication.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, errorCode, message, traceId]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        errorCode: { type: string, minLength: 1, maxLength: 80 }
+        message: { type: string, minLength: 1, maxLength: 240 }
+        traceId: { type: string, minLength: 1, maxLength: 128 }
+        retryable: { type: boolean }
+    PublicChannel:
+      type: object
+      additionalProperties: false
+      required: [channelId, handle, displayName, acceptingTips, minimumTipPaise, publicConfigVersion]
+      properties:
+        channelId: { type: string, format: uuid }
+        handle: { type: string }
+        displayName: { type: string, maxLength: 120 }
+        avatarUrl: { type: [string, 'null'], format: uri }
+        acceptingTips: { type: boolean }
+        minimumTipPaise: { type: integer, minimum: 1000 }
+        publicConfigVersion: { type: integer, minimum: 1 }
+    PublicTipOrderStatus:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, orderId, status, amountPaise, currency, updatedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        orderId: { type: string, format: uuid }
+        status: { type: string, enum: [pending, paid, expired, failed] }
+        amountPaise: { type: integer, minimum: 1000 }
+        currency: { type: string, const: INR }
+        updatedAt: { type: string, format: date-time }
+    CreateTipOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [amountPaise, currency]
+      properties:
+        amountPaise: { type: integer, minimum: 1000 }
+        currency: { type: string, const: INR }
+        donorDisplayName: { type: [string, 'null'], maxLength: 80 }
+        message: { type: [string, 'null'], maxLength: 500 }
+        alertConsent: { type: boolean, default: true }
+    CreateTipOrderResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, orderId, provider, providerOrderId, amountPaise, currency, status]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        orderId: { type: string, format: uuid }
+        provider: { type: string, const: razorpay }
+        providerOrderId: { type: string }
+        amountPaise: { type: integer, minimum: 1000 }
+        currency: { type: string, const: INR }
+        status: { type: string, enum: [created, pending] }
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, userId, channels]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        userId: { type: string, format: uuid }
+        displayName: { type: [string, 'null'], maxLength: 120 }
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/ChannelMembership' }
+    SessionList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, sessions]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/Session' }
+    GoogleExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [idToken, deviceLabel]
+      properties:
+        idToken: { type: string, minLength: 20, maxLength: 8192 }
+        deviceLabel: { type: string, minLength: 1, maxLength: 80 }
+    AuthSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, accessToken, expiresAt, user]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        accessToken: { type: string, minLength: 32, maxLength: 256 }
+        expiresAt: { type: string, format: date-time }
+        user: { $ref: '#/components/schemas/CurrentUser' }
+    Session:
+      type: object
+      additionalProperties: false
+      required: [sessionId, createdAt, lastSeenAt, current]
+      properties:
+        sessionId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        current: { type: boolean }
+        deviceLabel: { type: [string, 'null'], maxLength: 80 }
+    NotificationPreferences:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, connectionAlerts, securityAlerts, actionFailures]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        connectionAlerts: { type: boolean }
+        securityAlerts: { type: boolean }
+        actionFailures: { type: boolean }
+    UpdateNotificationPreferencesRequest:
+      type: object
+      additionalProperties: false
+      required: [connectionAlerts, securityAlerts, actionFailures]
+      properties:
+        connectionAlerts: { type: boolean }
+        securityAlerts: { type: boolean }
+        actionFailures: { type: boolean }
+    RegisterNotificationDeviceRequest:
+      type: object
+      additionalProperties: false
+      required: [platform, token]
+      properties:
+        platform: { type: string, enum: [ios, android] }
+        token: { type: string, minLength: 16, maxLength: 4096, pattern: '^[A-Za-z0-9:_.-]+$' }
+    NotificationDevice:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, deviceId, platform, enabled, createdAt, lastSeenAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        deviceId: { type: string, format: uuid }
+        platform: { type: string, enum: [ios, android] }
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+    NotificationDeviceList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, devices]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        devices:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/NotificationDevice' }
+    CreateChannelRequest:
+      type: object
+      additionalProperties: false
+      required: [handle, displayName]
+      properties:
+        handle: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+    UpdateChannelRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        acceptingTips: { type: boolean }
+        avatarUrl: { type: [string, 'null'], format: uri }
+    ChannelDetails:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, handle, displayName, acceptingTips, publicConfigVersion]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        handle: { type: string }
+        displayName: { type: string, maxLength: 120 }
+        acceptingTips: { type: boolean }
+        avatarUrl: { type: [string, 'null'], format: uri }
+        publicConfigVersion: { type: integer, minimum: 1 }
+        role: { $ref: '#/components/schemas/ChannelMembership/properties/role' }
+    ChannelConfig:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, version, values, effectiveAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        values: { type: object, additionalProperties: true }
+        effectiveAt: { type: string, format: date-time }
+    UpdateChannelConfigRequest:
+      type: object
+      additionalProperties: false
+      required: [values]
+      properties:
+        values: { type: object, additionalProperties: true }
+    Queue:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, queueId, channelId, name, paused, active]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        queueId: { type: string, format: uuid }
+        channelId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        paused: { type: boolean }
+        active: { type: boolean }
+    QueueList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, queues]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        queues:
+          type: array
+          items: { $ref: '#/components/schemas/Queue' }
+    CreateQueueRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+    UpdateQueueRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        paused: { type: boolean }
+        active: { type: boolean }
+    BindingOverrideValues:
+      type: [object, 'null']
+      maxProperties: 16
+      additionalProperties: false
+      properties:
+        style: { type: string, minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9._:-]+$' }
+        displayStyle: { type: string, enum: [small_pill, compact_card, standard_card, large_card, banner, celebration] }
+        anchor: { type: string, enum: [top_left, top_center, top_right, center_left, center, center_right, bottom_left, bottom_center, bottom_right] }
+        scale: { type: number, minimum: 0.5, maximum: 2 }
+        reducedMotion: { type: boolean }
+        ttsEnabled: { type: boolean }
+        rateLimitPerMinute: { type: integer, minimum: 1, maximum: 1000 }
+        rateLimitPerMin: { type: integer, minimum: 1, maximum: 1000 }
+        bracket:
+          type: object
+          maxProperties: 5
+          additionalProperties: false
+          properties:
+            charLimit: { type: integer, minimum: 10, maximum: 500 }
+            displayMinMs: { type: integer, minimum: 4000, maximum: 60000 }
+            displayStyle: { type: string, enum: [small_pill, compact_card, standard_card, large_card, banner, celebration] }
+            ttsEligible: { type: boolean }
+            ttsOverflowPolicy: { type: string, enum: [extend, truncate_speech, truncate_visual, visual_only, disable] }
+    QueueBinding:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, bindingId, channelId, queueId, sourceType, sourceId, allowDuplicates, priority]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        bindingId: { type: string, format: uuid }
+        channelId: { type: string, format: uuid }
+        queueId: { type: string, format: uuid }
+        sourceType: { type: string, enum: [payment, manual, companion] }
+        sourceId: { type: string, minLength: 1, maxLength: 160 }
+        allowDuplicates: { type: boolean }
+        priority: { type: integer, minimum: 0, maximum: 100000 }
+        overrideValues: { $ref: '#/components/schemas/BindingOverrideValues' }
+        active: { type: boolean }
+    BindingList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, bindings]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        bindings:
+          type: array
+          items: { $ref: '#/components/schemas/QueueBinding' }
+    CreateBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [queueId, sourceType, sourceId, allowDuplicates, priority]
+      properties:
+        queueId: { type: string, format: uuid }
+        sourceType: { type: string, enum: [payment, manual, companion] }
+        sourceId: { type: string, minLength: 1, maxLength: 160 }
+        allowDuplicates: { type: boolean }
+        priority: { type: integer, minimum: 0, maximum: 100000 }
+        overrideValues: { $ref: '#/components/schemas/BindingOverrideValues' }
+    UpdateBindingRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        allowDuplicates: { type: boolean }
+        priority: { type: integer, minimum: 0, maximum: 100000 }
+        overrideValues: { $ref: '#/components/schemas/BindingOverrideValues' }
+        active: { type: boolean }
+    TestAlertRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName, message]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        message: { type: string, minLength: 1, maxLength: 500 }
+        queueIds:
+          type: array
+          maxItems: 64
+          items: { type: string, format: uuid }
+    AlertAccepted:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, eventId, traceId, status]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        eventId: { type: string, format: uuid }
+        traceId: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [accepted, held] }
+    AlertHistoryPage:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items, nextCursor]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/HistoryItem' }
+        nextCursor: { type: [string, 'null'], maxLength: 256, description: Opaque cursor in the form timestamp|event UUID. }
+    HistoryItem:
+      type: object
+      additionalProperties: false
+      required: [eventId, sourceType, status, createdAt]
+      properties:
+        eventId: { type: string, format: uuid }
+        sourceType: { type: string, enum: [payment, manual, companion] }
+        status: { type: string, enum: [accepted, held, displayed, acknowledged, failed, quarantined, suppressed] }
+        createdAt: { type: string, format: date-time }
+        grossAmountPaise: { type: [integer, 'null'], minimum: 0 }
+        currency: { type: [string, 'null'], const: INR }
+        displayName: { type: [string, 'null'], maxLength: 80 }
+        message: { type: [string, 'null'], maxLength: 500 }
+    ModerationRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [approve, hold, suppress, replay] }
+        reason: { type: [string, 'null'], maxLength: 240 }
+    ModerationResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, eventId, action, appliedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        eventId: { type: string, format: uuid }
+        action: { type: string, enum: [approve, hold, suppress, replay] }
+        appliedAt: { type: string, format: date-time }
+    BillingView:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, tier, monthlyPricePaise, annualMonthsCharged, annualServiceMonths, renewalState, billingInterval, autoRenew, currentPeriodEndsAt, priceProtectedUntil, priceSource]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        tier: { type: string, enum: [free, pro, creator, studio] }
+        monthlyPricePaise: { type: integer, minimum: 0 }
+        annualMonthsCharged: { type: integer, const: 10 }
+        annualServiceMonths: { type: integer, const: 12 }
+        renewalState: { type: string, enum: [not_applicable, active, past_due, cancelled] }
+        nextRenewalAt: { type: [string, 'null'], format: date-time }
+        billingInterval: { type: string, enum: [monthly, annual] }
+        autoRenew: { type: boolean }
+        currentPeriodEndsAt: { type: [string, 'null'], format: date-time }
+        priceProtectedUntil: { type: [string, 'null'], format: date-time }
+        priceSource: { type: string, enum: [current, grandfathered] }
+    CreateBillingSubscriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [tier, billingInterval]
+      properties:
+        tier: { type: string, enum: [pro, creator, studio] }
+        billingInterval: { type: string, enum: [monthly, annual] }
+    BillingSubscriptionResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, provider, status, subscriptionId, tier, billingInterval, monthlyPricePaise, annualChargePaise, annualMonthsCharged, annualServiceMonths, checkoutUrl]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        provider: { type: string, const: razorpay }
+        status: { type: string, enum: [linked, pending] }
+        subscriptionId: { type: string }
+        tier: { type: string, enum: [pro, creator, studio] }
+        billingInterval: { type: string, enum: [monthly, annual] }
+        monthlyPricePaise: { type: integer, minimum: 1 }
+        annualChargePaise: { type: integer, minimum: 1 }
+        annualMonthsCharged: { type: integer, const: 10 }
+        annualServiceMonths: { type: integer, const: 12 }
+        checkoutUrl: { type: [string, 'null'], format: uri }
+    CompanionState:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, overlayConnected, pendingAlerts, lastUpdatedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        overlayConnected: { type: boolean }
+        pendingAlerts: { type: integer, minimum: 0 }
+        lastUpdatedAt: { type: string, format: date-time }
+    CompanionActionSlot:
+      type: object
+      additionalProperties: false
+      required: [slotIndex, page, label, action, targetId]
+      properties:
+        slotIndex: { type: integer, minimum: 1, maximum: 64 }
+        page: { type: integer, minimum: 1, maximum: 16 }
+        label: { type: string, minLength: 1, maxLength: 80 }
+        action: { type: string, enum: [pause_queue, resume_queue, send_test_alert] }
+        targetId: { type: string, format: uuid }
+    CompanionLayout:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, version, tier, maxSlots, pageSize, slots, createdAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        version: { type: integer, minimum: 0 }
+        tier: { type: string, enum: [free, pro, creator, studio] }
+        maxSlots: { type: integer, enum: [8, 16, 32, 64] }
+        pageSize: { type: integer, enum: [4, 8, 16] }
+        slots:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/CompanionActionSlot'
+        createdAt: { type: [string, 'null'], format: date-time }
+    CompanionActionRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [pause_queue, resume_queue, send_test_alert] }
+        targetId: { type: [string, 'null'], maxLength: 128 }
+    CompanionActionResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, commandId, status, acceptedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        commandId: { type: string, format: uuid }
+        status: { type: string, enum: [accepted, rejected] }
+        acceptedAt: { type: string, format: date-time }
+        eventId: { type: string, format: uuid, description: Present for send_test_alert commands and identifies the durable synthetic alert event. }
+    CompanionControlSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [clientType, clientInstanceId]
+      properties:
+        clientType: { type: string, enum: [web, mobile, desktop] }
+        clientInstanceId: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' }
+    CompanionControlSession:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, sessionId, channelId, clientType, clientInstanceId, leaseUntil, createdAt, reused]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sessionId: { type: string, format: uuid }
+        channelId: { type: string, format: uuid }
+        clientType: { type: string, enum: [web, mobile, desktop] }
+        clientInstanceId: { type: string, minLength: 16, maxLength: 128 }
+        leaseUntil: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        reused: { type: boolean }
+    ChannelMembership:
+      type: object
+      additionalProperties: false
+      required: [channelId, role]
+      properties:
+        channelId: { type: string, format: uuid }
+        role: { type: string, enum: [owner, admin, operator, moderator, viewer] }
+    EntitlementResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, tier, source, entitlementVersion, values]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        tier: { type: string, enum: [free, pro, creator, studio] }
+        source: { type: string, enum: [individual_plan] }
+        entitlementVersion: { type: integer, minimum: 1 }
+        values: { type: object, additionalProperties: true }
+    OverlaySession:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, overlayId, expiresAt, streamUrl]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        overlayId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+        streamUrl:
+          type: string
+          format: uri
+          description: >-
+            Web overlay HTML URL for an OBS Browser Source. The short-lived
+            credential must be carried only in the URL fragment; this URL must
+            contain no query credential and the API SSE endpoint must be
+            reached by the page with an Authorization bearer header.
+    OverlaySseEvent:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, cursor, eventId, eventType, traceId, createdAt, payload]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        cursor: { type: string, minLength: 1, maxLength: 256 }
+        eventId: { type: string, format: uuid }
+        eventType: { type: string, enum: [alert.ready, alert.update, alert.hold, alert.complete, resync.required] }
+        traceId: { type: string, minLength: 1, maxLength: 128 }
+        createdAt: { type: string, format: date-time }
+        payload: { type: object, additionalProperties: true }
+    OverlayCursorAcknowledgement:
+      type: object
+      additionalProperties: false
+      required: [cursor, eventId]
+      properties:
+        cursor: { type: string, minLength: 1, maxLength: 256 }
+        eventId: { type: string, format: uuid }
+    InternalJobRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, jobId, requestedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        jobId: { type: string, format: uuid }
+        requestedAt: { type: string, format: date-time }
+        cursor: { type: [string, 'null'], maxLength: 256 }

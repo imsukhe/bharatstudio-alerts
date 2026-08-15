@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/multi-queue-delivery.schema.json",
+  "title": "Multi-queue alert delivery decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "eventId", "channelId", "sourceType", "sourceId", "bindingId", "deliveries", "expected"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "eventId": {"type": "string", "format": "uuid"},
+    "channelId": {"type": "string", "format": "uuid"},
+    "sourceType": {"type": "string", "minLength": 1, "maxLength": 80},
+    "sourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "bindingId": {"type": "string", "format": "uuid"},
+    "deliveries": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "queueId", "deliveryId", "sourceId", "bindingId", "configSnapshotVersion", "status", "deliverySequence", "sourcePriority", "overrideValues"],
+        "properties": {
+          "schemaVersion": {"const": "v1"},
+          "eventId": {"type": "string", "format": "uuid"},
+          "queueId": {"type": "string", "format": "uuid"},
+          "deliveryId": {"type": "string", "format": "uuid"},
+          "sourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+          "bindingId": {"type": "string", "format": "uuid"},
+          "configSnapshotVersion": {"type": "integer", "minimum": 1},
+          "status": {"enum": ["pending", "ready", "held", "displayed", "acknowledged", "failed_retriable", "quarantined", "suppressed", "refunded_after_display"]},
+          "deliverySequence": {"type": "integer", "minimum": 1},
+          "sourcePriority": {"type": "integer", "minimum": 0, "maximum": 100000},
+          "overrideValues": {"type": "object", "additionalProperties": true}
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queueBMayProgressWhileQueueAIsHeld", "globalEventStatusMayBlockQueueB"],
+      "properties": {
+        "queueBMayProgressWhileQueueAIsHeld": {"const": true},
+        "globalEventStatusMayBlockQueueB": {"const": false}
+      }
+    }
+  }
+}

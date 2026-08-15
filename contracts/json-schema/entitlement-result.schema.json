@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/entitlement-result.schema.json",
+  "title": "Resolved channel entitlement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "channelId", "tier", "source", "entitlementVersion", "values"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "channelId": {"type": "string", "format": "uuid"},
+    "tier": {"enum": ["free", "pro", "creator", "studio"]},
+    "source": {"const": "individual_plan"},
+    "entitlementVersion": {"type": "integer", "minimum": 1},
+    "values": {"type": "object", "additionalProperties": true}
+  }
+}

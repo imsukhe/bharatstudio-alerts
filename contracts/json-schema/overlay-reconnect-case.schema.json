@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/overlay-reconnect-case.schema.json",
+  "title": "Overlay reconnect test case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "overlayId", "initialCursor", "eventsCommittedWhileDisconnected", "reconnectLastEventId", "expectedReplayOrder", "expectedNoDuplicateEventIds", "notificationTransportAvailable"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "overlayId": {"type": "string", "format": "uuid"},
+    "initialCursor": {"type": "string", "minLength": 1, "maxLength": 256},
+    "eventsCommittedWhileDisconnected": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "reconnectLastEventId": {"type": "string", "minLength": 1, "maxLength": 256},
+    "expectedReplayOrder": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "expectedNoDuplicateEventIds": {"const": true},
+    "notificationTransportAvailable": {"type": "boolean"}
+  }
+}

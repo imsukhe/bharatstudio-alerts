@@ -1,0 +1,37 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/payment-webhook-duplicate.schema.json",
+  "schemaVersion": "v1",
+  "deliveries": [
+    {
+      "$schema": "https://contracts.bharatstudio.invalid/v1/payment-webhook-delivery.schema.json",
+      "schemaVersion": "v1",
+      "provider": "razorpay",
+      "environment": "test",
+      "connectedAccountRef": "acct_test_alpha",
+      "providerEventId": "event_test_001",
+      "entityType": "payment",
+      "entityId": "pay_test_001",
+      "rawBodyHash": "sha256:test-body-001",
+      "signatureVerifiedAt": "2026-08-14T10:00:00Z",
+      "receivedAt": "2026-08-14T10:00:01Z"
+    },
+    {
+      "$schema": "https://contracts.bharatstudio.invalid/v1/payment-webhook-delivery.schema.json",
+      "schemaVersion": "v1",
+      "provider": "razorpay",
+      "environment": "test",
+      "connectedAccountRef": "acct_test_alpha",
+      "providerEventId": "event_test_001",
+      "entityType": "payment",
+      "entityId": "pay_test_001",
+      "rawBodyHash": "sha256:test-body-001",
+      "signatureVerifiedAt": "2026-08-14T10:00:00Z",
+      "receivedAt": "2026-08-14T10:00:03Z"
+    }
+  ],
+  "expected": {
+    "providerDeliveryRecords": 1,
+    "financialEffects": 1,
+    "alertEvidenceRecords": 1
+  }
+}

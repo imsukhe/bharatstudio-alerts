@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/channel-config-response.schema.json",
+  "title": "Versioned channel alert configuration response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "channelId", "version", "values", "effectiveAt"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "channelId": {"type": "string", "format": "uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "values": {"$ref": "https://contracts.bharatstudio.invalid/v1/channel-config.schema.json"},
+    "effectiveAt": {"type": "string", "format": "date-time"}
+  }
+}

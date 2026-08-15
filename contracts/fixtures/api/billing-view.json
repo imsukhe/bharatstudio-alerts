@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "v1",
+  "channelId": "00000000-0000-4000-8000-000000000011",
+  "tier": "creator",
+  "monthlyPricePaise": 39900,
+  "annualMonthsCharged": 10,
+  "annualServiceMonths": 12,
+  "renewalState": "active",
+  "nextRenewalAt": "2026-09-14T00:00:00Z"
+}

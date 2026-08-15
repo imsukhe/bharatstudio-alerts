@@ -1,0 +1,41 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/multi-queue-delivery.schema.json",
+  "schemaVersion": "v1",
+  "eventId": "00000000-0000-4000-8000-000000000001",
+  "channelId": "00000000-0000-4000-8000-000000000002",
+  "sourceType": "payment",
+  "sourceId": "pay_test_001",
+  "bindingId": "00000000-0000-4000-8000-000000000003",
+  "deliveries": [
+    {
+      "schemaVersion": "v1",
+      "eventId": "00000000-0000-4000-8000-000000000001",
+      "queueId": "00000000-0000-4000-8000-000000000004",
+      "deliveryId": "00000000-0000-4000-8000-000000000005",
+      "sourceId": "pay_test_001",
+      "bindingId": "00000000-0000-4000-8000-000000000003",
+      "configSnapshotVersion": 1,
+      "status": "held",
+      "deliverySequence": 1,
+      "sourcePriority": 10,
+      "overrideValues": {"style": "held-primary"}
+    },
+    {
+      "schemaVersion": "v1",
+      "eventId": "00000000-0000-4000-8000-000000000001",
+      "queueId": "00000000-0000-4000-8000-000000000006",
+      "deliveryId": "00000000-0000-4000-8000-000000000007",
+      "sourceId": "pay_test_001",
+      "bindingId": "00000000-0000-4000-8000-000000000003",
+      "configSnapshotVersion": 1,
+      "status": "ready",
+      "deliverySequence": 1,
+      "sourcePriority": 90,
+      "overrideValues": {"style": "ready-secondary"}
+    }
+  ],
+  "expected": {
+    "queueBMayProgressWhileQueueAIsHeld": true,
+    "globalEventStatusMayBlockQueueB": false
+  }
+}

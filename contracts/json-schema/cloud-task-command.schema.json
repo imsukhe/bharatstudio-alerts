@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/cloud-task-command.schema.json",
+  "title": "Alert delivery Cloud Tasks command",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "action", "eventId", "outboxId", "deliveryId", "attemptNumber", "expectedStateVersion", "traceId", "createdAt", "deadline"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "action": {"const": "deliver_overlay"},
+    "eventId": {"type": "string", "format": "uuid"},
+    "outboxId": {"type": "string", "format": "uuid"},
+    "deliveryId": {"type": "string", "format": "uuid"},
+    "attemptNumber": {"type": "integer", "minimum": 1},
+    "expectedStateVersion": {"type": "integer", "minimum": 1},
+    "traceId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "deadline": {"type": "string", "format": "date-time"}
+  }
+}

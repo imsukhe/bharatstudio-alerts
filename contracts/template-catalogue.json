@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "v1",
+  "catalogueId": "visuals-v6",
+  "status": "approved-catalogue-contract",
+  "designIdPattern": "BSA-{001..600}",
+  "authoritativeDesignCount": 600,
+  "familyCount": 30,
+  "variantsPerFamily": 20,
+  "metadataSource": "visuals-v6/designs/design-{id}.json",
+  "runtimePackageShape": "visuals-v6/designs/BSA-{id}/{index.html,design.json,review.md}",
+  "supportedEvents": [
+    "tip",
+    "follow",
+    "subscription",
+    "super_chat",
+    "cheer",
+    "raid",
+    "membership",
+    "gifted_membership",
+    "external_purchase",
+    "milestone",
+    "goal_complete",
+    "super_sticker"
+  ],
+  "tierMinimumVariant": {
+    "free": "v01",
+    "creator": "v07",
+    "studio": "v15"
+  },
+  "tierEntitlement": {
+    "free": { "maximumVariant": "v06", "watermark": "bharatstudio" },
+    "pro": { "maximumVariant": "v06", "watermark": "bharatstudio" },
+    "creator": { "maximumVariant": "v14", "watermark": "bharatstudio" },
+    "studio": { "maximumVariant": "v20", "watermark": "none" }
+  },
+  "families": [
+    { "familyId": "F01", "name": "Minimal Clean", "designRange": "BSA-001..BSA-020" },
+    { "familyId": "F02", "name": "Rounded Pill", "designRange": "BSA-021..BSA-040" },
+    { "familyId": "F03", "name": "Glassmorphism", "designRange": "BSA-041..BSA-060" },
+    { "familyId": "F04", "name": "Neon Gaming", "designRange": "BSA-061..BSA-080" },
+    { "familyId": "F05", "name": "Esports HUD", "designRange": "BSA-081..BSA-100" },
+    { "familyId": "F06", "name": "Retro Arcade", "designRange": "BSA-101..BSA-120" },
+    { "familyId": "F07", "name": "Comic Pop", "designRange": "BSA-121..BSA-140" },
+    { "familyId": "F08", "name": "Premium Dark", "designRange": "BSA-141..BSA-160" },
+    { "familyId": "F09", "name": "Festival Celebration", "designRange": "BSA-161..BSA-180" },
+    { "familyId": "F10", "name": "Indian Regional", "designRange": "BSA-181..BSA-200" },
+    { "familyId": "F11", "name": "Cyber-Tech", "designRange": "BSA-201..BSA-220" },
+    { "familyId": "F12", "name": "Cute / Playful", "designRange": "BSA-221..BSA-240" },
+    { "familyId": "F13", "name": "Cinematic", "designRange": "BSA-241..BSA-260" },
+    { "familyId": "F14", "name": "Sponsor-Safe Pro", "designRange": "BSA-261..BSA-280" },
+    { "familyId": "F15", "name": "Compact Gameplay-Safe", "designRange": "BSA-281..BSA-300" },
+    { "familyId": "F16", "name": "Holographic Interface", "designRange": "BSA-301..BSA-320" },
+    { "familyId": "F17", "name": "Fantasy Loot Reveal", "designRange": "BSA-321..BSA-340" },
+    { "familyId": "F18", "name": "Sci-Fi Machinery", "designRange": "BSA-341..BSA-360" },
+    { "familyId": "F19", "name": "Racing & Speed", "designRange": "BSA-361..BSA-380" },
+    { "familyId": "F20", "name": "Sports Broadcast", "designRange": "BSA-381..BSA-400" },
+    { "familyId": "F21", "name": "Music & Rhythm", "designRange": "BSA-401..BSA-420" },
+    { "familyId": "F22", "name": "Space & Cosmic", "designRange": "BSA-421..BSA-440" },
+    { "familyId": "F23", "name": "Nature & Elemental", "designRange": "BSA-441..BSA-460" },
+    { "familyId": "F24", "name": "Horror & Dark Fantasy", "designRange": "BSA-461..BSA-480" },
+    { "familyId": "F25", "name": "Steampunk Industrial", "designRange": "BSA-481..BSA-500" },
+    { "familyId": "F26", "name": "Paper & Handmade", "designRange": "BSA-501..BSA-520" },
+    { "familyId": "F27", "name": "Kinetic Typography", "designRange": "BSA-521..BSA-540" },
+    { "familyId": "F28", "name": "Community Wall", "designRange": "BSA-541..BSA-560" },
+    { "familyId": "F29", "name": "Luxury Editorial", "designRange": "BSA-561..BSA-580" },
+    { "familyId": "F30", "name": "Achievement & Celebration", "designRange": "BSA-581..BSA-600" }
+  ],
+  "integrityRequirements": {
+    "metadataRecordMustMatch": ["design_id", "family_id", "family_name", "variant", "tier_availability"],
+    "runtimePackageRequiredBeforeEntitlement": true,
+    "entryHoldExitResetRequired": true,
+    "lottieRequiredForStudioOnly": false,
+    "visualReviewRequiredBeforePublicRelease": true
+  },
+  "knownIntegrityFindings": {
+    "metadataRecordsVerified": 600,
+    "runtimePackagesVerified": 241,
+    "runtimePackagesMissing": 359,
+    "missingPackageRanges": [
+      "BSA-224..BSA-240", "BSA-242..BSA-260", "BSA-262..BSA-280",
+      "BSA-282..BSA-300", "BSA-302..BSA-320", "BSA-322..BSA-340",
+      "BSA-342..BSA-360", "BSA-362..BSA-380", "BSA-382..BSA-400",
+      "BSA-402..BSA-420", "BSA-422..BSA-440", "BSA-442..BSA-460",
+      "BSA-462..BSA-480", "BSA-482..BSA-500", "BSA-502..BSA-520",
+      "BSA-522..BSA-540", "BSA-542..BSA-560", "BSA-562..BSA-580",
+      "BSA-582..BSA-600"
+    ],
+    "metadataExceptions": [],
+    "resolvedMetadataFindings": [
+      { "designId": "BSA-037", "field": "variant", "previous": "v37", "current": "v17", "disposition": "corrected-2026-08-15" }
+    ]
+  }
+}

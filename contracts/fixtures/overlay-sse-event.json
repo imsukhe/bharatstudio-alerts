@@ -1,0 +1,17 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/overlay-sse-event.schema.json",
+  "schemaVersion": "v1",
+  "cursor": "cursor_101",
+  "eventId": "00000000-0000-4000-8000-000000000011",
+  "eventType": "alert.ready",
+  "traceId": "trace_test_001",
+  "createdAt": "2026-08-14T10:03:02Z",
+  "payload": {
+    "deliveryId": "00000000-0000-4000-8000-000000000012",
+    "queueId": "00000000-0000-4000-8000-000000000004",
+    "bindingId": "00000000-0000-4000-8000-000000000003",
+    "deliverySequence": 1,
+    "sourcePriority": 50,
+    "overrideValues": {"style": "payment-default"}
+  }
+}

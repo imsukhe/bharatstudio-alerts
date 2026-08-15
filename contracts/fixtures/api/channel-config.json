@@ -1,0 +1,13 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/channel-config-response.schema.json",
+  "schemaVersion": "v1",
+  "channelId": "00000000-0000-4000-8000-000000000011",
+  "version": 3,
+  "values": {
+    "minimumTipPaise": 1000,
+    "defaultDisplaySeconds": 8,
+    "reducedMotion": false,
+    "locale": "en-IN"
+  },
+  "effectiveAt": "2026-08-14T10:00:00Z"
+}

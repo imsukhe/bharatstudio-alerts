@@ -1,0 +1,17 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/queue-delivery.schema.json",
+  "schemaVersion": "v1",
+  "eventId": "00000000-0000-4000-8000-000000000011",
+  "queueId": "00000000-0000-4000-8000-000000000004",
+  "deliveryId": "00000000-0000-4000-8000-000000000012",
+  "sourceId": "pay_test_002",
+  "bindingId": "00000000-0000-4000-8000-000000000003",
+  "configSnapshotVersion": 1,
+  "deliverySequence": 1,
+  "sourcePriority": 50,
+  "overrideValues": {"style": "payment-default"},
+  "status": "ready",
+  "attemptCount": 0,
+  "nextActionAt": null,
+  "lastErrorCode": null
+}

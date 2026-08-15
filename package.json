@@ -1,0 +1,19 @@
+{
+  "name": "@bharatstudio/alerts",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "build": "pnpm --filter @bharatstudio/alerts-api build && pnpm --filter @bharatstudio/alerts-web build",
+    "dev:api": "pnpm --filter @bharatstudio/alerts-api dev",
+    "dev:web": "pnpm --filter @bharatstudio/alerts-web dev",
+    "test": "pnpm --filter @bharatstudio/alerts-api test",
+    "db:test:l03": "sh packages/db/tests/run-l03-application-behavior.sh",
+    "contracts:validate": "node contracts/validate-fixtures.mjs && node contracts/validate-openapi.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "yaml": "2.9.0"
+  }
+}

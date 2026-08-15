@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.bharatstudio.invalid/v1/alert-event.schema.json",
+  "title": "Accepted alert event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "eventId", "traceId", "createdAt", "channelId", "sourceType", "sourceId", "configSnapshotVersion", "payload"],
+  "properties": {
+    "$schema": {"type": "string", "format": "uri"},
+    "schemaVersion": {"const": "v1"},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "channelId": {"type": "string", "format": "uuid"},
+    "sourceType": {"enum": ["payment", "manual", "companion"]},
+    "sourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "configSnapshotVersion": {"type": "integer", "minimum": 1},
+    "payload": {"type": "object", "additionalProperties": true}
+  }
+}

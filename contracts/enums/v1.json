@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "v1",
+  "tiers": ["free", "pro", "creator", "studio"],
+  "channelRoles": ["owner", "admin", "operator", "moderator", "viewer"],
+  "sourceTypes": ["payment", "manual", "companion"],
+  "queueDeliveryStatuses": ["pending", "ready", "held", "displayed", "acknowledged", "failed_retriable", "quarantined", "suppressed", "refunded_after_display"],
+  "overlayEventTypes": ["alert.ready", "alert.update", "alert.hold", "alert.complete", "resync.required"],
+  "providerEntityTypes": ["payment", "refund", "subscription", "dispute"]
+}

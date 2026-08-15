@@ -1,0 +1,11 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/overlay-reconnect-case.schema.json",
+  "schemaVersion": "v1",
+  "overlayId": "00000000-0000-4000-8000-000000000008",
+  "initialCursor": "cursor_100",
+  "eventsCommittedWhileDisconnected": ["cursor_101", "cursor_102"],
+  "reconnectLastEventId": "cursor_100",
+  "expectedReplayOrder": ["cursor_101", "cursor_102"],
+  "expectedNoDuplicateEventIds": true,
+  "notificationTransportAvailable": false
+}

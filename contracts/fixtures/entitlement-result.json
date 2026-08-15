@@ -1,0 +1,13 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/entitlement-result.schema.json",
+  "schemaVersion": "v1",
+  "channelId": "00000000-0000-4000-8000-000000000002",
+  "tier": "creator",
+  "source": "individual_plan",
+  "entitlementVersion": 4,
+  "values": {
+    "queueCount": 5,
+    "bracketCharCeiling": 500,
+    "lottieEnabled": true
+  }
+}

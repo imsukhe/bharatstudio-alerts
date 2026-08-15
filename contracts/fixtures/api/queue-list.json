@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "v1",
+  "queues": [
+    {
+      "schemaVersion": "v1",
+      "queueId": "00000000-0000-4000-8000-000000000021",
+      "channelId": "00000000-0000-4000-8000-000000000011",
+      "name": "Main stream",
+      "paused": false,
+      "active": true
+    }
+  ]
+}

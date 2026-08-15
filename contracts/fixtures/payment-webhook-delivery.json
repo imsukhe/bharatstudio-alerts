@@ -1,0 +1,13 @@
+{
+  "$schema": "https://contracts.bharatstudio.invalid/v1/payment-webhook-delivery.schema.json",
+  "schemaVersion": "v1",
+  "provider": "razorpay",
+  "environment": "test",
+  "connectedAccountRef": "acct_test_alpha",
+  "providerEventId": "event_test_002",
+  "entityType": "payment",
+  "entityId": "pay_test_002",
+  "rawBodyHash": "sha256:test-body-002",
+  "signatureVerifiedAt": "2026-08-14T10:02:00Z",
+  "receivedAt": "2026-08-14T10:02:01Z"
+}

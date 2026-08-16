@@ -5,6 +5,7 @@ export type ChannelDetails = {
   displayName: string;
   acceptingTips: boolean;
   publicConfigVersion: number;
+  featuredConsent: boolean;
   role?: string;
 };
 
@@ -50,7 +51,7 @@ export type QueueBindingCreate = Omit<QueueBinding, 'schemaVersion' | 'bindingId
 export interface ChannelStore {
   createChannel(userId: string, input: { channelId: string; handle: string; displayName: string }): Promise<ChannelDetails>;
   getChannel(userId: string, channelId: string): Promise<ChannelDetails | null>;
-  updateChannel(userId: string, channelId: string, input: { displayName?: string; acceptingTips?: boolean }): Promise<ChannelDetails | null>;
+  updateChannel(userId: string, channelId: string, input: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean }): Promise<ChannelDetails | null>;
   getConfig(userId: string, channelId: string): Promise<ChannelConfig | null>;
   updateConfig(userId: string, channelId: string, values: Record<string, unknown>, expectedVersion: number): Promise<ChannelConfig | null>;
   listQueues(userId: string, channelId: string): Promise<Queue[]>;

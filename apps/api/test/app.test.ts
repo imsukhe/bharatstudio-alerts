@@ -173,6 +173,7 @@ test('public channel response contains only approved projection fields', async (
         publicConfigVersion: 2,
       };
     },
+    async listFeatured() { return []; },
   };
   const app = await buildApp(config, { publicChannels: repository });
   const response = await app.inject({ method: 'GET', url: '/v1/public/channels/demo_creator' });
@@ -199,9 +200,47 @@ test('public channel route fails closed without its repository', async () => {
   await app.close();
 });
 
+test('the featured-creator listing exposes only the approved narrow projection', async () => {
+  let seenLimit: number | undefined;
+  const repository: PublicChannelRepository = {
+    async findByHandle() { return null; },
+    async listFeatured(limit) {
+      seenLimit = limit;
+      return [{ handle: 'featured_creator', displayName: 'Featured Creator', acceptingTips: true, locale: 'hi-IN' }];
+    },
+  };
+  const app = await buildApp(config, { publicChannels: repository });
+  const response = await app.inject({ method: 'GET', url: '/v1/public/featured' });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { schemaVersion: 'v1', creators: [{ handle: 'featured_creator', displayName: 'Featured Creator', acceptingTips: true, locale: 'hi-IN' }] });
+  assert.equal('channelId' in response.json().creators[0], false);
+  assert.equal(seenLimit, 60);
+  await app.close();
+});
+
+test('the featured-creator listing accepts a bounded limit and fails closed without its repository', async () => {
+  const repository: PublicChannelRepository = {
+    async findByHandle() { return null; },
+    async listFeatured(limit) { return limit === 5 ? [] : [{ handle: 'wrong', displayName: 'Wrong', acceptingTips: true, locale: 'en-IN' }]; },
+  };
+  const app = await buildApp(config, { publicChannels: repository });
+  const bounded = await app.inject({ method: 'GET', url: '/v1/public/featured?limit=5' });
+  assert.equal(bounded.statusCode, 200);
+  assert.deepEqual(bounded.json().creators, []);
+  const oversized = await app.inject({ method: 'GET', url: '/v1/public/featured?limit=500' });
+  assert.equal(oversized.statusCode, 400);
+  await app.close();
+
+  const unavailableApp = await buildApp(config);
+  const unavailable = await unavailableApp.inject({ method: 'GET', url: '/v1/public/featured' });
+  assert.equal(unavailable.statusCode, 503);
+  assert.equal(unavailable.json().errorCode, 'public_read_unavailable');
+  await unavailableApp.close();
+});
+
 test('invalid public handles return a bounded error envelope', async () => {
   const app = await buildApp(config, {
-    publicChannels: { findByHandle: async () => null },
+    publicChannels: { findByHandle: async () => null, listFeatured: async () => [] },
   });
   const response = await app.inject({ method: 'GET', url: '/v1/public/channels/bad%20handle' });
 
@@ -255,6 +294,7 @@ test('public tip order requires the reviewed payment boundary and forwards canon
         publicConfigVersion: 2,
       } : null;
     },
+    async listFeatured() { return []; },
   };
   let received: Record<string, unknown> | undefined;
   const paymentOrders: PaymentOrderService = {
@@ -282,7 +322,7 @@ test('public tip order requires the reviewed payment boundary and forwards canon
 
 test('public tip order fails closed when the payment boundary is not wired', async () => {
   const app = await buildApp(config, {
-    publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 }) },
+    publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 }), listFeatured: async () => [] },
   });
   const response = await app.inject({ method: 'POST', url: '/v1/public/channels/demo_creator/tips/orders', headers: { 'idempotency-key': 'synthetic-idempotency-001' }, payload: { amountPaise: 1000, currency: 'INR' } });
   assert.equal(response.statusCode, 503);
@@ -293,7 +333,7 @@ test('public tip order fails closed when the payment boundary is not wired', asy
 test('public tip order rejects malformed idempotency keys before payment dispatch', async () => {
   let paymentCalled = false;
   const app = await buildApp(config, {
-    publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 }) },
+    publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 }), listFeatured: async () => [] },
     paymentOrders: {
       async createTipOrder() {
         paymentCalled = true;
@@ -383,7 +423,7 @@ test('public payment status returns not found without revealing order data', asy
 test('public tip order rejects an amount below the channel-configured minimum before payment service use', async () => {
   let paymentCalled = false;
   const app = await buildApp(config, {
-    publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 2500, publicConfigVersion: 3 }) },
+    publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 2500, publicConfigVersion: 3 }), listFeatured: async () => [] },
     paymentOrders: { async createTipOrder() { paymentCalled = true; throw new Error('must not be called'); } },
   });
   const response = await app.inject({ method: 'POST', url: '/v1/public/channels/demo_creator/tips/orders', headers: { 'idempotency-key': 'synthetic-idempotency-002' }, payload: { amountPaise: 1000, currency: 'INR' } });
@@ -399,6 +439,7 @@ test('production public payment boundary requires a successful Turnstile verific
     async findByHandle() {
       return { channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 };
     },
+    async listFeatured() { return []; },
   };
   const paymentOrders: PaymentOrderService = {
     async createTipOrder(input) {
@@ -655,7 +696,7 @@ function fakeOverlays(): OverlayStore {
 }
 
 function fakeChannels(): ChannelStore {
-  const channel = { schemaVersion: 'v1' as const, channelId: '00000000-0000-4000-8000-000000000011', handle: 'synthetic_a', displayName: 'Synthetic A', acceptingTips: true, publicConfigVersion: 1, role: 'owner' };
+  const channel = { schemaVersion: 'v1' as const, channelId: '00000000-0000-4000-8000-000000000011', handle: 'synthetic_a', displayName: 'Synthetic A', acceptingTips: true, publicConfigVersion: 1, featuredConsent: false, role: 'owner' };
   const queue = { schemaVersion: 'v1' as const, queueId: '00000000-0000-4000-8000-000000000021', channelId: channel.channelId, name: 'Main', paused: false, active: true };
   return {
     async createChannel() { return channel; },

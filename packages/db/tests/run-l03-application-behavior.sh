@@ -45,6 +45,7 @@ for migration in "$ROOT"/packages/db/migrations/*.sql; do
 done
 psql < "$ROOT/packages/db/tests/l03_application_behavior.sql"
 psql < "$ROOT/packages/db/tests/l03_payment_ledger_read.sql"
+psql < "$ROOT/packages/db/tests/l03_featured_creator_listing.sql"
 psql < "$ROOT/packages/db/tests/l02_terms_consent.sql"
 psql < "$ROOT/packages/db/tests/l03_tts_event_enrichment.sql"
 psql < "$ROOT/packages/db/tests/l05_queue_policy_enforcement.sql"

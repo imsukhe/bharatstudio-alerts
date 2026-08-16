@@ -1,5 +1,5 @@
 import postgres, { type Sql } from 'postgres';
-import type { PublicChannel, PublicChannelRepository } from '../domain/public-channel.js';
+import type { FeaturedChannel, PublicChannel, PublicChannelRepository } from '../domain/public-channel.js';
 
 type PublicChannelRow = {
   channel_id: string;
@@ -8,6 +8,14 @@ type PublicChannelRow = {
   accepting_tips: boolean;
   minimum_tip_paise: number;
   public_config_version: number;
+};
+
+type FeaturedChannelRow = {
+  channel_id: string;
+  handle: string;
+  display_name: string;
+  accepting_tips: boolean;
+  locale: string;
 };
 
 export function createSqlClient(databaseUrl: string): Sql {
@@ -35,6 +43,18 @@ export function createPublicChannelRepository(sql: Sql): PublicChannelRepository
         minimumTipPaise: row.minimum_tip_paise,
         publicConfigVersion: row.public_config_version,
       };
+    },
+    async listFeatured(limit): Promise<FeaturedChannel[]> {
+      const rows = await sql<FeaturedChannelRow[]>`
+        select channel_id, handle, display_name, accepting_tips, locale
+          from app_private.list_featured_channels(${limit})
+      `;
+      return rows.map((row) => ({
+        handle: row.handle,
+        displayName: row.display_name,
+        acceptingTips: row.accepting_tips,
+        locale: row.locale,
+      }));
     },
   };
 }

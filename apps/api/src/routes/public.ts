@@ -64,6 +64,29 @@ export async function registerPublicRoutes(
     },
   );
 
+  // Self-serve opt-in (channels.featured_consent, toggled via
+  // PATCH /v1/channels/:channelId) plus an automatic eligibility filter —
+  // no admin curation step. See packages/db/migrations/
+  // 0072_v1_l03_featured_creator_listing.sql for why the projection is
+  // deliberately narrower than /v1/public/channels/:handle.
+  app.get<{ Querystring: { limit?: number } }>(
+    '/v1/public/featured',
+    { schema: { querystring: { type: 'object', additionalProperties: false, properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 60 } } } } },
+    async (request, reply) => {
+      if (!repository) {
+        return reply.code(503).send({
+          schemaVersion: 'v1',
+          errorCode: 'public_read_unavailable',
+          message: 'Public channel data is temporarily unavailable',
+          traceId: request.id,
+          retryable: true,
+        });
+      }
+      const creators = await repository.listFeatured(request.query.limit ?? 60);
+      return reply.code(200).send({ schemaVersion: 'v1', creators });
+    },
+  );
+
   app.post<{
     Params: { handle: string };
     Headers: { 'idempotency-key'?: string };

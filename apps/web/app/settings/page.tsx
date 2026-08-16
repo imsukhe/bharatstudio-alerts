@@ -11,8 +11,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
-  clearAccessToken, closeAccount, createPrivacyRequestEntry, exportAccount, getCurrentUser,
-  getPaymentAccounts, getPrivacyRequests, registerPaymentAccount, revokePaymentAccount,
+  clearAccessToken, closeAccount, createPrivacyRequestEntry, exportAccount, getChannel, getCurrentUser,
+  getPaymentAccounts, getPrivacyRequests, registerPaymentAccount, revokePaymentAccount, updateChannel,
   type CurrentUser, type PaymentAccount, type PaymentAccountEnvironment, type PrivacyRequest, type PrivacyRequestType,
 } from '../lib/api';
 import { TopNav } from '../components/TopNav';
@@ -50,17 +50,40 @@ export default function SettingsPage() {
   const [closing, setClosing] = useState(false);
   const [closed, setClosed] = useState<{ retainedData: string } | null>(null);
 
+  const [featuredConsent, setFeaturedConsent] = useState(false);
+  const [savingFeatured, setSavingFeatured] = useState(false);
+
   useEffect(() => {
     getCurrentUser().then(async (nextUser) => {
       setUser(nextUser);
       const first = nextUser.channels[0];
       if (!first) return;
       setChannelId(first.channelId);
-      const [accountList, requestList] = await Promise.all([getPaymentAccounts(first.channelId), getPrivacyRequests()]);
+      const [channel, accountList, requestList] = await Promise.all([getChannel(first.channelId), getPaymentAccounts(first.channelId), getPrivacyRequests()]);
+      setFeaturedConsent(channel.featuredConsent);
       setAccounts(accountList.accounts);
       setRequests(requestList.requests);
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
   }, []);
+
+  // Self-serve opt-in — no admin curation. Eligibility (accepting tips, not
+  // closed) is applied automatically server-side when building the public
+  // listing; this toggle only records consent.
+  async function toggleFeatured() {
+    if (!channelId || savingFeatured) return;
+    setSavingFeatured(true);
+    setMessage(null);
+    const next = !featuredConsent;
+    try {
+      const channel = await updateChannel(channelId, { featuredConsent: next });
+      setFeaturedConsent(channel.featuredConsent);
+      setMessage(channel.featuredConsent ? 'Your channel may now appear in the public featured-creators listing.' : 'Your channel no longer appears in the public featured-creators listing.');
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Featured-listing preference could not be saved');
+    } finally {
+      setSavingFeatured(false);
+    }
+  }
 
   async function submitPayoutAccount(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -223,6 +246,20 @@ export default function SettingsPage() {
                   {registering ? 'Registering…' : 'Register payout account'}
                 </button>
               </form>
+            </article>
+
+            <article className="panel" aria-labelledby="featured-title">
+              <div className="panel-heading">
+                <div><p className="muted-label">Public listing</p><h2 id="featured-title">Featured creators.</h2></div>
+                <button type="button" className="secondary-button" onClick={() => void toggleFeatured()} disabled={savingFeatured || !channelId}>
+                  {savingFeatured ? 'Saving…' : featuredConsent ? 'Remove from listing' : 'Add to listing'}
+                </button>
+              </div>
+              <p className="helper-text">
+                Opt in to appear in BharatStudio&apos;s public featured-creators directory. Listing is
+                automatic once you&apos;re accepting tips — there is no review step. Currently:{' '}
+                <strong>{featuredConsent ? 'listed' : 'not listed'}</strong>.
+              </p>
             </article>
 
             <article className="panel" aria-labelledby="export-title">

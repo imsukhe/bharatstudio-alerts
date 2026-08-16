@@ -11,7 +11,7 @@ async function inUserTransaction<T>(sql: Sql, userId: string, callback: (tx: Tra
   return result as T;
 }
 
-function channelFromRow(row: { id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; role?: string }): ChannelDetails {
+function channelFromRow(row: { id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; featured_consent: boolean; role?: string }): ChannelDetails {
   return {
     schemaVersion: 'v1',
     channelId: row.id,
@@ -19,6 +19,7 @@ function channelFromRow(row: { id: string; handle: string; display_name: string;
     displayName: row.display_name,
     acceptingTips: row.accepting_tips,
     publicConfigVersion: row.public_config_version,
+    featuredConsent: row.featured_consent,
     ...(row.role ? { role: row.role } : {}),
   };
 }
@@ -36,9 +37,9 @@ export function createSqlChannelStore(sql: Sql): ChannelStore {
     },
     async getChannel(userId, channelId) {
       return inUserTransaction(sql, userId, async (tx) => {
-        const rows = await tx<{ id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; role: string }[]>`
+        const rows = await tx<{ id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; featured_consent: boolean; role: string }[]>`
           select channel.id, channel.handle, channel.display_name, channel.accepting_tips,
-                 channel.public_config_version, membership.role
+                 channel.public_config_version, channel.featured_consent, membership.role
             from channels channel
             join channel_memberships membership on membership.channel_id = channel.id
            where channel.id = ${channelId}::uuid
@@ -50,13 +51,14 @@ export function createSqlChannelStore(sql: Sql): ChannelStore {
     },
     async updateChannel(userId, channelId, input) {
       return inUserTransaction(sql, userId, async (tx) => {
-        const rows = await tx<{ id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; role: string }[]>`
+        const rows = await tx<{ id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; featured_consent: boolean; role: string }[]>`
           update channels
              set display_name = coalesce(${input.displayName ?? null}, display_name),
                  accepting_tips = coalesce(${input.acceptingTips ?? null}, accepting_tips),
+                 featured_consent = coalesce(${input.featuredConsent ?? null}, featured_consent),
                  updated_at = current_timestamp
            where id = ${channelId}::uuid
-          returning id, handle, display_name, accepting_tips, public_config_version,
+          returning id, handle, display_name, accepting_tips, public_config_version, featured_consent,
             (select role from channel_memberships where channel_id = channels.id and user_id = ${userId}::uuid and revoked_at is null) as role
         `;
         return rows[0] ? channelFromRow(rows[0]) : null;

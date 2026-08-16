@@ -52,7 +52,7 @@ export type SubscriptionLifecycleResult = {
 export type NotificationPreferences = { schemaVersion: 'v1'; connectionAlerts: boolean; securityAlerts: boolean; actionFailures: boolean };
 export type NotificationDevice = { schemaVersion: 'v1'; deviceId: string; platform: 'ios' | 'android'; enabled: boolean; createdAt: string; lastSeenAt: string };
 
-export type ChannelDetails = { schemaVersion: 'v1'; channelId: string; handle: string; displayName: string; acceptingTips: boolean; publicConfigVersion: number; avatarUrl?: string | null; role?: ChannelRole };
+export type ChannelDetails = { schemaVersion: 'v1'; channelId: string; handle: string; displayName: string; acceptingTips: boolean; publicConfigVersion: number; featuredConsent: boolean; avatarUrl?: string | null; role?: ChannelRole };
 export type ConfigBracket = { amountMinPaise: number; amountMaxPaise: number | null; charLimit: number; ttsEligible: boolean; displayStyle: NonNullable<ChannelConfigValues['defaultStyle']>; displayMinMs: number; ttsOverflowPolicy: 'extend' | 'truncate_speech' | 'truncate_visual' | 'visual_only' | 'disable' };
 export type TtsConfig = { enabled?: boolean; voiceId?: string; language?: string; overflowPolicy?: ConfigBracket['ttsOverflowPolicy']; paddingMs?: number };
 export type ChannelConfigValues = {
@@ -149,10 +149,10 @@ function requireV1(value: unknown): asserts value is Record<string, unknown> {
 
 export function parseChannelDetails(value: unknown): ChannelDetails {
   requireV1(value);
-  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'handle', 'displayName', 'acceptingTips', 'avatarUrl', 'publicConfigVersion', 'role'])) || !isUuid(value.channelId) || typeof value.handle !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(value.handle) || typeof value.displayName !== 'string' || value.displayName.trim().length === 0 || value.displayName.length > 120 || typeof value.acceptingTips !== 'boolean' || (value.avatarUrl !== undefined && value.avatarUrl !== null && (typeof value.avatarUrl !== 'string' || value.avatarUrl.length > 2048 || !/^https?:\/\//i.test(value.avatarUrl))) || !isSafeInteger(value.publicConfigVersion) || value.publicConfigVersion < 1 || (value.role !== undefined && (typeof value.role !== 'string' || !channelRoles.has(value.role as ChannelRole)))) invalidResponse();
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'handle', 'displayName', 'acceptingTips', 'avatarUrl', 'publicConfigVersion', 'featuredConsent', 'role'])) || !isUuid(value.channelId) || typeof value.handle !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(value.handle) || typeof value.displayName !== 'string' || value.displayName.trim().length === 0 || value.displayName.length > 120 || typeof value.acceptingTips !== 'boolean' || (value.avatarUrl !== undefined && value.avatarUrl !== null && (typeof value.avatarUrl !== 'string' || value.avatarUrl.length > 2048 || !/^https?:\/\//i.test(value.avatarUrl))) || !isSafeInteger(value.publicConfigVersion) || value.publicConfigVersion < 1 || typeof value.featuredConsent !== 'boolean' || (value.role !== undefined && (typeof value.role !== 'string' || !channelRoles.has(value.role as ChannelRole)))) invalidResponse();
   return {
     schemaVersion: 'v1', channelId: value.channelId, handle: value.handle, displayName: value.displayName,
-    acceptingTips: value.acceptingTips, publicConfigVersion: value.publicConfigVersion,
+    acceptingTips: value.acceptingTips, publicConfigVersion: value.publicConfigVersion, featuredConsent: value.featuredConsent,
     ...(value.avatarUrl !== undefined ? { avatarUrl: value.avatarUrl as string | null } : {}),
     ...(value.role !== undefined ? { role: value.role as ChannelRole } : {}),
   };
@@ -499,6 +499,9 @@ export function createChannel(handle: string, displayName: string): Promise<Chan
 }
 
 export function getChannel(channelId: string): Promise<ChannelDetails> { return apiFetch(`/v1/channels/${pathSegment(channelId)}`, {}, parseChannelDetails); }
+export function updateChannel(channelId: string, input: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean }): Promise<ChannelDetails> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}`, { method: 'PATCH', body: JSON.stringify(input) }, parseChannelDetails);
+}
 export function getChannelConfig(channelId: string): Promise<ChannelConfig> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/config`, {}, parseChannelConfig); }
 export function updateChannelConfig(channelId: string, version: number, values: ChannelConfigValues): Promise<ChannelConfig> {
   return apiFetch(`/v1/channels/${pathSegment(channelId)}/config`, { method: 'PATCH', headers: { 'if-match-version': String(version) }, body: JSON.stringify({ values }) }, parseChannelConfig);

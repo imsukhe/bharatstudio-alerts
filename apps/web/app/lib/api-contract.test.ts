@@ -8,13 +8,15 @@ const overlayId = '00000000-0000-4000-8000-000000000002';
 test('accepts only bounded authenticated channel responses', () => {
   const parsed = parseChannelDetails({
     schemaVersion: 'v1', channelId, handle: 'demo_creator', displayName: 'Demo Creator',
-    acceptingTips: true, publicConfigVersion: 2, role: 'owner',
+    acceptingTips: true, publicConfigVersion: 2, featuredConsent: true, role: 'owner',
   });
   assert.equal(parsed.channelId, channelId);
-  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo creator', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 1 }), /invalid_response/);
-  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: '', acceptingTips: true, publicConfigVersion: 1 }), /invalid_response/);
-  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 0 }), /invalid_response/);
-  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 1, internalSecret: 'must-not-cross' }), /invalid_response/);
+  assert.equal(parsed.featuredConsent, true);
+  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo creator', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 1, featuredConsent: false }), /invalid_response/);
+  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: '', acceptingTips: true, publicConfigVersion: 1, featuredConsent: false }), /invalid_response/);
+  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 0, featuredConsent: false }), /invalid_response/);
+  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 1, featuredConsent: false, internalSecret: 'must-not-cross' }), /invalid_response/);
+  assert.throws(() => parseChannelDetails({ schemaVersion: 'v1', channelId, handle: 'demo', displayName: 'Demo', acceptingTips: true, publicConfigVersion: 1 }), /invalid_response/);
 });
 
 test('rejects expanded identity and companion projections', () => {

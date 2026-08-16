@@ -73,7 +73,7 @@ export async function registerChannelRoutes(app: FastifyInstance, sessions?: Ses
     return channel ? reply.code(200).send(channel) : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
   });
 
-  app.patch<{ Params: { channelId: string }; Body: { displayName?: string; acceptingTips?: boolean } }>('/v1/channels/:channelId', { preHandler: termsAuth, schema: { params: channelParams, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { displayName: { type: 'string', minLength: 1, maxLength: 120 }, acceptingTips: { type: 'boolean' } } } } }, async (request, reply) => {
+  app.patch<{ Params: { channelId: string }; Body: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean } }>('/v1/channels/:channelId', { preHandler: termsAuth, schema: { params: channelParams, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { displayName: { type: 'string', minLength: 1, maxLength: 120 }, acceptingTips: { type: 'boolean' }, featuredConsent: { type: 'boolean' } } } } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
     const channel = await store.updateChannel(request.auth.userId, request.params.channelId, request.body);
     return channel ? reply.code(200).send(channel) : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });

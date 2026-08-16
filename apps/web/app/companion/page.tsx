@@ -178,7 +178,7 @@ export default function CompanionPage() {
           <h1>Broadcast context without broadcast risk.</h1>
           <p className="lede">A focused operational view for authorised channel members. Companion never connects this browser directly to OBS or changes financial truth.</p>
         </div>
-        <Link className="secondary-button" href="/dashboard">Alerts dashboard</Link>
+        <Link className="secondary-button" href="/dashboard">Dashboard</Link>
       </section>
 
       <p className="helper-text" role="status">{message}</p>

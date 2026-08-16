@@ -108,12 +108,28 @@ func (h HTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Reque
 	if result.Status == "linked" {
 		status = "linked"
 	}
+	// chargedMonths/serviceMonths/annualChargePaise must match the same
+	// per-interval relationship the database enforces (packages/db/
+	// migrations/0048's CHECK constraint: monthly -> 1/1, annual -> 10/12)
+	// — a monthly subscription is charged its monthly price for one
+	// month of service, never a hardcoded 10-months-for-12 annual
+	// discount. This handler previously always reported the annual
+	// shape regardless of the requested interval, which both
+	// misrepresented what a monthly subscriber was actually being
+	// charged and failed the equally-strict apps/api and apps/web
+	// validators once those were corrected to check per interval —
+	// breaking the "Subscribe" button apps/web's own UI always calls
+	// with billingInterval "monthly".
+	chargedMonths, serviceMonths := 1, 1
+	if result.BillingInterval == "annual" {
+		chargedMonths, serviceMonths = 10, 12
+	}
 	writeSubscriptionJSON(response, http.StatusCreated, map[string]any{
 		"schemaVersion": "v1", "provider": "razorpay", "status": status,
 		"subscriptionId": result.ProviderSubscriptionID, "tier": result.Tier,
 		"billingInterval": result.BillingInterval, "monthlyPricePaise": result.PricePaise,
-		"annualChargePaise": result.PricePaise * 10, "annualMonthsCharged": 10,
-		"annualServiceMonths": 12,
+		"annualChargePaise": result.PricePaise * int64(chargedMonths), "annualMonthsCharged": chargedMonths,
+		"annualServiceMonths": serviceMonths,
 		"checkoutUrl":         nullableSubscriptionURL(result.CheckoutURL),
 	})
 }

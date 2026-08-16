@@ -35,6 +35,14 @@ func newSubscriptionRequest(body string) *http.Request {
 }
 
 func TestSubscriptionHandlerValidatesPrivateBoundaryAndReturnsSafeProjection(t *testing.T) {
+	// Regression: a monthly subscription — the only interval apps/web's
+	// own "Subscribe" button ever actually requests — must be charged its
+	// monthly price for one month of service (1/1), never the annual
+	// 10-months-for-12 discount shape. This test previously asserted the
+	// old, wrong, hardcoded-annual behavior (annualChargePaise ==
+	// monthlyPricePaise*10 for a MONTHLY request) and passed only because
+	// the handler matched that same mistake — caught by a real end-to-end
+	// browser run against a live subscription, not by this test.
 	service := &fakeSubscriptionCreator{result: Intent{ProviderSubscriptionID: "sub_1", Tier: "creator", BillingInterval: "monthly", PricePaise: 39900, Status: "linked", CheckoutURL: "https://rzp.io/i/test"}}
 	handler := HTTPHandler{Authorizer: fakeSubscriptionAuthorizer{}, Service: service, Environment: "test"}
 	response := httptest.NewRecorder()
@@ -46,8 +54,28 @@ func TestSubscriptionHandlerValidatesPrivateBoundaryAndReturnsSafeProjection(t *
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body["provider"] != "razorpay" || body["status"] != "linked" || body["monthlyPricePaise"] != float64(39900) || body["annualChargePaise"] != float64(399000) || service.request.ChannelID == "" {
+	if body["provider"] != "razorpay" || body["status"] != "linked" || body["monthlyPricePaise"] != float64(39900) ||
+		body["annualChargePaise"] != float64(39900) || body["annualMonthsCharged"] != float64(1) || body["annualServiceMonths"] != float64(1) ||
+		service.request.ChannelID == "" {
 		t.Fatalf("response=%#v request=%#v", body, service.request)
+	}
+}
+
+func TestSubscriptionHandlerReturnsTheAnnualDiscountShapeOnlyForAnAnnualRequest(t *testing.T) {
+	annualBody := strings.Replace(validSubscriptionBody, `"billingInterval":"monthly"`, `"billingInterval":"annual"`, 1)
+	service := &fakeSubscriptionCreator{result: Intent{ProviderSubscriptionID: "sub_2", Tier: "creator", BillingInterval: "annual", PricePaise: 39900, Status: "linked", CheckoutURL: "https://rzp.io/i/test"}}
+	handler := HTTPHandler{Authorizer: fakeSubscriptionAuthorizer{}, Service: service, Environment: "test"}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, newSubscriptionRequest(annualBody))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["annualChargePaise"] != float64(399000) || body["annualMonthsCharged"] != float64(10) || body["annualServiceMonths"] != float64(12) {
+		t.Fatalf("response=%#v", body)
 	}
 }
 

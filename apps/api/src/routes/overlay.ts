@@ -14,7 +14,7 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_store_unavailable', message: 'Overlay sessions are temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerOverlayRoutes(app: FastifyInstance, sessions?: SessionStore, store?: OverlayStore, wakeup?: OverlayWakeup, streamOptions: { windowMs: number; pollMs: number } = { windowMs: 25_000, pollMs: 2_000 }, account?: AccountStore): Promise<void> {
+export async function registerOverlayRoutes(app: FastifyInstance, sessions?: SessionStore, store?: OverlayStore, wakeup?: OverlayWakeup, streamOptions: { windowMs: number; pollMs: number } = { windowMs: 25_000, pollMs: 2_000 }, account?: AccountStore, appOrigin?: string): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
 
@@ -63,11 +63,32 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
     if (!events) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Overlay session is invalid or expired', traceId: request.id });
 
     reply.hijack();
+    // reply.hijack() takes the response fully out of Fastify's own reply
+    // pipeline, which is where the globally-registered @fastify/cors
+    // plugin's headers actually get flushed (app.ts) — a hijacked SSE
+    // response therefore ships with NO CORS headers at all unless they are
+    // set explicitly here, which this route never did. In any deployment
+    // where the web app and API are on different origins (exactly what
+    // config.appOrigin/CORS is already set up to allow), the browser
+    // rejects this exact request before a single byte of the stream is
+    // read — silently breaking the entire overlay/OBS browser-source
+    // delivery path. Caught on a real cross-origin browser run against a
+    // live overlay session, not by any inject()-based unit test — inject()
+    // never sends a real Origin header the way a browser does. Mirrors the
+    // exact single-origin-echo + credentials policy app.ts's own
+    // @fastify/cors registration already uses for every other route.
+    const requestOrigin = request.headers.origin;
+    const corsHeaders: Record<string, string> = { vary: 'Origin' };
+    if (appOrigin && requestOrigin === appOrigin) {
+      corsHeaders['access-control-allow-origin'] = appOrigin;
+      corsHeaders['access-control-allow-credentials'] = 'true';
+    }
     reply.raw.writeHead(200, {
       'cache-control': 'no-store',
       'content-type': 'text/event-stream; charset=utf-8',
       connection: 'keep-alive',
       'x-overlay-stream-version': 'v1',
+      ...corsHeaders,
     });
     reply.raw.write(': replay-start\n\n');
     let cursor = request.headers['last-event-id'];

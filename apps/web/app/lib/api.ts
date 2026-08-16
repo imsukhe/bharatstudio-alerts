@@ -37,8 +37,10 @@ export type BillingSubscription = {
   billingInterval: 'monthly' | 'annual';
   monthlyPricePaise: number;
   annualChargePaise: number;
-  annualMonthsCharged: 10;
-  annualServiceMonths: 12;
+  // 1/1 for a monthly subscription, 10/12 for annual — not a literal
+  // 10/12; see parseBillingSubscription for why.
+  annualMonthsCharged: number;
+  annualServiceMonths: number;
   checkoutUrl: string | null;
 };
 export type SubscriptionLifecycleAction = 'cancel' | 'upgrade' | 'downgrade' | 'reactivate';
@@ -112,7 +114,18 @@ export type BillingView = {
   priceSource: 'current' | 'grandfathered';
 };
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Deliberately not RFC4122-version/variant-strict: many server-owned ids
+// (default queue, default payment binding, subscriptions, maintenance
+// runs — see packages/db/migrations for the md5(...)::uuid pattern) are
+// deterministic, idempotent identifiers derived from an MD5 digest cast
+// directly to uuid, which does not set the version/variant nibbles a
+// strict v4 check requires. The database's own uuid column type has no
+// such constraint either. Validating hex-shape/length here is the actual
+// contract; requiring "looks like gen_random_uuid() output" is not — a
+// too-strict version of this check silently broke every real channel's
+// default queue on first live-database verification (caught in this
+// session, not by any mocked-store unit test).
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const companionTiers = new Set<CompanionLayout['tier']>(['free', 'pro', 'creator', 'studio']);
 const companionActions = new Set<CompanionAction>(['pause_queue', 'resume_queue', 'send_test_alert']);
 const styles = new Set<NonNullable<ChannelConfigValues['defaultStyle']>>(['small_pill', 'compact_card', 'standard_card', 'large_card', 'banner', 'celebration']);
@@ -400,7 +413,18 @@ function parseAlertAccepted(value: unknown): { schemaVersion: 'v1'; eventId: str
 
 export function parseBillingView(value: unknown): BillingView {
   requireV1(value);
-  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'tier', 'monthlyPricePaise', 'annualMonthsCharged', 'annualServiceMonths', 'renewalState', 'nextRenewalAt', 'billingInterval', 'autoRenew', 'currentPeriodEndsAt', 'priceProtectedUntil', 'priceSource'])) || !isUuid(value.channelId) || typeof value.tier !== 'string' || !billingTiers.has(value.tier as BillingView['tier']) || !isSafeInteger(value.monthlyPricePaise) || value.monthlyPricePaise < 0 || value.monthlyPricePaise > 1_000_000_000 || value.annualMonthsCharged !== 10 || value.annualServiceMonths !== 12 || typeof value.renewalState !== 'string' || !billingRenewalStates.has(value.renewalState as BillingView['renewalState']) || typeof value.billingInterval !== 'string' || !billingIntervals.has(value.billingInterval as BillingView['billingInterval']) || typeof value.autoRenew !== 'boolean' || (value.nextRenewalAt !== null && !isIsoDate(value.nextRenewalAt)) || (value.currentPeriodEndsAt !== null && !isIsoDate(value.currentPeriodEndsAt)) || (value.priceProtectedUntil !== null && !isIsoDate(value.priceProtectedUntil)) || typeof value.priceSource !== 'string' || !priceSources.has(value.priceSource as BillingView['priceSource'])) invalidResponse();
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'tier', 'monthlyPricePaise', 'annualMonthsCharged', 'annualServiceMonths', 'renewalState', 'nextRenewalAt', 'billingInterval', 'autoRenew', 'currentPeriodEndsAt', 'priceProtectedUntil', 'priceSource'])) || !isUuid(value.channelId) || typeof value.tier !== 'string' || !billingTiers.has(value.tier as BillingView['tier']) || !isSafeInteger(value.monthlyPricePaise) || value.monthlyPricePaise < 0 || value.monthlyPricePaise > 1_000_000_000 || typeof value.renewalState !== 'string' || !billingRenewalStates.has(value.renewalState as BillingView['renewalState']) || typeof value.billingInterval !== 'string' || !billingIntervals.has(value.billingInterval as BillingView['billingInterval']) || typeof value.autoRenew !== 'boolean' || (value.nextRenewalAt !== null && !isIsoDate(value.nextRenewalAt)) || (value.currentPeriodEndsAt !== null && !isIsoDate(value.currentPeriodEndsAt)) || (value.priceProtectedUntil !== null && !isIsoDate(value.priceProtectedUntil)) || typeof value.priceSource !== 'string' || !priceSources.has(value.priceSource as BillingView['priceSource'])) invalidResponse();
+  // Regression: this used to hard-require annualMonthsCharged === 10 &&
+  // annualServiceMonths === 12 unconditionally — only ever true for an
+  // annual subscription. A monthly subscription's genuinely correct
+  // values (1 and 1, matching packages/db/migrations/0048's own CHECK
+  // constraint) were rejected outright, breaking every monthly-billed
+  // creator's dashboard. The relationship must be checked per interval,
+  // not as one fixed pair — caught on first live-database verification
+  // with a real monthly subscription, not by any unit test (the only
+  // existing fixture happened to use billingInterval: 'annual').
+  if (value.billingInterval === 'monthly' && (value.annualMonthsCharged !== 1 || value.annualServiceMonths !== 1)) invalidResponse();
+  if (value.billingInterval === 'annual' && (value.annualMonthsCharged !== 10 || value.annualServiceMonths !== 12)) invalidResponse();
   return value as unknown as BillingView;
 }
 
@@ -549,15 +573,25 @@ export function parseBillingSubscription(value: unknown): BillingSubscription {
     typeof value.tier !== 'string' || !paidTiers.has(value.tier as PaidTier) ||
     typeof value.billingInterval !== 'string' || !billingIntervalsSet.has(value.billingInterval as BillingSubscription['billingInterval']) ||
     !isSafeInteger(value.monthlyPricePaise) || value.monthlyPricePaise <= 0 ||
-    !isSafeInteger(value.annualChargePaise) || value.annualChargePaise !== value.monthlyPricePaise * 10 ||
-    value.annualMonthsCharged !== 10 || value.annualServiceMonths !== 12 ||
+    !isSafeInteger(value.annualChargePaise) ||
     (value.checkoutUrl !== null && typeof value.checkoutUrl !== 'string')
   ) invalidResponse();
+  // Regression: this used to hard-require annualChargePaise ===
+  // monthlyPricePaise*10, annualMonthsCharged === 10 and
+  // annualServiceMonths === 12 unconditionally — correct only for an
+  // annual subscription. apps/web's own "Subscribe" button always
+  // requests billingInterval "monthly", whose genuinely correct values
+  // (charged = monthlyPricePaise, 1/1) were rejected outright. Caught on
+  // a real end-to-end browser run against a live subscribe attempt, not
+  // by any unit test (the only existing fixture used billingInterval:
+  // 'annual' throughout).
+  const [expectedChargedMonths, expectedServiceMonths] = value.billingInterval === 'annual' ? [10, 12] : [1, 1];
+  if (value.annualChargePaise !== value.monthlyPricePaise * expectedChargedMonths || value.annualMonthsCharged !== expectedChargedMonths || value.annualServiceMonths !== expectedServiceMonths) invalidResponse();
   return {
     schemaVersion: 'v1', provider: 'razorpay', status: value.status, subscriptionId: value.subscriptionId,
     tier: value.tier as PaidTier, billingInterval: value.billingInterval as BillingSubscription['billingInterval'],
     monthlyPricePaise: value.monthlyPricePaise, annualChargePaise: value.annualChargePaise,
-    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: value.checkoutUrl as string | null,
+    annualMonthsCharged: expectedChargedMonths, annualServiceMonths: expectedServiceMonths, checkoutUrl: value.checkoutUrl as string | null,
   };
 }
 

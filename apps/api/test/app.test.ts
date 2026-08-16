@@ -238,6 +238,24 @@ test('the featured-creator listing accepts a bounded limit and fails closed with
   await unavailableApp.close();
 });
 
+test('the featured-creator listing is reachable cross-origin from any site, unlike every credentialed route', async () => {
+  // Regression test: this route is the one the marketing site's static
+  // export fetches from a different origin. The app-wide CORS policy is
+  // deliberately locked to the single configured web-app origin, which
+  // would otherwise silently block this exact call in any real deployment
+  // — caught via a live cross-origin browser fetch, not by an inject()
+  // call, since inject() never exercises a real Origin header the same way.
+  const repository: PublicChannelRepository = { async findByHandle() { return null; }, async listFeatured() { return []; } };
+  const app = await buildApp(config, { publicChannels: repository });
+  const featured = await app.inject({ method: 'GET', url: '/v1/public/featured', headers: { origin: 'https://marketing.example' } });
+  assert.equal(featured.headers['access-control-allow-origin'], '*');
+  assert.equal(featured.headers['access-control-allow-credentials'], undefined);
+
+  const unrelated = await app.inject({ method: 'GET', url: '/healthz', headers: { origin: 'https://marketing.example' } });
+  assert.equal(unrelated.headers['access-control-allow-origin'], undefined);
+  await app.close();
+});
+
 test('invalid public handles return a bounded error envelope', async () => {
   const app = await buildApp(config, {
     publicChannels: { findByHandle: async () => null, listFeatured: async () => [] },
@@ -379,7 +397,7 @@ test('authenticated subscription route forwards only approved creator inputs to 
         schemaVersion: 'v1', provider: 'razorpay', status: 'linked',
         subscriptionId: 'sub_synthetic', tier: input.tier,
         billingInterval: input.billingInterval, monthlyPricePaise: 39900,
-        annualChargePaise: 399000, annualMonthsCharged: 10, annualServiceMonths: 12,
+        annualChargePaise: 39900, annualMonthsCharged: 1, annualServiceMonths: 1,
         checkoutUrl: 'https://rzp.io/i/synthetic',
       };
     },
@@ -515,6 +533,46 @@ test('payment subscription client sends only the private route contract and vali
   }), /invalid payment service response/);
 });
 
+test('payment subscription client validates monthly pricing as 1 month charged for 1 month of service, not the annual shape', async () => {
+  // Regression: this validator previously hard-required annualMonthsCharged
+  // === 10 && annualServiceMonths === 12 unconditionally — correct only for
+  // an annual request. A monthly request (the only interval apps/web's own
+  // "Subscribe" button ever actually sends) got a genuinely correct 1/1
+  // response rejected outright. Caught on a real end-to-end browser run
+  // against a live subscription, not by any existing unit test — the only
+  // prior coverage of this client always used billingInterval: 'annual'.
+  const fakeClient = {} as IdTokenClient;
+  const service = createGooglePaymentSubscriptionService('http://127.0.0.1:4400', 'audience', 'test', async (_client, _url, body) => {
+    assert.equal(body.billingInterval, 'monthly');
+    return {
+      schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_synthetic',
+      tier: 'creator', billingInterval: 'monthly', monthlyPricePaise: 39900,
+      annualChargePaise: 39900, annualMonthsCharged: 1, annualServiceMonths: 1,
+      checkoutUrl: 'https://rzp.io/i/synthetic',
+    };
+  }, async () => fakeClient);
+  const result = await service.createSubscription({
+    userId: '00000000-0000-4000-8000-000000000001',
+    channelId: '00000000-0000-4000-8000-000000000011', environment: 'test',
+    idempotencyKey: 'subscription-idempotency-001', tier: 'creator', billingInterval: 'monthly',
+  }, 'subscription-request');
+  assert.equal(result.annualChargePaise, 39900);
+  assert.equal(result.annualMonthsCharged, 1);
+  assert.equal(result.annualServiceMonths, 1);
+
+  const stillClaimingAnnualShape = createGooglePaymentSubscriptionService('http://127.0.0.1:4400', 'audience', 'test', async () => ({
+    schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_synthetic',
+    tier: 'creator', billingInterval: 'monthly', monthlyPricePaise: 39900,
+    annualChargePaise: 399000, annualMonthsCharged: 10, annualServiceMonths: 12,
+    checkoutUrl: 'https://rzp.io/i/synthetic',
+  }), async () => fakeClient);
+  await assert.rejects(() => stillClaimingAnnualShape.createSubscription({
+    userId: '00000000-0000-4000-8000-000000000001',
+    channelId: '00000000-0000-4000-8000-000000000011', environment: 'test',
+    idempotencyKey: 'subscription-idempotency-001', tier: 'creator', billingInterval: 'monthly',
+  }, 'subscription-request'), /invalid payment service response/);
+});
+
 test('payment subscription lifecycle client posts to the dedicated internal route and validates the response', async () => {
   const fakeClient = {} as IdTokenClient;
   const seenBodies: Record<string, unknown>[] = [];
@@ -647,7 +705,7 @@ function fakeAlerts(): AlertStore {
     async getBilling(_userId, channelId) {
       return {
         schemaVersion: 'v1', channelId, tier: 'creator', monthlyPricePaise: 39900,
-        annualMonthsCharged: 10, annualServiceMonths: 12, renewalState: 'not_applicable',
+        annualMonthsCharged: 1, annualServiceMonths: 1, renewalState: 'not_applicable',
         nextRenewalAt: null, billingInterval: 'monthly', autoRenew: false,
         currentPeriodEndsAt: null, priceProtectedUntil: null, priceSource: 'current',
       };
@@ -727,12 +785,39 @@ test('overlay SSE uses the wake-up path and then replays durably until its bound
   const response = await app.inject({
     method: 'GET',
     url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events',
-    headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' },
+    headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000', origin: config.appOrigin },
   });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.body, /replay-complete/);
   assert.ok(waits >= 1);
+  // Regression: reply.hijack() takes this response fully out of Fastify's
+  // reply pipeline, which is where the globally-registered @fastify/cors
+  // plugin's headers actually get flushed — a hijacked SSE response
+  // shipped with NO CORS headers at all until this was fixed explicitly,
+  // silently breaking the entire overlay/OBS delivery path in any
+  // deployment where the web app and API are on different origins
+  // (exactly what config.appOrigin/CORS already anticipates). Caught on a
+  // real cross-origin browser run against a live overlay session — no
+  // prior inject()-based test ever sent a real Origin header here.
+  assert.equal(response.headers['access-control-allow-origin'], config.appOrigin);
+  assert.equal(response.headers['access-control-allow-credentials'], 'true');
+  await app.close();
+});
+
+test('overlay SSE never sends CORS headers for an unapproved origin, even though the response is hijacked', async () => {
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 0, overlayPollMs: 5 }, {
+    sessions: fakeSessions(),
+    overlays: fakeOverlays(),
+  });
+  const response = await app.inject({
+    method: 'GET',
+    url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events',
+    headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000', origin: 'https://unapproved.example' },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers['access-control-allow-origin'], undefined);
+  assert.equal(response.headers['access-control-allow-credentials'], undefined);
   await app.close();
 });
 

@@ -21,8 +21,11 @@ export type BillingView = {
   channelId: string;
   tier: 'free' | 'pro' | 'creator' | 'studio';
   monthlyPricePaise: number;
-  annualMonthsCharged: 10;
-  annualServiceMonths: 12;
+  // 1/1 for a monthly subscription, 10/12 for annual — matches
+  // channel_subscriptions.charged_months/service_months exactly (see
+  // packages/db/migrations/0048's CHECK constraint); not a literal 10/12.
+  annualMonthsCharged: number;
+  annualServiceMonths: number;
   renewalState: 'not_applicable' | 'active' | 'past_due' | 'cancelled';
   nextRenewalAt: string | null;
   billingInterval: 'monthly' | 'annual';

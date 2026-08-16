@@ -67,8 +67,21 @@ test('bounds authenticated configuration, queues, history, billing and entitleme
   assert.equal(config.values.defaultStyle, 'standard_card');
   assert.equal(parseQueueList({ schemaVersion: 'v1', queues: [{ schemaVersion: 'v1', queueId: overlayId, channelId, name: 'Main alerts', paused: false, active: true }] }).queues.length, 1);
   assert.throws(() => parseQueueList({ schemaVersion: 'v1', queues: [{ schemaVersion: 'v1', queueId: overlayId, channelId, name: 'Main alerts', paused: false, active: true, internalId: 'hidden' }] }), /invalid_response/);
+  // Regression: a channel's default queue/binding id is a deterministic
+  // md5(...)::uuid, which never sets the RFC4122 v4 version/variant
+  // nibbles — a too-strict uuid check silently rejected every real
+  // channel's default queue on first live-database verification.
+  assert.equal(parseQueueList({ schemaVersion: 'v1', queues: [{ schemaVersion: 'v1', queueId: '99551cc1-6b3a-4d2a-251f-953fc7324a9b', channelId, name: 'Main alerts', paused: false, active: true }] }).queues.length, 1);
+  assert.throws(() => parseQueueList({ schemaVersion: 'v1', queues: [{ schemaVersion: 'v1', queueId: 'not-a-uuid', channelId, name: 'Main alerts', paused: false, active: true }] }), /invalid_response/);
   assert.equal(parseHistoryPage({ schemaVersion: 'v1', items: [{ eventId: overlayId, sourceType: 'manual', status: 'accepted', createdAt: '2099-08-15T10:00:00.000Z' }], nextCursor: null }).items[0]?.grossAmountPaise, null);
   assert.equal(parseBillingView({ schemaVersion: 'v1', channelId, tier: 'creator', monthlyPricePaise: 39900, annualMonthsCharged: 10, annualServiceMonths: 12, renewalState: 'active', nextRenewalAt: null, billingInterval: 'annual', autoRenew: true, currentPeriodEndsAt: '2099-09-15T10:00:00.000Z', priceProtectedUntil: null, priceSource: 'current' }).tier, 'creator');
+  // Regression: a monthly billing view's genuinely correct 1/1 shape was
+  // rejected by a hardcoded annual-only (10/12) check — caught on a real
+  // end-to-end browser run against a live monthly subscription, not by
+  // any prior unit test (every existing fixture used billingInterval:
+  // 'annual' throughout).
+  assert.equal(parseBillingView({ schemaVersion: 'v1', channelId, tier: 'studio', monthlyPricePaise: 49900, annualMonthsCharged: 1, annualServiceMonths: 1, renewalState: 'active', nextRenewalAt: '2099-09-15T10:00:00.000Z', billingInterval: 'monthly', autoRenew: true, currentPeriodEndsAt: '2099-09-15T10:00:00.000Z', priceProtectedUntil: null, priceSource: 'grandfathered' }).annualMonthsCharged, 1);
+  assert.throws(() => parseBillingView({ schemaVersion: 'v1', channelId, tier: 'studio', monthlyPricePaise: 49900, annualMonthsCharged: 10, annualServiceMonths: 12, renewalState: 'active', nextRenewalAt: '2099-09-15T10:00:00.000Z', billingInterval: 'monthly', autoRenew: true, currentPeriodEndsAt: '2099-09-15T10:00:00.000Z', priceProtectedUntil: null, priceSource: 'grandfathered' }), /invalid_response/);
   assert.equal(parseEntitlements({ schemaVersion: 'v1', channelId, tier: 'creator', source: 'individual_plan', entitlementVersion: 2, values: { queueCount: 16 } }).values.queueCount, 16);
   assert.equal(parseCompanionLayout({ schemaVersion: 'v1', channelId, version: 4, tier: 'creator', maxSlots: 32, pageSize: 8, slots: [{ slotIndex: 1, page: 1, label: 'Pause', action: 'pause_queue', targetId: overlayId }], createdAt: '2099-08-15T10:00:00.000Z' }).slots.length, 1);
   assert.throws(() => parseChannelConfig({ schemaVersion: 'v1', channelId, version: 3, effectiveAt: '2099-08-15T10:00:00.000Z', values: { minimumTipPaise: 999 } }), /invalid_response/);
@@ -164,6 +177,21 @@ test('accepts only the bounded billing-subscription contract and checks annual p
   assert.throws(() => parseBillingSubscription({
     schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_demo123',
     tier: 'free', billingInterval: 'annual', monthlyPricePaise: 0, annualChargePaise: 0,
+    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: null,
+  }), /invalid_response/);
+});
+
+test('a monthly subscription is 1 month charged for 1 month of service, not the annual shape — the only interval the Subscribe button actually sends', () => {
+  const parsed = parseBillingSubscription({
+    schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_demo123',
+    tier: 'creator', billingInterval: 'monthly', monthlyPricePaise: 39900, annualChargePaise: 39900,
+    annualMonthsCharged: 1, annualServiceMonths: 1, checkoutUrl: 'https://rzp.io/i/demo',
+  });
+  assert.equal(parsed.annualMonthsCharged, 1);
+  assert.equal(parsed.annualServiceMonths, 1);
+  assert.throws(() => parseBillingSubscription({
+    schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_demo123',
+    tier: 'creator', billingInterval: 'monthly', monthlyPricePaise: 39900, annualChargePaise: 399000,
     annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: null,
   }), /invalid_response/);
 });

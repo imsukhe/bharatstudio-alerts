@@ -16,8 +16,13 @@ export type BillingSubscription = {
   billingInterval: CreateBillingSubscriptionInput['billingInterval'];
   monthlyPricePaise: number;
   annualChargePaise: number;
-  annualMonthsCharged: 10;
-  annualServiceMonths: 12;
+  // 1/1 for a monthly subscription, 10/12 for annual — matches the
+  // per-interval relationship packages/db/migrations/0048's own CHECK
+  // constraint enforces. Not a literal 10/12: a monthly subscription
+  // (the only interval apps/web's "Subscribe" button ever actually
+  // requests) is charged its monthly price for one month of service.
+  annualMonthsCharged: number;
+  annualServiceMonths: number;
   checkoutUrl: string | null;
 };
 

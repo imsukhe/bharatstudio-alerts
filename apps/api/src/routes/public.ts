@@ -71,7 +71,22 @@ export async function registerPublicRoutes(
   // deliberately narrower than /v1/public/channels/:handle.
   app.get<{ Querystring: { limit?: number } }>(
     '/v1/public/featured',
-    { schema: { querystring: { type: 'object', additionalProperties: false, properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 60 } } } } },
+    {
+      schema: { querystring: { type: 'object', additionalProperties: false, properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 60 } } } },
+      // This is the one route the marketing site's static export calls
+      // cross-origin (see bharatstudio-marketing's generate-csp-headers.mjs
+      // /creators/-only connect-src widening) — the app-wide CORS policy
+      // registered in app.ts is deliberately locked to the single
+      // credentialed web-app origin and must stay that way for every
+      // authenticated route. This route is public, read-only, carries no
+      // credentials and no per-user data, so it is the one place a
+      // wildcard origin is safe; every other route keeps the strict
+      // single-origin policy untouched.
+      onSend: async (_request, reply, payload) => {
+        reply.header('access-control-allow-origin', '*');
+        return payload;
+      },
+    },
     async (request, reply) => {
       if (!repository) {
         return reply.code(503).send({

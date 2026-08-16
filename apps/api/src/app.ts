@@ -209,6 +209,7 @@ export async function buildApp(
       pollMs: config.overlayPollMs ?? 2_000,
     },
     dependencies.account,
+    config.appOrigin,
   );
 
   app.addHook('onClose', async () => {

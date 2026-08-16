@@ -47,7 +47,13 @@ function assertSubscription(value: unknown, input: CreateBillingSubscriptionInpu
     }
   }
   const normalizedCheckoutUrl = typeof response.checkoutUrl === 'string' ? response.checkoutUrl : null;
-  if (!Object.keys(response).every((key) => allowed.has(key)) || response.schemaVersion !== 'v1' || response.provider !== 'razorpay' || (response.status !== 'linked' && response.status !== 'pending') || !isProviderIdentifier(response.subscriptionId) || response.tier !== input.tier || response.billingInterval !== input.billingInterval || !isSafePositiveInteger(response.monthlyPricePaise) || !isSafePositiveInteger(response.annualChargePaise) || response.annualChargePaise !== (response.monthlyPricePaise as number) * 10 || response.annualMonthsCharged !== 10 || response.annualServiceMonths !== 12 || !checkoutUrlIsValid) {
+  // Matches the per-interval relationship packages/db/migrations/0048's
+  // own CHECK constraint enforces — a monthly subscription (the only
+  // interval apps/web's "Subscribe" button ever actually requests) is
+  // charged its monthly price for one month of service, never a
+  // hardcoded 10-months-for-12 annual discount.
+  const [expectedChargedMonths, expectedServiceMonths] = input.billingInterval === 'annual' ? [10, 12] : [1, 1];
+  if (!Object.keys(response).every((key) => allowed.has(key)) || response.schemaVersion !== 'v1' || response.provider !== 'razorpay' || (response.status !== 'linked' && response.status !== 'pending') || !isProviderIdentifier(response.subscriptionId) || response.tier !== input.tier || response.billingInterval !== input.billingInterval || !isSafePositiveInteger(response.monthlyPricePaise) || !isSafePositiveInteger(response.annualChargePaise) || response.annualChargePaise !== (response.monthlyPricePaise as number) * expectedChargedMonths || response.annualMonthsCharged !== expectedChargedMonths || response.annualServiceMonths !== expectedServiceMonths || !checkoutUrlIsValid) {
     throw new Error('invalid payment service response');
   }
   return {
@@ -59,8 +65,8 @@ function assertSubscription(value: unknown, input: CreateBillingSubscriptionInpu
     billingInterval: input.billingInterval,
     monthlyPricePaise: response.monthlyPricePaise,
     annualChargePaise: response.annualChargePaise,
-    annualMonthsCharged: 10,
-    annualServiceMonths: 12,
+    annualMonthsCharged: expectedChargedMonths,
+    annualServiceMonths: expectedServiceMonths,
     checkoutUrl: normalizedCheckoutUrl,
   };
 }

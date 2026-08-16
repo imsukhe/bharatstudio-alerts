@@ -23,6 +23,23 @@ export function createSqlClient(databaseUrl: string): Sql {
     max: 10,
     prepare: false,
     onnotice: () => undefined,
+    // postgres.js returns bigint/int8 columns as JS strings by default —
+    // safe in general (int8 can exceed Number.MAX_SAFE_INTEGER), but every
+    // bigint column this schema actually uses (version counters, queue
+    // counts, paise amounts) is always well within that range, and every
+    // domain type in this codebase declares these fields as `number`. Left
+    // unconfigured, JSON responses silently carry `"1"` instead of `1` for
+    // every such field — every apps/api unit test uses a mocked store and
+    // never touches a real Postgres connection, so this only ever
+    // surfaces against a live database, not the fake-store test suite.
+    types: {
+      bigint: {
+        to: 20,
+        from: [20],
+        serialize: (value: number) => String(value),
+        parse: (value: string) => Number(value),
+      },
+    },
   });
 }
 

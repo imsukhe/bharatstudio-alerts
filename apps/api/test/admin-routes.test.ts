@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildApp } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';
-import type { AdminStore, DlqEntry } from '../src/domain/admin.js';
+import type { AdminStore, ChannelEntitlementAdminView, DlqEntry } from '../src/domain/admin.js';
 
 const config: RuntimeConfig = { nodeEnv: 'test', host: '127.0.0.1', port: 4100, appOrigin: 'http://localhost:3100', paymentEnvironment: 'test' };
 const adminUserId = '00000000-0000-4000-8000-000000000901';
@@ -28,12 +28,20 @@ const entry: DlqEntry = {
   attemptCount: 0, lastErrorCode: null, createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z',
 };
 
+const entitlementView: ChannelEntitlementAdminView = {
+  channelId: '00000000-0000-4000-8000-000000000911', channelHandle: 'dlq_channel_a', version: 2, tier: 'creator',
+  source: 'admin_override', values: { queueCount: 8, adminOverrideReason: 'support case #123' }, effectiveAt: '2026-08-16T00:00:00.000Z',
+};
+
 function adminOnlyStore(overrides: Partial<AdminStore> = {}): AdminStore {
   return {
     async isPlatformAdmin(userId) { return userId === adminUserId; },
     async listDlq() { return [entry]; },
     async replayDlqDelivery() { return { deliveryId, status: 'ready' }; },
     async discardDlqDelivery() { return { deliveryId, status: 'discarded' }; },
+    async getChannelEntitlement() { return entitlementView; },
+    async listChannelEntitlementHistory() { return [{ version: 1, tier: entitlementView.tier, source: entitlementView.source, values: entitlementView.values, effectiveAt: entitlementView.effectiveAt, createdAt: entitlementView.effectiveAt }]; },
+    async overrideChannelEntitlement() { return entitlementView; },
     ...overrides,
   };
 }
@@ -114,4 +122,50 @@ test('a store failure never leaks provider/database detail through the admin rou
   assert.equal(response.statusCode, 503);
   assert.equal(JSON.stringify(response.json()).includes('postgres://'), false);
   await app.close();
+});
+
+test('admin entitlement routes are platform-admin-only and return the current view, history and override result', async () => {
+  const app = await buildApp(config, { sessions, admin: adminOnlyStore() });
+  const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
+  const channelId = entitlementView.channelId;
+
+  const current = await app.inject({ method: 'GET', url: `/v1/admin/channels/${channelId}/entitlement`, headers });
+  assert.equal(current.statusCode, 200);
+  assert.equal(current.json().tier, 'creator');
+
+  const history = await app.inject({ method: 'GET', url: `/v1/admin/channels/${channelId}/entitlement/history`, headers });
+  assert.equal(history.statusCode, 200);
+  assert.equal(history.json().history.length, 1);
+
+  const notAdmin = await app.inject({ method: 'GET', url: `/v1/admin/channels/${channelId}/entitlement`, headers: { authorization: `Bearer ${'b'.repeat(48)}` } });
+  assert.equal(notAdmin.statusCode, 403);
+  await app.close();
+});
+
+test('the entitlement override endpoint forwards queueCount/reason, rejects an out-of-range value, and maps a missing channel to 404', async () => {
+  let seen: { channelId: string; queueCount: number; reason: string } | undefined;
+  const store = adminOnlyStore({
+    async overrideChannelEntitlement(userId, channelId, queueCount, reason) { seen = { channelId, queueCount, reason }; return entitlementView; },
+  });
+  const app = await buildApp(config, { sessions, admin: store });
+  const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
+  const channelId = entitlementView.channelId;
+
+  const overridden = await app.inject({ method: 'POST', url: `/v1/admin/channels/${channelId}/entitlement/override`, headers, payload: { queueCount: 8, reason: 'support case #123' } });
+  assert.equal(overridden.statusCode, 200);
+  assert.deepEqual(seen, { channelId, queueCount: 8, reason: 'support case #123' });
+
+  const outOfRange = await app.inject({ method: 'POST', url: `/v1/admin/channels/${channelId}/entitlement/override`, headers, payload: { queueCount: 0, reason: 'x' } });
+  assert.equal(outOfRange.statusCode, 400);
+
+  const missingReason = await app.inject({ method: 'POST', url: `/v1/admin/channels/${channelId}/entitlement/override`, headers, payload: { queueCount: 5 } });
+  assert.equal(missingReason.statusCode, 400);
+  await app.close();
+
+  const notFoundStore = adminOnlyStore({ async overrideChannelEntitlement() { return null; } });
+  const notFoundApp = await buildApp(config, { sessions, admin: notFoundStore });
+  const notFound = await notFoundApp.inject({ method: 'POST', url: `/v1/admin/channels/${channelId}/entitlement/override`, headers, payload: { queueCount: 5, reason: 'x' } });
+  assert.equal(notFound.statusCode, 404);
+  assert.equal(notFound.json().errorCode, 'channel_not_found');
+  await notFoundApp.close();
 });

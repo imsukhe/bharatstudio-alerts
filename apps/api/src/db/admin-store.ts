@@ -1,5 +1,5 @@
 import type { Sql, TransactionSql } from 'postgres';
-import type { AdminStore, DlqActionResult, DlqEntry, DlqStatusFilter } from '../domain/admin.js';
+import type { AdminStore, ChannelEntitlementAdminView, ChannelEntitlementHistoryEntry, DlqActionResult, DlqEntry, DlqStatusFilter } from '../domain/admin.js';
 
 async function inUserTransaction<T>(sql: Sql, userId: string, callback: (tx: TransactionSql) => Promise<T>): Promise<T> {
   const result = await sql.begin(async (tx) => {
@@ -17,9 +17,10 @@ async function inUserTransaction<T>(sql: Sql, userId: string, callback: (tx: Tra
 // checked before either function is ever called — is left to propagate and
 // is handled generically by the route layer.
 const INVALID_STATE_SQLSTATE = '22023';
+const FOREIGN_KEY_VIOLATION_SQLSTATE = '23503';
 
-function isInvalidStateError(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === INVALID_STATE_SQLSTATE;
+function hasSqlstate(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === code;
 }
 
 export function createSqlAdminStore(sql: Sql): AdminStore {
@@ -53,7 +54,7 @@ export function createSqlAdminStore(sql: Sql): AdminStore {
         const row = rows[0];
         return row ? { deliveryId: row.delivery_id, status: row.status } : null;
       } catch (error) {
-        if (isInvalidStateError(error)) return null;
+        if (hasSqlstate(error, INVALID_STATE_SQLSTATE)) return null;
         throw error;
       }
     },
@@ -65,7 +66,54 @@ export function createSqlAdminStore(sql: Sql): AdminStore {
         const row = rows[0];
         return row ? { deliveryId: row.delivery_id, status: row.status } : null;
       } catch (error) {
-        if (isInvalidStateError(error)) return null;
+        if (hasSqlstate(error, INVALID_STATE_SQLSTATE)) return null;
+        throw error;
+      }
+    },
+    async getChannelEntitlement(userId, channelId): Promise<ChannelEntitlementAdminView | null> {
+      const rows = await inUserTransaction(sql, userId, (tx) => tx<{
+        channel_id: string; channel_handle: string; version: string; tier: string;
+        source: ChannelEntitlementAdminView['source']; entitlement_values: Record<string, unknown>; effective_at: Date;
+      }[]>`
+        select channel_id, channel_handle, version, tier, source, entitlement_values, effective_at
+          from app_private.get_channel_entitlement_admin(${channelId}::uuid)
+      `);
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        channelId: row.channel_id, channelHandle: row.channel_handle, version: Number(row.version), tier: row.tier,
+        source: row.source, values: row.entitlement_values, effectiveAt: row.effective_at.toISOString(),
+      };
+    },
+    async listChannelEntitlementHistory(userId, channelId, limit): Promise<ChannelEntitlementHistoryEntry[]> {
+      const rows = await inUserTransaction(sql, userId, (tx) => tx<{
+        version: string; tier: string; source: ChannelEntitlementHistoryEntry['source'];
+        entitlement_values: Record<string, unknown>; effective_at: Date; created_at: Date;
+      }[]>`
+        select version, tier, source, entitlement_values, effective_at, created_at
+          from app_private.list_channel_entitlement_history(${channelId}::uuid, ${limit})
+      `);
+      return rows.map((row): ChannelEntitlementHistoryEntry => ({
+        version: Number(row.version), tier: row.tier, source: row.source, values: row.entitlement_values,
+        effectiveAt: row.effective_at.toISOString(), createdAt: row.created_at.toISOString(),
+      }));
+    },
+    async overrideChannelEntitlement(userId, channelId, queueCount, reason): Promise<ChannelEntitlementAdminView | null> {
+      try {
+        const rows = await inUserTransaction(sql, userId, (tx) => tx<{
+          channel_id: string; channel_handle: string; version: string; tier: string; entitlement_values: Record<string, unknown>;
+        }[]>`
+          select channel_id, channel_handle, version, tier, entitlement_values
+            from app_private.admin_override_channel_entitlement(${channelId}::uuid, ${userId}::uuid, ${queueCount}, ${reason})
+        `);
+        const row = rows[0];
+        if (!row) throw new Error('Entitlement override did not return a result');
+        return {
+          channelId: row.channel_id, channelHandle: row.channel_handle, version: Number(row.version), tier: row.tier,
+          source: 'admin_override', values: row.entitlement_values, effectiveAt: new Date().toISOString(),
+        };
+      } catch (error) {
+        if (hasSqlstate(error, FOREIGN_KEY_VIOLATION_SQLSTATE)) return null;
         throw error;
       }
     },

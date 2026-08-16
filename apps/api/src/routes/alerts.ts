@@ -117,4 +117,116 @@ export async function registerAlertRoutes(app: FastifyInstance, sessions?: Sessi
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'subscription_unavailable', message: 'Subscription billing is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
+
+  function requireIdempotencyKey(request: { headers: Record<string, unknown> }, reply: { code: (status: number) => { send: (body: unknown) => unknown } }, traceId: string): string | null {
+    const idempotencyKey = request.headers['idempotency-key'];
+    if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) {
+      reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_idempotency_key', message: 'A valid Idempotency-Key header is required', traceId, retryable: false });
+      return null;
+    }
+    return idempotencyKey;
+  }
+
+  // Maps the lifecycle client's own thrown/rejected outcomes to safe, stable
+  // HTTP responses without ever forwarding provider error text to the
+  // browser — mirrors createSubscription's failure handling above. The
+  // client only throws for transport/validation failures; provider-side
+  // outcomes (no_active_subscription, provider_rejected_request, etc.) are
+  // carried as HTTP error responses that surface as thrown errors with a
+  // `code` from the underlying request library, which we do not trust
+  // enough to relay verbatim — every case still fails closed as 503.
+  function subscriptionLifecycleUnavailable(reply: { code: (status: number) => { send: (body: unknown) => unknown } }, traceId: string) {
+    return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'subscription_lifecycle_unavailable', message: 'Subscription billing changes are temporarily unavailable', traceId, retryable: true });
+  }
+
+  app.post<{ Params: { channelId: string } }>('/v1/channels/:channelId/billing/subscription/cancel', {
+    preHandler: termsAuth,
+    schema: { params: channelParams },
+  }, async (request, reply) => {
+    if (!paymentSubscriptions || !request.auth) return subscriptionLifecycleUnavailable(reply, request.id);
+    const idempotencyKey = requireIdempotencyKey(request, reply, request.id);
+    if (!idempotencyKey) return;
+    try {
+      const result = await paymentSubscriptions.cancelSubscription({
+        userId: request.auth.userId, channelId: request.params.channelId, environment: paymentEnvironment, idempotencyKey,
+      }, request.id);
+      return reply.code(200).send(result);
+    } catch (error) {
+      logSafeError(request, 'subscription_cancel_failed', error);
+      return subscriptionLifecycleUnavailable(reply, request.id);
+    }
+  });
+
+  app.post<{ Params: { channelId: string }; Body: { targetTier: 'pro' | 'creator' | 'studio'; billingInterval: 'monthly' | 'annual' } }>('/v1/channels/:channelId/billing/subscription/upgrade', {
+    preHandler: termsAuth,
+    schema: {
+      params: channelParams,
+      body: {
+        type: 'object', additionalProperties: false, required: ['targetTier', 'billingInterval'],
+        properties: { targetTier: { type: 'string', enum: ['pro', 'creator', 'studio'] }, billingInterval: { type: 'string', enum: ['monthly', 'annual'] } },
+      },
+    },
+  }, async (request, reply) => {
+    if (!paymentSubscriptions || !request.auth) return subscriptionLifecycleUnavailable(reply, request.id);
+    const idempotencyKey = requireIdempotencyKey(request, reply, request.id);
+    if (!idempotencyKey) return;
+    try {
+      const result = await paymentSubscriptions.changeSubscriptionPlan({
+        userId: request.auth.userId, channelId: request.params.channelId, environment: paymentEnvironment, idempotencyKey,
+        targetTier: request.body.targetTier, billingInterval: request.body.billingInterval,
+      }, 'upgrade', request.id);
+      return reply.code(200).send(result);
+    } catch (error) {
+      logSafeError(request, 'subscription_upgrade_failed', error);
+      return subscriptionLifecycleUnavailable(reply, request.id);
+    }
+  });
+
+  // Per the launch authority's pricing rules, an upgrade takes effect
+  // immediately (the creator pays the new price now) while a downgrade only
+  // takes effect at the end of the already-paid cycle (never a mid-cycle
+  // refund) — the two are separate routes so the client's intent is
+  // explicit rather than inferred server-side from a tier comparison.
+  app.post<{ Params: { channelId: string }; Body: { targetTier: 'pro' | 'creator' | 'studio'; billingInterval: 'monthly' | 'annual' } }>('/v1/channels/:channelId/billing/subscription/downgrade', {
+    preHandler: termsAuth,
+    schema: {
+      params: channelParams,
+      body: {
+        type: 'object', additionalProperties: false, required: ['targetTier', 'billingInterval'],
+        properties: { targetTier: { type: 'string', enum: ['pro', 'creator', 'studio'] }, billingInterval: { type: 'string', enum: ['monthly', 'annual'] } },
+      },
+    },
+  }, async (request, reply) => {
+    if (!paymentSubscriptions || !request.auth) return subscriptionLifecycleUnavailable(reply, request.id);
+    const idempotencyKey = requireIdempotencyKey(request, reply, request.id);
+    if (!idempotencyKey) return;
+    try {
+      const result = await paymentSubscriptions.changeSubscriptionPlan({
+        userId: request.auth.userId, channelId: request.params.channelId, environment: paymentEnvironment, idempotencyKey,
+        targetTier: request.body.targetTier, billingInterval: request.body.billingInterval,
+      }, 'downgrade', request.id);
+      return reply.code(200).send(result);
+    } catch (error) {
+      logSafeError(request, 'subscription_downgrade_failed', error);
+      return subscriptionLifecycleUnavailable(reply, request.id);
+    }
+  });
+
+  app.post<{ Params: { channelId: string } }>('/v1/channels/:channelId/billing/subscription/reactivate', {
+    preHandler: termsAuth,
+    schema: { params: channelParams },
+  }, async (request, reply) => {
+    if (!paymentSubscriptions || !request.auth) return subscriptionLifecycleUnavailable(reply, request.id);
+    const idempotencyKey = requireIdempotencyKey(request, reply, request.id);
+    if (!idempotencyKey) return;
+    try {
+      const result = await paymentSubscriptions.reactivateSubscription({
+        userId: request.auth.userId, channelId: request.params.channelId, environment: paymentEnvironment, idempotencyKey,
+      }, request.id);
+      return reply.code(200).send(result);
+    } catch (error) {
+      logSafeError(request, 'subscription_reactivate_failed', error);
+      return subscriptionLifecycleUnavailable(reply, request.id);
+    }
+  });
 }

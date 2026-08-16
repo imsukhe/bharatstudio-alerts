@@ -115,7 +115,9 @@ func run() error {
 		return fmt.Errorf("configure worker pump: %w", err)
 	}
 	checkoutService := checkout.NewService(store, orders)
-	subscriptionService := subscription.NewService(store, orders, subscription.EnvironmentCatalog(environment))
+	subscriptionCatalog := subscription.EnvironmentCatalog(environment)
+	subscriptionService := subscription.NewService(store, orders, subscriptionCatalog)
+	subscriptionLifecycleService := subscription.NewLifecycleService(store, orders, orders, subscriptionCatalog)
 	googleVerifier, err := auth.NewGoogleTokenVerifier(ctx, privateAudience)
 	if err != nil {
 		return fmt.Errorf("configure private oidc verifier: %w", err)
@@ -147,6 +149,7 @@ func run() error {
 	mux.Handle("/v1/webhooks/razorpay", ingress.Handler{Secret: webhookSecret, Store: store, Pumper: workerPumper, Metrics: metrics, Logger: logger})
 	mux.Handle("/internal/v1/tips/orders", checkout.HTTPHandler{Authorizer: privateAuthorizer, Service: checkoutService, Environment: environment, Metrics: metrics})
 	mux.Handle("/internal/v1/subscriptions", subscription.HTTPHandler{Authorizer: privateAuthorizer, Service: subscriptionService, Environment: environment})
+	mux.Handle("/internal/v1/subscriptions/lifecycle", subscription.LifecycleHTTPHandler{Authorizer: privateAuthorizer, Service: subscriptionLifecycleService, Environment: environment})
 	mux.Handle("/internal/v1/reconciliation/payments", reconciliationHandler)
 	mux.Handle("/internal/v1/reconciliation/refunds", refundReconciliationHandler)
 	mux.Handle("/internal/metrics", metrics.Endpoint(privateAuthorizer.Authorize))

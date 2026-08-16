@@ -175,6 +175,236 @@ func (s Service) Create(ctx context.Context, request Request) (Intent, error) {
 	return linked, nil
 }
 
+// --- Lifecycle (cancel / change plan / reactivate) ---------------------
+//
+// Unlike Create, these do not themselves change channel_subscriptions
+// state — that remains exclusively the job of the already-implemented,
+// already-tested verified-webhook path (apply_channel_subscription_state).
+// These methods only: (1) resolve which provider subscription the request
+// targets, (2) record the request idempotently, (3) call Razorpay, (4) mark
+// the request's provider-call outcome. The confirming state transition
+// arrives later via Razorpay's own subscription.cancelled/updated webhook.
+
+var (
+	ErrNoActiveSubscription = errors.New("no active subscription for channel")
+	ErrLifecyclePersistence = errors.New("subscription lifecycle request could not be recorded")
+)
+
+type ActiveSubscriptionRef struct {
+	ProviderAccountRef string
+	SubscriptionID     string
+	Tier               string
+	BillingInterval    string
+	Status             string
+	AutoRenew          bool
+}
+
+type LifecycleRequest struct {
+	ID                     string
+	Status                 string
+	ProviderResponseStatus string
+	Replay                 bool
+}
+
+// All three lifecycle requests below operate exclusively on channel_subscriptions
+// (BharatStudio's own platform Pro/Creator/Studio billing) — never on a
+// creator's connected payout account — so, like the plan catalog itself
+// (see catalog.go), the provider account scope is always "platform".
+const platformAccountScope = "platform"
+
+type CancelRequest struct {
+	ChannelID      string
+	UserID         string
+	Environment    string
+	IdempotencyKey string
+}
+
+type ChangePlanRequest struct {
+	ChannelID       string
+	UserID          string
+	Environment     string
+	IdempotencyKey  string
+	TargetTier      string
+	BillingInterval string
+}
+
+type ReactivateRequest struct {
+	ChannelID      string
+	UserID         string
+	Environment    string
+	IdempotencyKey string
+}
+
+type LifecycleStore interface {
+	GetActiveSubscriptionRef(ctx context.Context, channelID string) (ActiveSubscriptionRef, bool, error)
+	RecordLifecycleRequest(ctx context.Context, id, channelID, userID, action, idempotencyKey, providerSubscriptionID, targetTier, targetBillingInterval string) (LifecycleRequest, error)
+	CompleteLifecycleRequest(ctx context.Context, id, status, providerResponseStatus string) error
+}
+
+type CancelProviderClient interface {
+	CancelSubscription(context.Context, provider.CancelSubscriptionRequest) (provider.Subscription, error)
+}
+
+type UpdatePlanProviderClient interface {
+	UpdateSubscriptionPlan(context.Context, provider.UpdateSubscriptionPlanRequest) (provider.Subscription, error)
+}
+
+type LifecycleService struct {
+	store     LifecycleStore
+	canceller CancelProviderClient
+	updater   UpdatePlanProviderClient
+	catalog   PlanCatalog
+	newID     func() (string, error)
+}
+
+func NewLifecycleService(store LifecycleStore, canceller CancelProviderClient, updater UpdatePlanProviderClient, catalog PlanCatalog) LifecycleService {
+	return LifecycleService{store: store, canceller: canceller, updater: updater, catalog: catalog, newID: randomUUID}
+}
+
+func (s LifecycleService) resolveActive(ctx context.Context, channelID string) (ActiveSubscriptionRef, error) {
+	ref, ok, err := s.store.GetActiveSubscriptionRef(ctx, channelID)
+	if err != nil {
+		return ActiveSubscriptionRef{}, err
+	}
+	if !ok {
+		return ActiveSubscriptionRef{}, ErrNoActiveSubscription
+	}
+	return ref, nil
+}
+
+// Cancel requests Razorpay stop future charges, keeping access through the
+// already-paid period (cancel_at_cycle_end=true) — matching the launch
+// authority's self-serve-cancellation requirement.
+func (s LifecycleService) Cancel(ctx context.Context, request CancelRequest) (LifecycleRequest, error) {
+	if s.store == nil || s.canceller == nil {
+		return LifecycleRequest{}, ErrNotConfigured
+	}
+	if request.ChannelID == "" || request.UserID == "" || request.IdempotencyKey == "" {
+		return LifecycleRequest{}, ErrInvalidRequest
+	}
+	ref, err := s.resolveActive(ctx, request.ChannelID)
+	if err != nil {
+		return LifecycleRequest{}, err
+	}
+	id, err := s.newID()
+	if err != nil {
+		return LifecycleRequest{}, ErrLifecyclePersistence
+	}
+	recorded, err := s.store.RecordLifecycleRequest(ctx, id, request.ChannelID, request.UserID, "cancel", request.IdempotencyKey, ref.SubscriptionID, "", "")
+	if err != nil {
+		return LifecycleRequest{}, err
+	}
+	if recorded.Replay {
+		return recorded, nil
+	}
+	_, providerErr := s.canceller.CancelSubscription(ctx, provider.CancelSubscriptionRequest{
+		ProviderAccountRef: ref.ProviderAccountRef, AccountScope: platformAccountScope,
+		SubscriptionID: ref.SubscriptionID, CancelAtCycleEnd: true,
+	})
+	status, responseStatus := completionStatus(providerErr)
+	_ = s.store.CompleteLifecycleRequest(ctx, recorded.ID, status, responseStatus)
+	if providerErr != nil {
+		return LifecycleRequest{}, providerErr
+	}
+	recorded.Status = status
+	return recorded, nil
+}
+
+// ChangePlan drives both upgrade (immediate — "now") and downgrade
+// (scheduled — "cycle_end", so a creator never pays more mid-cycle than the
+// plan they were on when the cycle started). The Plan resolution reuses the
+// exact same approved catalog Create() uses, so a caller can never request
+// an unapproved plan/price.
+func (s LifecycleService) ChangePlan(ctx context.Context, request ChangePlanRequest, scheduleAtCycleEnd bool) (LifecycleRequest, error) {
+	if s.store == nil || s.updater == nil || s.catalog == nil {
+		return LifecycleRequest{}, ErrNotConfigured
+	}
+	if request.ChannelID == "" || request.UserID == "" || request.IdempotencyKey == "" || request.TargetTier == "" || request.BillingInterval == "" {
+		return LifecycleRequest{}, ErrInvalidRequest
+	}
+	plan, ok := s.catalog.Resolve(request.Environment, request.TargetTier, request.BillingInterval)
+	if !ok || plan.ProviderPlanID == "" {
+		return LifecycleRequest{}, ErrNotConfigured
+	}
+	ref, err := s.resolveActive(ctx, request.ChannelID)
+	if err != nil {
+		return LifecycleRequest{}, err
+	}
+	id, err := s.newID()
+	if err != nil {
+		return LifecycleRequest{}, ErrLifecyclePersistence
+	}
+	recorded, err := s.store.RecordLifecycleRequest(ctx, id, request.ChannelID, request.UserID, "change_plan", request.IdempotencyKey, ref.SubscriptionID, request.TargetTier, request.BillingInterval)
+	if err != nil {
+		return LifecycleRequest{}, err
+	}
+	if recorded.Replay {
+		return recorded, nil
+	}
+	_, providerErr := s.updater.UpdateSubscriptionPlan(ctx, provider.UpdateSubscriptionPlanRequest{
+		ProviderAccountRef: ref.ProviderAccountRef, AccountScope: platformAccountScope,
+		SubscriptionID: ref.SubscriptionID, PlanID: plan.ProviderPlanID, ScheduleChangeAtCycleEnd: scheduleAtCycleEnd,
+	})
+	status, responseStatus := completionStatus(providerErr)
+	_ = s.store.CompleteLifecycleRequest(ctx, recorded.ID, status, responseStatus)
+	if providerErr != nil {
+		return LifecycleRequest{}, providerErr
+	}
+	recorded.Status = status
+	return recorded, nil
+}
+
+// Reactivate clears a pending cycle-end cancellation by re-submitting the
+// subscription's current plan with schedule_change_at="now". This specific
+// Razorpay behaviour (does a plan-update PATCH clear cancel_at_cycle_end?)
+// is not yet verified against a live sandbox — flagged as an external gate
+// alongside the rest of L04's provider-behaviour list, not assumed here.
+func (s LifecycleService) Reactivate(ctx context.Context, request ReactivateRequest) (LifecycleRequest, error) {
+	if s.store == nil || s.updater == nil {
+		return LifecycleRequest{}, ErrNotConfigured
+	}
+	if request.ChannelID == "" || request.UserID == "" || request.IdempotencyKey == "" {
+		return LifecycleRequest{}, ErrInvalidRequest
+	}
+	ref, err := s.resolveActive(ctx, request.ChannelID)
+	if err != nil {
+		return LifecycleRequest{}, err
+	}
+	plan, ok := s.catalog.Resolve(request.Environment, ref.Tier, ref.BillingInterval)
+	if !ok || plan.ProviderPlanID == "" {
+		return LifecycleRequest{}, ErrNotConfigured
+	}
+	id, err := s.newID()
+	if err != nil {
+		return LifecycleRequest{}, ErrLifecyclePersistence
+	}
+	recorded, err := s.store.RecordLifecycleRequest(ctx, id, request.ChannelID, request.UserID, "reactivate", request.IdempotencyKey, ref.SubscriptionID, "", "")
+	if err != nil {
+		return LifecycleRequest{}, err
+	}
+	if recorded.Replay {
+		return recorded, nil
+	}
+	_, providerErr := s.updater.UpdateSubscriptionPlan(ctx, provider.UpdateSubscriptionPlanRequest{
+		ProviderAccountRef: ref.ProviderAccountRef, AccountScope: platformAccountScope,
+		SubscriptionID: ref.SubscriptionID, PlanID: plan.ProviderPlanID, ScheduleChangeAtCycleEnd: false,
+	})
+	status, responseStatus := completionStatus(providerErr)
+	_ = s.store.CompleteLifecycleRequest(ctx, recorded.ID, status, responseStatus)
+	if providerErr != nil {
+		return LifecycleRequest{}, providerErr
+	}
+	recorded.Status = status
+	return recorded, nil
+}
+
+func completionStatus(err error) (status, responseStatus string) {
+	if err != nil {
+		return "provider_failed", err.Error()
+	}
+	return "provider_confirmed", ""
+}
+
 func randomUUID() (string, error) {
 	value := make([]byte, 16)
 	if _, err := rand.Read(value); err != nil {

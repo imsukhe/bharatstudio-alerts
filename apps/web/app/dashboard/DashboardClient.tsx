@@ -186,8 +186,18 @@ export default function DashboardClient() {
 
   async function moderate(eventId: string, action: 'approve' | 'hold' | 'suppress' | 'replay') {
     if (!channel) return;
+    // Approve is a simple confirmation; hold/suppress/replay change what a
+    // viewer sees or re-triggers delivery, so — matching legacy's required
+    // rejection reason — collect a written reason for the audit trail
+    // before recording those.
+    let reason: string | undefined;
+    if (action !== 'approve') {
+      const entered = window.prompt(`Reason for "${action}" (kept in the audit trail):`);
+      if (entered === null) return; // cancelled
+      reason = entered.trim() || undefined;
+    }
     try {
-      await moderateAlert(channel.channelId, eventId, action);
+      await moderateAlert(channel.channelId, eventId, action, reason);
       setMessage(`Alert ${action} action recorded.`);
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Moderation action could not be recorded');

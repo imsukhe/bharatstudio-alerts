@@ -116,6 +116,65 @@ select id::text, channel_id::text, user_id::text, environment,
 	return scanSubscriptionIntent(row)
 }
 
+// GetActiveSubscriptionRef resolves the channel's current active/past_due
+// Razorpay subscription so a lifecycle request (cancel/change-plan/
+// reactivate) knows which provider entity to call. Returns ok=false when the
+// channel has no active-or-past_due subscription (nothing to act on).
+func (s *SQLStore) GetActiveSubscriptionRef(ctx context.Context, channelID string) (subscription.ActiveSubscriptionRef, bool, error) {
+	var ref subscription.ActiveSubscriptionRef
+	err := s.db.QueryRowContext(ctx, `
+select provider_account_ref, provider_subscription_id, tier, billing_interval, status, auto_renew
+  from app_private.get_active_subscription_ref($1::uuid)`, channelID,
+	).Scan(&ref.ProviderAccountRef, &ref.SubscriptionID, &ref.Tier, &ref.BillingInterval, &ref.Status, &ref.AutoRenew)
+	if errors.Is(err, sql.ErrNoRows) {
+		return subscription.ActiveSubscriptionRef{}, false, nil
+	}
+	if err != nil {
+		return subscription.ActiveSubscriptionRef{}, false, err
+	}
+	return ref, true, nil
+}
+
+// RecordLifecycleRequest is the idempotent audit step before a lifecycle
+// request calls Razorpay — a retried request with the same idempotency key
+// returns the original outcome (replay=true) rather than calling the
+// provider twice.
+func (s *SQLStore) RecordLifecycleRequest(ctx context.Context, id, channelID, userID, action, idempotencyKey, providerSubscriptionID, targetTier, targetBillingInterval string) (subscription.LifecycleRequest, error) {
+	var result subscription.LifecycleRequest
+	var providerResponseStatus sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+select id::text, status, provider_response_status, replay
+  from app_private.record_subscription_lifecycle_request(
+    $1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, $6::text,
+    nullif($7, '')::text, nullif($8, '')::text
+  )`, id, channelID, userID, action, idempotencyKey, providerSubscriptionID, targetTier, targetBillingInterval,
+	).Scan(&result.ID, &result.Status, &providerResponseStatus, &result.Replay)
+	if err != nil {
+		return subscription.LifecycleRequest{}, err
+	}
+	if providerResponseStatus.Valid {
+		result.ProviderResponseStatus = providerResponseStatus.String
+	}
+	return result, nil
+}
+
+// CompleteLifecycleRequest marks a lifecycle request's terminal outcome
+// after the Razorpay call returns (or fails).
+func (s *SQLStore) CompleteLifecycleRequest(ctx context.Context, id, status, providerResponseStatus string) error {
+	var found bool
+	err := s.db.QueryRowContext(ctx, `
+select app_private.complete_subscription_lifecycle_request($1::uuid, $2::text, nullif($3, ''))`,
+		id, status, providerResponseStatus,
+	).Scan(&found)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 type subscriptionIntentScanner interface {
 	Scan(dest ...any) error
 }

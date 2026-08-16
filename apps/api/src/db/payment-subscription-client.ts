@@ -1,7 +1,23 @@
 import { GoogleAuth, type IdTokenClient } from 'google-auth-library';
-import type { BillingSubscription, CreateBillingSubscriptionInput, PaymentSubscriptionService } from '../domain/payment-subscription.js';
+import type {
+  BillingSubscription,
+  CancelSubscriptionInput,
+  ChangeSubscriptionPlanInput,
+  CreateBillingSubscriptionInput,
+  PaymentSubscriptionService,
+  ReactivateSubscriptionInput,
+  SubscriptionLifecycleAction,
+  SubscriptionLifecycleResult,
+} from '../domain/payment-subscription.js';
 
 type Transport = (client: IdTokenClient, url: string, body: CreateBillingSubscriptionInput, traceId: string) => Promise<unknown>;
+
+type LifecycleRequestBody =
+  | ({ action: 'cancel' } & CancelSubscriptionInput)
+  | ({ action: 'upgrade' | 'downgrade' } & ChangeSubscriptionPlanInput)
+  | ({ action: 'reactivate' } & ReactivateSubscriptionInput);
+
+type LifecycleTransport = (client: IdTokenClient, url: string, body: LifecycleRequestBody, traceId: string) => Promise<unknown>;
 
 function normalizeTraceId(traceId: string): string {
   const normalized = traceId.trim();
@@ -49,6 +65,23 @@ function assertSubscription(value: unknown, input: CreateBillingSubscriptionInpu
   };
 }
 
+function assertLifecycleResult(value: unknown, action: SubscriptionLifecycleAction): SubscriptionLifecycleResult {
+  if (!value || typeof value !== 'object') throw new Error('invalid payment service response');
+  const response = value as Record<string, unknown>;
+  const allowed = new Set(['schemaVersion', 'action', 'requestId', 'status', 'replay']);
+  if (
+    !Object.keys(response).every((key) => allowed.has(key)) ||
+    response.schemaVersion !== 'v1' ||
+    response.action !== action ||
+    !isProviderIdentifier(response.requestId) ||
+    (response.status !== 'requested' && response.status !== 'provider_confirmed' && response.status !== 'provider_failed') ||
+    typeof response.replay !== 'boolean'
+  ) {
+    throw new Error('invalid payment service response');
+  }
+  return { schemaVersion: 'v1', action, requestId: response.requestId, status: response.status, replay: response.replay };
+}
+
 export function createGooglePaymentSubscriptionService(
   origin: string,
   audience: string,
@@ -58,18 +91,41 @@ export function createGooglePaymentSubscriptionService(
     return response.data;
   },
   clientFactory?: () => Promise<IdTokenClient>,
+  lifecycleTransport: LifecycleTransport = async (client, url, body, traceId) => {
+    const response = await client.request({ method: 'POST', url, data: body, headers: { 'content-type': 'application/json', 'idempotency-key': body.idempotencyKey, 'x-bsa-trace-id': traceId }, timeout: 10_000 });
+    return response.data;
+  },
 ): PaymentSubscriptionService {
   const parsed = new URL(origin);
   if ((nodeEnv === 'staging' || nodeEnv === 'production') && parsed.protocol !== 'https:') throw new Error('PAYMENT_SERVICE_ORIGIN must use HTTPS outside development');
   if (!audience.trim()) throw new Error('PAYMENT_SERVICE_AUDIENCE is required when payment service is configured');
   const auth = new GoogleAuth();
   let clientPromise: Promise<IdTokenClient> | undefined;
+  const getClient = async () => {
+    clientPromise ??= clientFactory ? clientFactory() : auth.getIdTokenClient(audience);
+    return clientPromise;
+  };
+  const lifecycleUrl = `${parsed.origin}/internal/v1/subscriptions/lifecycle`;
   return {
     async createSubscription(input, traceId = 'api-request') {
-      clientPromise ??= clientFactory ? clientFactory() : auth.getIdTokenClient(audience);
-      const client = await clientPromise;
+      const client = await getClient();
       const response = await transport(client, `${parsed.origin}/internal/v1/subscriptions`, input, normalizeTraceId(traceId));
       return assertSubscription(response, input);
+    },
+    async cancelSubscription(input, traceId = 'api-request') {
+      const client = await getClient();
+      const response = await lifecycleTransport(client, lifecycleUrl, { action: 'cancel', ...input }, normalizeTraceId(traceId));
+      return assertLifecycleResult(response, 'cancel');
+    },
+    async changeSubscriptionPlan(input, action, traceId = 'api-request') {
+      const client = await getClient();
+      const response = await lifecycleTransport(client, lifecycleUrl, { action, ...input }, normalizeTraceId(traceId));
+      return assertLifecycleResult(response, action);
+    },
+    async reactivateSubscription(input, traceId = 'api-request') {
+      const client = await getClient();
+      const response = await lifecycleTransport(client, lifecycleUrl, { action: 'reactivate', ...input }, normalizeTraceId(traceId));
+      return assertLifecycleResult(response, 'reactivate');
     },
   };
 }

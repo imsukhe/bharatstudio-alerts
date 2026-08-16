@@ -130,6 +130,130 @@ func (c Client) CreateSubscription(ctx context.Context, request CreateSubscripti
 	return subscription, nil
 }
 
+// CancelSubscriptionRequest requests Razorpay stop future charges on an
+// existing subscription. CancelAtCycleEnd=true keeps the subscription (and
+// the creator's access, via the still-active webhook-confirmed period) live
+// through the period already paid for — matching the launch authority's
+// self-serve-cancellation requirement without cutting access mid-period the
+// creator already paid for. CancelAtCycleEnd=false cancels immediately.
+type CancelSubscriptionRequest struct {
+	ProviderAccountRef string
+	AccountScope       string
+	SubscriptionID     string
+	CancelAtCycleEnd   bool
+}
+
+// CancelSubscription calls Razorpay's POST /v1/subscriptions/:id/cancel.
+// The confirming state change (channel_subscriptions.status='cancelled')
+// only happens later via the already-implemented, already-tested verified
+// webhook path (apply_channel_subscription_state) — this call only tells
+// Razorpay to stop future charges; it does not itself change local billing
+// state, consistent with the release invariant that financial truth comes
+// from verified webhook/reconciliation evidence.
+func (c Client) CancelSubscription(ctx context.Context, request CancelSubscriptionRequest) (Subscription, error) {
+	if !validConnectedAccountRef(request.ProviderAccountRef) || (request.AccountScope != "platform" && request.AccountScope != "connected") || !validProviderID(request.SubscriptionID) {
+		return Subscription{}, ErrInvalidOrderRequest
+	}
+	body, err := json.Marshal(struct {
+		CancelAtCycleEnd int `json:"cancel_at_cycle_end"`
+	}{CancelAtCycleEnd: boolToInt(request.CancelAtCycleEnd)})
+	if err != nil {
+		return Subscription{}, fmt.Errorf("marshal razorpay subscription cancel request: %w", err)
+	}
+	path := "/v1/subscriptions/" + url.PathEscape(request.SubscriptionID) + "/cancel"
+	return c.doSubscriptionMutation(ctx, http.MethodPost, path, body, request.AccountScope, request.ProviderAccountRef, request.SubscriptionID)
+}
+
+// UpdateSubscriptionPlanRequest changes a subscription's plan — used for
+// both upgrade (ScheduleChangeAtCycleEnd=false, i.e. "now") and downgrade
+// (ScheduleChangeAtCycleEnd=true, i.e. "cycle_end") per Razorpay's own
+// schedule_change_at parameter. Reactivate reuses this with the
+// subscription's current plan unchanged, to clear a pending
+// cancel_at_cycle_end — this specific behaviour is not yet verified against
+// a live Razorpay sandbox; see the L04 external-gate list.
+type UpdateSubscriptionPlanRequest struct {
+	ProviderAccountRef       string
+	AccountScope             string
+	SubscriptionID           string
+	PlanID                   string
+	ScheduleChangeAtCycleEnd bool
+}
+
+func (c Client) UpdateSubscriptionPlan(ctx context.Context, request UpdateSubscriptionPlanRequest) (Subscription, error) {
+	if !validConnectedAccountRef(request.ProviderAccountRef) || (request.AccountScope != "platform" && request.AccountScope != "connected") || !validProviderID(request.SubscriptionID) || !validProviderID(request.PlanID) {
+		return Subscription{}, ErrInvalidOrderRequest
+	}
+	scheduleAt := "now"
+	if request.ScheduleChangeAtCycleEnd {
+		scheduleAt = "cycle_end"
+	}
+	body, err := json.Marshal(struct {
+		PlanID           string `json:"plan_id"`
+		ScheduleChangeAt string `json:"schedule_change_at"`
+		CustomerNotify   bool   `json:"customer_notify"`
+	}{PlanID: request.PlanID, ScheduleChangeAt: scheduleAt, CustomerNotify: true})
+	if err != nil {
+		return Subscription{}, fmt.Errorf("marshal razorpay subscription update request: %w", err)
+	}
+	path := "/v1/subscriptions/" + url.PathEscape(request.SubscriptionID)
+	return c.doSubscriptionMutation(ctx, http.MethodPatch, path, body, request.AccountScope, request.ProviderAccountRef, request.SubscriptionID)
+}
+
+// doSubscriptionMutation is the shared HTTP/response-validation body for
+// CancelSubscription and UpdateSubscriptionPlan — same bounded-read,
+// identity-check and retryable-status-classification pattern as
+// CreateSubscription above.
+func (c Client) doSubscriptionMutation(ctx context.Context, method, path string, body []byte, accountScope, providerAccountRef, expectedID string) (Subscription, error) {
+	endpoint := c.baseURL.ResolveReference(&url.URL{Path: path})
+	httpRequest, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return Subscription{}, fmt.Errorf("create razorpay subscription mutation request: %w", err)
+	}
+	httpRequest.SetBasicAuth(c.keyID, c.keySecret)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	if accountScope == "connected" {
+		setConnectedAccountHeader(httpRequest, providerAccountRef)
+	}
+
+	response, err := c.httpClient.Do(httpRequest)
+	if err != nil {
+		return Subscription{}, &ProviderError{Operation: method + " " + path, Retryable: true, Cause: err}
+	}
+	defer response.Body.Close()
+
+	limit := c.maxResponseBytes
+	if limit <= 0 {
+		limit = maxResponseBytes
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil || int64(len(raw)) > limit {
+		return Subscription{}, &ProviderError{Operation: method + " " + path, StatusCode: response.StatusCode, Retryable: true, Cause: errors.New("response unavailable")}
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return Subscription{}, &ProviderError{
+			Operation:  method + " " + path,
+			StatusCode: response.StatusCode,
+			Retryable:  response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500,
+		}
+	}
+
+	var subscription Subscription
+	if err := json.Unmarshal(raw, &subscription); err != nil {
+		return Subscription{}, fmt.Errorf("%w: decode subscription", ErrProviderResponse)
+	}
+	if subscription.Entity != "subscription" || !validProviderID(subscription.ID) || subscription.ID != expectedID || strings.TrimSpace(subscription.Status) == "" {
+		return Subscription{}, fmt.Errorf("%w: subscription identity mismatch", ErrProviderResponse)
+	}
+	return subscription, nil
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func validateCreateSubscriptionRequest(request CreateSubscriptionRequest) error {
 	if !validConnectedAccountRef(request.ProviderAccountRef) || (request.AccountScope != "platform" && request.AccountScope != "connected") || !validProviderID(request.PlanID) {
 		return ErrInvalidOrderRequest

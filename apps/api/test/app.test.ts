@@ -343,6 +343,15 @@ test('authenticated subscription route forwards only approved creator inputs to 
         checkoutUrl: 'https://rzp.io/i/synthetic',
       };
     },
+    async cancelSubscription() {
+      return { schemaVersion: 'v1', action: 'cancel', requestId: 'req_synthetic', status: 'provider_confirmed', replay: false };
+    },
+    async changeSubscriptionPlan(_input, action) {
+      return { schemaVersion: 'v1', action, requestId: 'req_synthetic', status: 'provider_confirmed', replay: false };
+    },
+    async reactivateSubscription() {
+      return { schemaVersion: 'v1', action: 'reactivate', requestId: 'req_synthetic', status: 'provider_confirmed', replay: false };
+    },
   };
   const app = await buildApp(config, { sessions: fakeSessions(), paymentSubscriptions });
   const response = await app.inject({
@@ -463,6 +472,43 @@ test('payment subscription client sends only the private route contract and vali
     channelId: '00000000-0000-4000-8000-000000000011', environment: 'test',
     idempotencyKey: 'subscription-idempotency-001', tier: 'creator', billingInterval: 'annual',
   }), /invalid payment service response/);
+});
+
+test('payment subscription lifecycle client posts to the dedicated internal route and validates the response', async () => {
+  const fakeClient = {} as IdTokenClient;
+  const seenBodies: Record<string, unknown>[] = [];
+  const service = createGooglePaymentSubscriptionService(
+    'http://127.0.0.1:4400', 'audience', 'test',
+    async () => { throw new Error('createSubscription transport must not be used for lifecycle calls'); },
+    async () => fakeClient,
+    async (_client, url, body, traceId) => {
+      assert.equal(url, 'http://127.0.0.1:4400/internal/v1/subscriptions/lifecycle');
+      assert.equal(traceId, 'lifecycle-request');
+      seenBodies.push(body as Record<string, unknown>);
+      return { schemaVersion: 'v1', action: body.action, requestId: 'req_synthetic', status: 'provider_confirmed', replay: false };
+    },
+  );
+  const input = { userId: '00000000-0000-4000-8000-000000000001', channelId: '00000000-0000-4000-8000-000000000011', environment: 'test' as const, idempotencyKey: 'lifecycle-idempotency-001' };
+
+  const cancelled = await service.cancelSubscription(input, 'lifecycle-request');
+  assert.equal(cancelled.action, 'cancel');
+  assert.equal(seenBodies.at(0)?.action, 'cancel');
+
+  const upgraded = await service.changeSubscriptionPlan({ ...input, targetTier: 'studio', billingInterval: 'monthly' }, 'upgrade', 'lifecycle-request');
+  assert.equal(upgraded.action, 'upgrade');
+  assert.equal(seenBodies.at(1)?.targetTier, 'studio');
+
+  const reactivated = await service.reactivateSubscription(input, 'lifecycle-request');
+  assert.equal(reactivated.action, 'reactivate');
+  assert.equal(seenBodies.at(2)?.action, 'reactivate');
+
+  const malformedService = createGooglePaymentSubscriptionService(
+    'http://127.0.0.1:4400', 'audience', 'test',
+    async () => { throw new Error('unused'); },
+    async () => fakeClient,
+    async () => ({ schemaVersion: 'v1', action: 'cancel', requestId: 'req_synthetic', status: 'unknown_status', replay: false }),
+  );
+  await assert.rejects(() => malformedService.cancelSubscription(input), /invalid payment service response/);
 });
 
 test('maintenance routes require service identity and remain fail-closed without a transactional store', async () => {

@@ -2,8 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { requireAuth } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { AccountStore } from '../domain/account-store.js';
+import type { EmailOutboxStore } from '../domain/email.js';
 
-export async function registerAccountRoutes(app: FastifyInstance, sessions?: SessionStore, account?: AccountStore): Promise<void> {
+export async function registerAccountRoutes(app: FastifyInstance, sessions?: SessionStore, account?: AccountStore, emailOutbox?: EmailOutboxStore): Promise<void> {
   const auth = requireAuth(sessions);
   app.get('/v1/me/terms', { preHandler: auth }, async (request, reply) => {
     if (!account) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'account_store_unavailable', message: 'Account controls are temporarily unavailable', traceId: request.id, retryable: true });
@@ -16,6 +17,14 @@ export async function registerAccountRoutes(app: FastifyInstance, sessions?: Ses
   app.get('/v1/me/export', { preHandler: auth }, async (request, reply) => {
     if (!account || !request.auth) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'account_store_unavailable', message: 'Account controls are temporarily unavailable', traceId: request.id, retryable: true });
     return reply.send(await account.exportAccount(request.auth.userId));
+  });
+  // Additive, opt-in sibling of GET /v1/me/export above (unchanged) — the
+  // synchronous JSON download stays the primary path; this queues an
+  // emailed copy for a creator who explicitly asks for one.
+  app.post('/v1/me/export/email', { preHandler: auth }, async (request, reply) => {
+    if (!emailOutbox || !request.auth) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'email_outbox_unavailable', message: 'Emailed exports are temporarily unavailable', traceId: request.id, retryable: true });
+    await emailOutbox.enqueueDpdpExportEmail(request.auth.userId);
+    return reply.code(202).send({ schemaVersion: 'v1', status: 'queued', message: 'Your export will be emailed to the address on file once ready' });
   });
   app.get('/v1/me/privacy/requests', { preHandler: auth }, async (request, reply) => {
     if (!account || !request.auth) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'account_store_unavailable', message: 'Account controls are temporarily unavailable', traceId: request.id, retryable: true });

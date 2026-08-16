@@ -30,6 +30,8 @@ import type { PaymentLedgerStore } from './domain/payment-ledger.js';
 import { registerPaymentLedgerRoutes } from './routes/payments.js';
 import type { AdminStore } from './domain/admin.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import type { EmailOutboxStore, EmailSender } from './domain/email.js';
+import { drainEmailOutbox } from './email/dispatch.js';
 import type { AccountStore } from './domain/account-store.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerMaintenanceRoutes } from './routes/maintenance.js';
@@ -63,6 +65,8 @@ export type AppDependencies = {
   paymentAccounts?: PaymentAccountStore;
   paymentLedger?: PaymentLedgerStore;
   admin?: AdminStore;
+  emailOutbox?: EmailOutboxStore;
+  emailSender?: EmailSender;
   account?: AccountStore;
   publicAbuseGuard?: PublicAbuseGuard;
   tts?: TtsService;
@@ -174,7 +178,7 @@ export async function buildApp(
   );
   await registerAuthRoutes(app, dependencies);
   await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
-  await registerAccountRoutes(app, dependencies.sessions, dependencies.account);
+  await registerAccountRoutes(app, dependencies.sessions, dependencies.account, dependencies.emailOutbox);
   await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account);
   await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
@@ -234,6 +238,31 @@ export async function buildApp(
       output += `bsa_overlay_listener_failures_total ${wakeupHealth.failures}\n`;
     }
     return reply.type('text/plain; version=0.0.4').send(output);
+  });
+
+  // Internal drain for the email outbox (invoice/subscription events, DPDP
+  // export delivery, overlay-expiry reminders — see packages/db/migrations/
+  // 0075_v1_l02_l03_l04_email_delivery.sql). Service-identity gated, same
+  // boundary as /internal/metrics and /internal/maintenance/:job. Manual/
+  // internal invocation is the interim trigger; a schedule entry stays
+  // disabled per the non-negotiable invariant until private targets/IAM/
+  // monitoring/retries/staging evidence are recorded.
+  app.post<{ Body: { limit?: number } }>('/internal/email-outbox/drain', {
+    schema: { body: { type: 'object', additionalProperties: false, properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } } } },
+  }, async (request, reply) => {
+    if (!dependencies.serviceIdentity || !await dependencies.serviceIdentity.verify(request.headers.authorization)) {
+      return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'unauthorized', message: 'Internal service authorization required', traceId: request.id });
+    }
+    if (!dependencies.emailOutbox) {
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'email_outbox_unavailable', message: 'Email outbox is not configured', traceId: request.id, retryable: true });
+    }
+    try {
+      const summary = await drainEmailOutbox(dependencies.emailOutbox, dependencies.emailSender, request.body?.limit ?? 25);
+      return reply.code(200).send({ schemaVersion: 'v1', ...summary });
+    } catch (error) {
+      logSafeError(request, 'email_outbox_drain_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'email_outbox_unavailable', message: 'Email outbox drain could not be completed', traceId: request.id, retryable: true });
+    }
   });
 
   app.setNotFoundHandler(async (request, reply) => {

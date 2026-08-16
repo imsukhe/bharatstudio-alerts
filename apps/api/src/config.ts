@@ -18,6 +18,9 @@ export type RuntimeConfig = {
   publicPaymentTurnstileSecret?: string;
   sarvamApiKey?: string;
   sarvamTtsEndpoint?: string;
+  resendApiKey?: string;
+  resendFromAddress?: string;
+  resendEndpoint?: string;
 };
 
 const allowedEnvironments = new Set<RuntimeConfig['nodeEnv']>([
@@ -132,6 +135,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       throw new Error('SARVAM_TTS_ENDPOINT must be an HTTPS URL');
     }
   }
+  const resendApiKey = env.RESEND_API_KEY;
+  const resendFromAddress = env.RESEND_FROM_ADDRESS;
+  const resendEndpoint = env.RESEND_ENDPOINT;
+  if (resendEndpoint) {
+    try {
+      if (new URL(resendEndpoint).protocol !== 'https:') throw new Error('not https');
+    } catch {
+      throw new Error('RESEND_ENDPOINT must be an HTTPS URL');
+    }
+  }
 
   return {
     nodeEnv,
@@ -151,5 +164,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     publicPaymentTurnstileSecret,
     sarvamApiKey,
     sarvamTtsEndpoint,
+    resendApiKey,
+    resendFromAddress,
+    resendEndpoint,
   };
 }

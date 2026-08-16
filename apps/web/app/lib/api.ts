@@ -619,6 +619,16 @@ export function exportAccount(): Promise<Record<string, unknown>> {
   return apiFetch('/v1/me/export', {}, (value) => { if (!isRecord(value)) invalidResponse(); return value; });
 }
 
+// Additive, opt-in sibling of exportAccount() above — queues an emailed
+// copy to the address on file, does not return export data itself.
+export function emailAccountExport(): Promise<{ schemaVersion: 'v1'; status: 'queued'; message: string }> {
+  return apiFetch('/v1/me/export/email', { method: 'POST' }, (value) => {
+    requireV1(value);
+    if (!hasOnlyKeys(value, new Set(['schemaVersion', 'status', 'message'])) || value.status !== 'queued' || typeof value.message !== 'string') invalidResponse();
+    return { schemaVersion: 'v1', status: 'queued', message: value.message };
+  });
+}
+
 export function getPrivacyRequests(): Promise<{ schemaVersion: 'v1'; requests: PrivacyRequest[] }> { return apiFetch('/v1/me/privacy/requests', {}, parsePrivacyRequestList); }
 export function createPrivacyRequestEntry(requestType: PrivacyRequestType, details: string): Promise<{ schemaVersion: 'v1'; request: PrivacyRequest }> {
   return apiFetch('/v1/me/privacy/requests', { method: 'POST', body: JSON.stringify({ requestType, details }) }, (value) => {

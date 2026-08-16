@@ -8,7 +8,7 @@ import { logSafeError } from '../observability/safe-log.js';
 // until their retention/ownership contract is approved. Keeping this route
 // allowlist narrower than the shared schedule vocabulary prevents a future
 // scheduler configuration from turning an unsupported job into a false 202.
-const apiOwnedMaintenanceJobs = new Set<MaintenanceJob>(['overlay-sessions']);
+const apiOwnedMaintenanceJobs = new Set<MaintenanceJob>(['overlay-sessions', 'overlay-expiry-reminder']);
 
 export async function registerMaintenanceRoutes(app: FastifyInstance, store?: MaintenanceStore, identity?: ServiceIdentityVerifier): Promise<void> {
   app.post<{ Params: { job: MaintenanceJob }; Body: { idempotencyKey: string; window?: string } }>('/internal/maintenance/:job', {

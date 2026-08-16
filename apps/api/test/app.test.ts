@@ -983,7 +983,7 @@ test('Google exchange creates an opaque session and returns current user', async
   const google: GoogleIdentityVerifier = {
     async verify(idToken) {
       assert.equal(idToken, 'g'.repeat(24));
-      return { subject: 'google-subject-test', displayName: 'Synthetic Creator' };
+      return { subject: 'google-subject-test', displayName: 'Synthetic Creator', email: null, emailVerified: false };
     },
   };
   const app = await buildApp(config, { google, sessions: fakeSessions() });

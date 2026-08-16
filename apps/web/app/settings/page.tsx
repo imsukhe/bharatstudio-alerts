@@ -11,7 +11,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
-  clearAccessToken, closeAccount, createPrivacyRequestEntry, exportAccount, getChannel, getCurrentUser,
+  clearAccessToken, closeAccount, createPrivacyRequestEntry, emailAccountExport, exportAccount, getChannel, getCurrentUser,
   getPaymentAccounts, getPrivacyRequests, registerPaymentAccount, revokePaymentAccount, updateChannel,
   type CurrentUser, type PaymentAccount, type PaymentAccountEnvironment, type PrivacyRequest, type PrivacyRequestType,
 } from '../lib/api';
@@ -45,6 +45,7 @@ export default function SettingsPage() {
   const [submittingRequest, setSubmittingRequest] = useState(false);
 
   const [exporting, setExporting] = useState(false);
+  const [emailingExport, setEmailingExport] = useState(false);
   const [closeReason, setCloseReason] = useState('');
   const [closeConfirmText, setCloseConfirmText] = useState('');
   const [closing, setClosing] = useState(false);
@@ -148,6 +149,20 @@ export default function SettingsPage() {
       setMessage(cause instanceof Error ? cause.message : 'Account export could not be downloaded');
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function requestExportEmail() {
+    if (emailingExport) return;
+    setEmailingExport(true);
+    setMessage(null);
+    try {
+      const result = await emailAccountExport();
+      setMessage(result.message);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Emailed export could not be requested');
+    } finally {
+      setEmailingExport(false);
     }
   }
 
@@ -267,9 +282,14 @@ export default function SettingsPage() {
                 <div><p className="muted-label">Your data</p><h2 id="export-title">Download an export.</h2></div>
               </div>
               <p className="helper-text">Everything associated with your account, as a JSON file.</p>
-              <button type="button" className="secondary-button" onClick={() => void downloadExport()} disabled={exporting}>
-                {exporting ? 'Preparing…' : 'Download export'}
-              </button>
+              <div className="control-actions">
+                <button type="button" className="secondary-button" onClick={() => void downloadExport()} disabled={exporting}>
+                  {exporting ? 'Preparing…' : 'Download export'}
+                </button>
+                <button type="button" className="secondary-button" onClick={() => void requestExportEmail()} disabled={emailingExport}>
+                  {emailingExport ? 'Requesting…' : 'Email me a copy'}
+                </button>
+              </div>
             </article>
 
             <article className="panel" aria-labelledby="privacy-title">

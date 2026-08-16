@@ -44,7 +44,8 @@ export function createSqlSessionStore(sql: Sql, sessionTtlDays = 30): SessionSto
         select user_id, session_id, expires_at
           from app_private.create_user_session(
             ${randomUUID()}, ${identity.subject}, ${identity.displayName},
-            ${hashToken(accessToken)}, ${deviceLabel}, ${expiresAt}, ${randomUUID()}
+            ${hashToken(accessToken)}, ${deviceLabel}, ${expiresAt}, ${randomUUID()},
+            ${identity.email}, ${identity.emailVerified}
           )
       `;
       const row = rows[0];

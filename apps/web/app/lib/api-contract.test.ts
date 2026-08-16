@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { notificationPreferencesInput, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parseQueueList } from './api';
+import { notificationPreferencesInput, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePrivacyRequestList, parseQueueList, parseTermsStatus } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -104,4 +104,40 @@ test('validates the full Companion action result envelope', () => {
   assert.throws(() => parseCompanionActionResult({ schemaVersion: 'v1', commandId, status: 'accepted', acceptedAt: 'not-a-date' }), /invalid_response/);
   assert.throws(() => parseCompanionActionResult({ schemaVersion: 'v1', commandId, status: 'unexpected', acceptedAt: '2099-08-15T10:00:00.000Z' }), /invalid_response/);
   assert.throws(() => parseCompanionActionResult({ schemaVersion: 'v1', commandId, status: 'accepted', acceptedAt: '2099-08-15T10:00:00.000Z', extra: true }), /invalid_response/);
+});
+
+test('accepts only the bounded terms status envelope', () => {
+  const hash = 'a'.repeat(64);
+  const parsed = parseTermsStatus({
+    schemaVersion: 'v1',
+    documents: [{ documentKey: 'terms_of_service', version: 'v1.0', contentHash: hash, publishedAt: '2099-08-15T10:00:00.000Z' }],
+    accepted: false,
+  });
+  assert.equal(parsed.documents[0]?.documentKey, 'terms_of_service');
+  assert.equal(parsed.accepted, false);
+  assert.throws(() => parseTermsStatus({ schemaVersion: 'v1', documents: [], accepted: false, extra: true }), /invalid_response/);
+  assert.throws(() => parseTermsStatus({ schemaVersion: 'v1', documents: [{ documentKey: 'unknown_document', version: 'v1.0', contentHash: hash, publishedAt: null }], accepted: false }), /invalid_response/);
+  assert.throws(() => parseTermsStatus({ schemaVersion: 'v1', documents: [{ documentKey: 'terms_of_service', version: 'v1.0', contentHash: 'not-hex', publishedAt: null }], accepted: false }), /invalid_response/);
+});
+
+test('accepts only the bounded privacy-request list envelope', () => {
+  const requestId = '00000000-0000-4000-8000-000000000005';
+  const parsed = parsePrivacyRequestList({
+    schemaVersion: 'v1',
+    requests: [{ requestId, requestType: 'access', status: 'open', createdAt: '2099-08-15T10:00:00.000Z' }],
+  });
+  assert.equal(parsed.requests[0]?.requestType, 'access');
+  assert.throws(() => parsePrivacyRequestList({ schemaVersion: 'v1', requests: [{ requestId, requestType: 'unsupported', status: 'open', createdAt: '2099-08-15T10:00:00.000Z' }] }), /invalid_response/);
+  assert.throws(() => parsePrivacyRequestList({ schemaVersion: 'v1', requests: [{ requestId: 'not-a-uuid', requestType: 'access', status: 'open', createdAt: '2099-08-15T10:00:00.000Z' }] }), /invalid_response/);
+});
+
+test('accepts only the bounded payment-account list envelope', () => {
+  const accountId = '00000000-0000-4000-8000-000000000006';
+  const parsed = parsePaymentAccountList({
+    schemaVersion: 'v1',
+    accounts: [{ schemaVersion: 'v1', accountId, channelId, provider: 'razorpay', environment: 'test', connectedAccountRef: 'acc_demo123', status: 'pending', createdAt: '2099-08-15T10:00:00.000Z', updatedAt: '2099-08-15T10:00:00.000Z', revokedAt: null }],
+  });
+  assert.equal(parsed.accounts[0]?.status, 'pending');
+  assert.throws(() => parsePaymentAccountList({ schemaVersion: 'v1', accounts: [{ schemaVersion: 'v1', accountId, channelId, provider: 'other_provider', environment: 'test', connectedAccountRef: 'acc_demo123', status: 'pending', createdAt: '2099-08-15T10:00:00.000Z', updatedAt: '2099-08-15T10:00:00.000Z', revokedAt: null }] }), /invalid_response/);
+  assert.throws(() => parsePaymentAccountList({ schemaVersion: 'v1', accounts: [{ schemaVersion: 'v1', accountId, channelId, provider: 'razorpay', environment: 'unexpected', connectedAccountRef: 'acc_demo123', status: 'pending', createdAt: '2099-08-15T10:00:00.000Z', updatedAt: '2099-08-15T10:00:00.000Z', revokedAt: null }] }), /invalid_response/);
 });

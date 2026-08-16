@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { clearAccessToken, createBinding, createChannel, createQueue, executeCompanionAction, getBilling, getBindings, getChannel, getChannelConfig, getCompanionState, getCurrentUser, getHistory, getQueues, moderateAlert, sendTestAlert, updateBinding, updateChannelConfig, updateQueue, type AlertHistory, type BillingView, type ChannelConfig, type ChannelConfigValues, type ChannelDetails, type CompanionAction, type CompanionState, type CurrentUser, type Queue, type QueueBinding } from '../lib/api';
+import { clearAccessToken, createBinding, createChannel, createQueue, executeCompanionAction, getBilling, getBindings, getChannel, getChannelConfig, getCompanionState, getCurrentUser, getHistory, getQueues, getTermsStatus, moderateAlert, sendTestAlert, updateBinding, updateChannelConfig, updateQueue, type AlertHistory, type BillingView, type ChannelConfig, type ChannelConfigValues, type ChannelDetails, type CompanionAction, type CompanionState, type CurrentUser, type Queue, type QueueBinding } from '../lib/api';
 import { ChannelConfigEditor } from './ChannelConfigEditor';
 
 const defaultConfig: ChannelConfigValues = {
@@ -53,14 +53,26 @@ export default function DashboardClient() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getCurrentUser().then(async (nextUser) => {
-      setUser(nextUser);
-      const first = nextUser.channels[0];
-      if (!first) return;
-      const [nextChannel, nextQueues, nextHistory, billing, companionState, nextConfig, nextBindings] = await Promise.all([getChannel(first.channelId), getQueues(first.channelId), getHistory(first.channelId), getBilling(first.channelId), getCompanionState(first.channelId), getChannelConfig(first.channelId), bindingsUiEnabled ? getBindings(first.channelId) : Promise.resolve({ schemaVersion: 'v1' as const, bindings: [] })]);
-      setChannel(nextChannel); setQueues(nextQueues.queues); setSelectedCompanionQueueId(nextQueues.queues.find(queue => queue.active)?.queueId ?? null); setHistory(nextHistory.items); setTier(billing.tier); setBilling(billing); setCompanion(companionState); setConfig(nextConfig); setConfigDraft(mergeConfig(nextConfig.values));
-      setBindings(nextBindings.bindings);
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
+    getTermsStatus().then((status) => {
+      if (!status.accepted) { window.location.assign('/accept-terms'); return; }
+      loadDashboard();
+    }).catch(() => {
+      // Terms status couldn't be confirmed — fail toward the gate rather
+      // than silently rendering a dashboard whose mutations the backend
+      // will reject.
+      window.location.assign('/accept-terms');
+    });
+
+    function loadDashboard() {
+      getCurrentUser().then(async (nextUser) => {
+        setUser(nextUser);
+        const first = nextUser.channels[0];
+        if (!first) return;
+        const [nextChannel, nextQueues, nextHistory, billing, companionState, nextConfig, nextBindings] = await Promise.all([getChannel(first.channelId), getQueues(first.channelId), getHistory(first.channelId), getBilling(first.channelId), getCompanionState(first.channelId), getChannelConfig(first.channelId), bindingsUiEnabled ? getBindings(first.channelId) : Promise.resolve({ schemaVersion: 'v1' as const, bindings: [] })]);
+        setChannel(nextChannel); setQueues(nextQueues.queues); setSelectedCompanionQueueId(nextQueues.queues.find(queue => queue.active)?.queueId ?? null); setHistory(nextHistory.items); setTier(billing.tier); setBilling(billing); setCompanion(companionState); setConfig(nextConfig); setConfigDraft(mergeConfig(nextConfig.values));
+        setBindings(nextBindings.bindings);
+      }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
+    }
   }, []);
 
   if (error) {

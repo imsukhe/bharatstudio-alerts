@@ -1,5 +1,17 @@
 -- L02 account-consent boundary proof. Synthetic rows only.
+--
+-- Deactivates any pre-existing active terms_of_service/privacy_notice row
+-- first. Migration 0068_v1_l02_seed_terms_documents.sql seeds real v1.0
+-- active rows so the product isn't permanently fail-closed; this test
+-- exercises the zero-active-documents case explicitly and then publishes
+-- its own synthetic version, exactly mirroring what a real version bump
+-- (deactivate old, activate new) does. Safe because this test always runs
+-- against a disposable per-run container (see run-l03-application-behavior.sh)
+-- — there is no "restore the seed afterward" step because the container is
+-- destroyed at the end of the run.
 \set ON_ERROR_STOP on
+
+update terms_documents set active = false where document_key in ('terms_of_service', 'privacy_notice') and active;
 
 do $$
 begin

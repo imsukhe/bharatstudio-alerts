@@ -6,6 +6,15 @@ export type CurrentUser = {
   channels: Array<{ channelId: string; role: ChannelRole }>;
 };
 export type AccountSession = { sessionId: string; createdAt: string; lastSeenAt: string; current: boolean; deviceLabel: string | null };
+export type TermsDocumentKey = 'terms_of_service' | 'privacy_notice';
+export type ActiveTermsDocument = { documentKey: TermsDocumentKey; version: string; contentHash: string; publishedAt: string | null };
+export type TermsStatus = { schemaVersion: 'v1'; documents: ActiveTermsDocument[]; accepted: boolean };
+export type PrivacyRequestType = 'access' | 'correction' | 'erasure_review' | 'privacy_concern';
+export type PrivacyRequestStatus = 'open' | 'in_review' | 'completed' | 'rejected';
+export type PrivacyRequest = { requestId: string; requestType: PrivacyRequestType; details?: string; status: PrivacyRequestStatus; createdAt: string; updatedAt?: string; resolvedAt?: string | null; resolutionNote?: string | null };
+export type PaymentAccountEnvironment = 'test' | 'live';
+export type PaymentAccountStatus = 'pending' | 'active' | 'revoked';
+export type PaymentAccount = { schemaVersion: 'v1'; accountId: string; channelId: string; provider: 'razorpay'; environment: PaymentAccountEnvironment; connectedAccountRef: string; status: PaymentAccountStatus; createdAt: string; updatedAt: string; revokedAt: string | null };
 export type NotificationPreferences = { schemaVersion: 'v1'; connectionAlerts: boolean; securityAlerts: boolean; actionFailures: boolean };
 export type NotificationDevice = { schemaVersion: 'v1'; deviceId: string; platform: 'ios' | 'android'; enabled: boolean; createdAt: string; lastSeenAt: string };
 
@@ -188,6 +197,52 @@ export function parseCurrentUser(value: unknown): CurrentUser {
   if (!hasOnlyKeys(value, new Set(['schemaVersion', 'userId', 'displayName', 'channels'])) || !isUuid(value.userId) || (value.displayName !== null && (typeof value.displayName !== 'string' || value.displayName.length > 120)) || !Array.isArray(value.channels)) invalidResponse();
   if (!value.channels.every((channel) => isRecord(channel) && hasOnlyKeys(channel, new Set(['channelId', 'role'])) && isUuid(channel.channelId) && typeof channel.role === 'string' && channelRoles.has(channel.role as ChannelRole))) invalidResponse();
   return { schemaVersion: 'v1', userId: value.userId, displayName: value.displayName as string | null, channels: value.channels.map((channel) => ({ channelId: (channel as Record<string, unknown>).channelId as string, role: (channel as Record<string, unknown>).role as ChannelRole })) };
+}
+
+const termsDocumentKeys = new Set<TermsDocumentKey>(['terms_of_service', 'privacy_notice']);
+const privacyRequestTypes = new Set<PrivacyRequestType>(['access', 'correction', 'erasure_review', 'privacy_concern']);
+const privacyRequestStatuses = new Set<PrivacyRequestStatus>(['open', 'in_review', 'completed', 'rejected']);
+const paymentAccountEnvironments = new Set<PaymentAccountEnvironment>(['test', 'live']);
+const paymentAccountStatuses = new Set<PaymentAccountStatus>(['pending', 'active', 'revoked']);
+
+function parseActiveTermsDocument(value: unknown): ActiveTermsDocument {
+  if (!isRecord(value) || !hasOnlyKeys(value, new Set(['documentKey', 'version', 'contentHash', 'publishedAt'])) || typeof value.documentKey !== 'string' || !termsDocumentKeys.has(value.documentKey as TermsDocumentKey) || typeof value.version !== 'string' || value.version.length < 1 || value.version.length > 80 || typeof value.contentHash !== 'string' || !/^[0-9a-fA-F]{64}$/.test(value.contentHash) || (value.publishedAt !== null && !isIsoDate(value.publishedAt))) invalidResponse();
+  return { documentKey: value.documentKey as TermsDocumentKey, version: value.version, contentHash: value.contentHash, publishedAt: value.publishedAt as string | null };
+}
+
+export function parseTermsStatus(value: unknown): TermsStatus {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'documents', 'accepted'])) || !Array.isArray(value.documents) || value.documents.length > 16 || typeof value.accepted !== 'boolean') invalidResponse();
+  return { schemaVersion: 'v1', documents: value.documents.map(parseActiveTermsDocument), accepted: value.accepted };
+}
+
+function parsePrivacyRequest(value: unknown): PrivacyRequest {
+  if (!isRecord(value) || typeof value.requestId !== 'string' || !isUuid(value.requestId) || typeof value.requestType !== 'string' || !privacyRequestTypes.has(value.requestType as PrivacyRequestType) || typeof value.status !== 'string' || !privacyRequestStatuses.has(value.status as PrivacyRequestStatus) || !isIsoDate(value.createdAt)) invalidResponse();
+  return {
+    requestId: value.requestId, requestType: value.requestType as PrivacyRequestType, status: value.status as PrivacyRequestStatus, createdAt: value.createdAt as string,
+    ...(typeof value.details === 'string' ? { details: value.details } : {}),
+    ...(typeof value.updatedAt === 'string' ? { updatedAt: value.updatedAt } : {}),
+    ...(value.resolvedAt !== undefined ? { resolvedAt: value.resolvedAt as string | null } : {}),
+    ...(value.resolutionNote !== undefined ? { resolutionNote: value.resolutionNote as string | null } : {}),
+  };
+}
+
+export function parsePrivacyRequestList(value: unknown): { schemaVersion: 'v1'; requests: PrivacyRequest[] } {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'requests'])) || !Array.isArray(value.requests) || value.requests.length > 256) invalidResponse();
+  return { schemaVersion: 'v1', requests: value.requests.map(parsePrivacyRequest) };
+}
+
+function parsePaymentAccount(value: unknown): PaymentAccount {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'accountId', 'channelId', 'provider', 'environment', 'connectedAccountRef', 'status', 'createdAt', 'updatedAt', 'revokedAt'])) || !isUuid(value.accountId) || !isUuid(value.channelId) || value.provider !== 'razorpay' || typeof value.environment !== 'string' || !paymentAccountEnvironments.has(value.environment as PaymentAccountEnvironment) || typeof value.connectedAccountRef !== 'string' || value.connectedAccountRef.length < 1 || typeof value.status !== 'string' || !paymentAccountStatuses.has(value.status as PaymentAccountStatus) || !isIsoDate(value.createdAt) || !isIsoDate(value.updatedAt) || (value.revokedAt !== null && !isIsoDate(value.revokedAt))) invalidResponse();
+  return { schemaVersion: 'v1', accountId: value.accountId, channelId: value.channelId, provider: 'razorpay', environment: value.environment as PaymentAccountEnvironment, connectedAccountRef: value.connectedAccountRef, status: value.status as PaymentAccountStatus, createdAt: value.createdAt, updatedAt: value.updatedAt, revokedAt: value.revokedAt as string | null };
+}
+
+export function parsePaymentAccountList(value: unknown): { schemaVersion: 'v1'; accounts: PaymentAccount[] } {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'accounts'])) || !Array.isArray(value.accounts) || value.accounts.length > 16) invalidResponse();
+  return { schemaVersion: 'v1', accounts: value.accounts.map(parsePaymentAccount) };
 }
 
 export function parseSessionList(value: unknown): { schemaVersion: 'v1'; sessions: AccountSession[] } {
@@ -438,4 +493,45 @@ export function executeCompanionAction(channelId: string, action: CompanionActio
   if (!globalThis.crypto?.randomUUID) throw new Error('secure_random_unavailable');
   return apiFetch(`/v1/channels/${pathSegment(channelId)}/companion/actions`, { method: 'POST', headers: { 'Idempotency-Key': globalThis.crypto.randomUUID() }, body: JSON.stringify({ action, targetId }) }, parseCompanionActionResult);
 }
+
+/* ── Terms acceptance, DPDP/privacy, and creator payout account settings ── */
+
+export function getTermsStatus(): Promise<TermsStatus> { return apiFetch('/v1/me/terms', {}, parseTermsStatus); }
+export function acceptTermsDocument(documentKey: TermsDocumentKey, version: string, contentHash: string): Promise<{ schemaVersion: 'v1'; accepted: boolean }> {
+  return apiFetch('/v1/me/terms/accept', { method: 'POST', body: JSON.stringify({ documentKey, version, contentHash }) }, (value) => {
+    requireV1(value);
+    if (!hasOnlyKeys(value, new Set(['schemaVersion', 'accepted'])) || typeof value.accepted !== 'boolean') invalidResponse();
+    return { schemaVersion: 'v1', accepted: value.accepted };
+  });
+}
+
+export function exportAccount(): Promise<Record<string, unknown>> {
+  return apiFetch('/v1/me/export', {}, (value) => { if (!isRecord(value)) invalidResponse(); return value; });
+}
+
+export function getPrivacyRequests(): Promise<{ schemaVersion: 'v1'; requests: PrivacyRequest[] }> { return apiFetch('/v1/me/privacy/requests', {}, parsePrivacyRequestList); }
+export function createPrivacyRequestEntry(requestType: PrivacyRequestType, details: string): Promise<{ schemaVersion: 'v1'; request: PrivacyRequest }> {
+  return apiFetch('/v1/me/privacy/requests', { method: 'POST', body: JSON.stringify({ requestType, details }) }, (value) => {
+    requireV1(value);
+    if (!hasOnlyKeys(value, new Set(['schemaVersion', 'request']))) invalidResponse();
+    return { schemaVersion: 'v1', request: parsePrivacyRequest(value.request) };
+  });
+}
+
+export function closeAccount(reason: string): Promise<{ schemaVersion: 'v1'; status: 'deactivated'; accessRevokedAt: string; retainedData: string }> {
+  return apiFetch('/v1/me/close', { method: 'POST', body: JSON.stringify({ reason }) }, (value) => {
+    requireV1(value);
+    if (!hasOnlyKeys(value, new Set(['schemaVersion', 'status', 'accessRevokedAt', 'retainedData'])) || value.status !== 'deactivated' || !isIsoDate(value.accessRevokedAt) || typeof value.retainedData !== 'string') invalidResponse();
+    return { schemaVersion: 'v1', status: 'deactivated', accessRevokedAt: value.accessRevokedAt, retainedData: value.retainedData };
+  });
+}
+
+export function getPaymentAccounts(channelId: string): Promise<{ schemaVersion: 'v1'; accounts: PaymentAccount[] }> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/payment-accounts`, {}, parsePaymentAccountList); }
+export function registerPaymentAccount(channelId: string, environment: PaymentAccountEnvironment, connectedAccountRef: string): Promise<PaymentAccount> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/payment-accounts/razorpay`, { method: 'PUT', body: JSON.stringify({ environment, connectedAccountRef }) }, parsePaymentAccount);
+}
+export function revokePaymentAccount(channelId: string, environment: PaymentAccountEnvironment): Promise<void> {
+  return apiFetch<void>(`/v1/channels/${pathSegment(channelId)}/payment-accounts/razorpay?environment=${encodeURIComponent(environment)}`, { method: 'DELETE' }, rejectUnexpectedBody);
+}
+
 import { getApiOrigin } from './api-origin';

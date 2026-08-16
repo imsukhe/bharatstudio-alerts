@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Script from 'next/script';
-import { exchangeGoogleCredential } from '../lib/api';
+import { exchangeGoogleCredential, getTermsStatus } from '../lib/api';
 
 type GoogleButton = { render: (element: HTMLElement, options: { theme: string; size: string; width: number }) => void };
 type GoogleAccounts = { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; renderButton: GoogleButton['render'] } };
@@ -22,7 +22,20 @@ export default function LoginClient() {
         setError(null);
         try {
           await exchangeGoogleCredential(credential);
-          window.location.assign('/dashboard');
+          // Route through the terms gate rather than assuming /dashboard —
+          // the backend fails closed on mutations until every active
+          // document is accepted (requireAuthAndTerms), so a returning or
+          // newly-created account must accept first.
+          let destination = '/dashboard';
+          try {
+            const status = await getTermsStatus();
+            if (!status.accepted) destination = '/accept-terms';
+          } catch {
+            // Terms status is unreachable — fail toward showing the gate
+            // rather than silently skipping it.
+            destination = '/accept-terms';
+          }
+          window.location.assign(destination);
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : 'Sign-in could not be completed');
         }

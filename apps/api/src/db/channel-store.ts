@@ -179,10 +179,22 @@ export function createSqlChannelStore(sql: Sql): ChannelStore {
     },
     async updateQueue(userId, channelId, queueId, input) {
       return inUserTransaction(sql, userId, async (tx) => {
+        // A creator's own pause/resume here always wins over a prior
+        // system pause (e.g. tier-downgrade enforcement) and is stamped
+        // 'manual' so a later downgrade pass never mistakes this queue for
+        // one it paused itself. When input.paused is omitted, the existing
+        // is_paused/paused_reason/paused_at/updated_by are all left as-is —
+        // same coalesce-to-unchanged pattern as `name` and `closed_at`
+        // above. The alert_queues_pause_reason_consistency check requires
+        // paused_reason/paused_at to be null together whenever is_paused is
+        // false, so both are always set/cleared as a pair, never separately.
         const rows = await tx<{ id: string; channel_id: string; name: string; is_paused: boolean; closed_at: Date | null }[]>`
           update alert_queues
              set name = coalesce(${input.name ?? null}, name),
                  is_paused = coalesce(${input.paused ?? null}, is_paused),
+                 paused_reason = case when ${input.paused ?? null} is null then paused_reason when ${input.paused === true} then 'manual' else null end,
+                 paused_at = case when ${input.paused ?? null} is null then paused_at when ${input.paused === true} then current_timestamp else null end,
+                 updated_by = case when ${input.paused ?? null} is null then updated_by else ${'user:' + userId} end,
                  closed_at = case when ${input.active === false} then current_timestamp when ${input.active === true} then null else closed_at end,
                  updated_at = current_timestamp
            where id = ${queueId}::uuid and channel_id = ${channelId}::uuid

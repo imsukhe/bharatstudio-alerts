@@ -699,8 +699,17 @@ exception when others then
 end
 $$;
 
+-- Version is computed, not hardcoded: 0070's downgrade-enforcement
+-- migration made every 'cancelled' apply_channel_subscription_state call
+-- above also publish a free-entitlement version, so the exact version
+-- number this channel has reached by this point in the fixture sequence is
+-- no longer a fixed constant.
 insert into channel_entitlement_versions (channel_id, version, tier, source, values, effective_at, created_at)
-values ('00000000-0000-4000-8000-000000000011', 5, 'creator', 'individual_plan', '{"test":true}', current_timestamp, current_timestamp);
+select '00000000-0000-4000-8000-000000000011',
+       coalesce(max(version), 0) + 1,
+       'creator', 'individual_plan', '{"test":true}'::jsonb, current_timestamp, current_timestamp
+  from channel_entitlement_versions
+ where channel_id = '00000000-0000-4000-8000-000000000011';
 
 insert into alert_queues (id, channel_id, name, created_at, updated_at)
 values ('00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000011', 'Synthetic default', current_timestamp, current_timestamp);

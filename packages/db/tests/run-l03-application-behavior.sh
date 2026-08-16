@@ -49,6 +49,7 @@ psql < "$ROOT/packages/db/tests/l03_tts_event_enrichment.sql"
 psql < "$ROOT/packages/db/tests/l05_queue_policy_enforcement.sql"
 psql < "$ROOT/packages/db/tests/l04_reconciliation_quarantine.sql"
 psql < "$ROOT/packages/db/tests/l04_payment_account_onboarding.sql"
+psql < "$ROOT/packages/db/tests/l04_downgrade_enforcement.sql"
 psql < "$ROOT/packages/db/tests/l07_notification_preferences.sql"
 
 (cd "$ROOT/services/payment-webhook-go" && \

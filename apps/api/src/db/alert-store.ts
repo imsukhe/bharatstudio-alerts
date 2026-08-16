@@ -227,9 +227,20 @@ export function createSqlAlertStore(sql: Sql): AlertStore {
           return { schemaVersion: 'v1', commandId: row.id, status: row.status, acceptedAt: row.created_at.toISOString(), ...(row.result_event_id ? { eventId: row.result_event_id } : {}) };
         }
         if ((row.action === 'pause_queue' || row.action === 'resume_queue') && row.target_id) {
+          // A manual pause/resume always wins over a prior system pause
+          // (e.g. tier-downgrade enforcement): resuming clears is_paused
+          // *and* paused_reason/paused_at together (the alert_queues_pause_
+          // reason_consistency check requires both null once unpaused);
+          // pausing always stamps 'manual' so a later downgrade pass never
+          // mistakes this queue for one it paused itself.
+          const isPausing = row.action === 'pause_queue';
           const updatedQueues = await tx<{ id: string }[]>`
             update alert_queues
-               set is_paused = ${row.action === 'pause_queue'}, updated_at = current_timestamp
+               set is_paused = ${isPausing},
+                   paused_reason = ${isPausing ? 'manual' : null},
+                   paused_at = ${isPausing ? tx`current_timestamp` : null},
+                   updated_by = ${'user:' + userId},
+                   updated_at = current_timestamp
              where id = ${row.target_id}::uuid and channel_id = ${channelId}::uuid
              returning id
           `;

@@ -1,41 +1,26 @@
-import Link from 'next/link';
-import { TopNav } from './components/TopNav';
+'use client';
 
-export default function AlertsHomePage() {
-  return (
-    <main className="page-shell">
-      <TopNav />
-      <section className="dashboard-heading">
-        <div>
-          <p className="eyebrow">BharatStudio Alerts</p>
-          <h1>Your stream. Your alerts. Your control.</h1>
-          <p className="lede">
-            Durable tip alerts, a browser-source overlay and creator dashboard —
-            sign in with Google to create your channel and start accepting tips.
-          </p>
-          <div className="control-actions" style={{ marginTop: 24 }}>
-            <Link className="primary-button" href="/login">Sign in to get started</Link>
-            <Link className="secondary-button" href="/dashboard">Go to dashboard</Link>
-          </div>
-        </div>
-      </section>
-      <section className="metric-grid" aria-label="What Alerts gives you">
-        <article className="metric-card">
-          <p className="muted-label">Public tip page</p>
-          <strong>0% commission</strong>
-          <p>Fans tip directly through Razorpay; nothing routes through BharatStudio&apos;s own account.</p>
-        </article>
-        <article className="metric-card">
-          <p className="muted-label">Browser-source overlay</p>
-          <strong>Durable delivery</strong>
-          <p>Alerts replay after a reconnect — an accepted tip is never silently dropped.</p>
-        </article>
-        <article className="metric-card">
-          <p className="muted-label">Creator dashboard</p>
-          <strong>Full control</strong>
-          <p>Queues, moderation, billing, referrals and branding, all in one place.</p>
-        </article>
-      </section>
-    </main>
-  );
+/*
+ * / — no static homepage. This app's whole purpose is sign-in → dashboard,
+ * and the marketing site (bharatstudio-marketing, a separate static
+ * export) already owns the "explain the product" job — its own "Get
+ * started" CTA links straight to this app's /login, not to /. So this
+ * root route is a pure redirect: signed in → resolve onward exactly like
+ * /onboarding does (terms, then channel existence, then dashboard);
+ * signed out → /login.
+ *
+ * Previously this rendered a real marketing-style hero page (built
+ * earlier in the same redesign this file is now part of) — replaced on
+ * explicit direction once the login/onboarding/dashboard chain existed to
+ * redirect into.
+ */
+import { useEffect } from 'react';
+import { getAccessToken } from './lib/api';
+
+export default function RootPage() {
+  useEffect(() => {
+    window.location.replace(getAccessToken() ? '/onboarding' : '/login');
+  }, []);
+
+  return null;
 }

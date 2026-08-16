@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import Script from 'next/script';
-import { exchangeGoogleCredential, getTermsStatus } from '../lib/api';
+import { exchangeGoogleCredential, getCurrentUser, getTermsStatus } from '../lib/api';
 import { captureReferralCodeFromUrl } from '../lib/referral-capture';
+import { resolvePostAuthDestination } from '../onboarding/onboarding-routing';
 
 type GoogleButton = { render: (element: HTMLElement, options: { theme: string; size: string; width: number }) => void };
 type GoogleAccounts = { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; renderButton: GoogleButton['render'] } };
@@ -27,11 +28,21 @@ export default function LoginClient() {
           // Route through the terms gate rather than assuming /dashboard —
           // the backend fails closed on mutations until every active
           // document is accepted (requireAuthAndTerms), so a returning or
-          // newly-created account must accept first.
-          let destination = '/dashboard';
+          // newly-created account must accept first. Once terms are clear,
+          // route through onboarding too if no channel exists yet — /onboarding
+          // and /dashboard both re-derive this same check on load, so this is
+          // just avoiding an extra bounce, not the only place it's enforced.
+          let destination = '/accept-terms';
           try {
             const status = await getTermsStatus();
-            if (!status.accepted) destination = '/accept-terms';
+            if (status.accepted) {
+              try {
+                const user = await getCurrentUser();
+                destination = resolvePostAuthDestination(user);
+              } catch {
+                destination = '/dashboard';
+              }
+            }
           } catch {
             // Terms status is unreachable — fail toward showing the gate
             // rather than silently skipping it.

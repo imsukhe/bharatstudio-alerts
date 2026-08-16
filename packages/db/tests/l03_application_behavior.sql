@@ -2652,4 +2652,53 @@ begin
 end
 $$;
 
+-- Regression (migration 0078): a channel with zero channel_subscriptions
+-- rows — the actual state of every brand-new channel right after
+-- onboarding, before any subscribe/checkout action — must get a
+-- consistent default billing shape. 0048's original coalesce() defaults
+-- paired the annual charged/service shape (10/12) with the monthly
+-- interval default, violating the same monthly-must-be-1/1 invariant this
+-- schema's own channel_subscriptions CHECK constraint enforces for a real
+-- row. Found via live browser testing against a freshly onboarded channel,
+-- whose dashboard load failed closed with "Server response was invalid"
+-- because the web client's own parser (correctly) rejects the mismatched
+-- shape. This channel deliberately never receives an
+-- apply_channel_subscription_state call, unlike every other channel in
+-- this file.
+insert into app_users (id, external_subject, display_name, created_at, updated_at)
+values ('00000000-0000-4000-8000-000000000096', 'google-fresh-onboard', 'Synthetic Fresh Onboard', current_timestamp, current_timestamp);
+insert into channels (id, owner_user_id, handle, display_name, accepting_tips, public_config_version, created_at, updated_at)
+values ('00000000-0000-4000-8000-000000000097', '00000000-0000-4000-8000-000000000096', 'synthetic_fresh_onboard', 'Synthetic Fresh Onboard Channel', true, 1, current_timestamp, current_timestamp);
+insert into channel_memberships (channel_id, user_id, role, created_at)
+values ('00000000-0000-4000-8000-000000000097', '00000000-0000-4000-8000-000000000096', 'owner', current_timestamp);
+insert into channel_configs (channel_id, version, values, effective_at, created_at)
+values ('00000000-0000-4000-8000-000000000097', 1, '{}'::jsonb, current_timestamp, current_timestamp);
+
+do $$
+declare
+  fresh_tier text;
+  fresh_price bigint;
+  fresh_charged integer;
+  fresh_service integer;
+  fresh_state text;
+  fresh_interval text;
+begin
+  set role bsa_app;
+  perform set_config('app.user_id', '00000000-0000-4000-8000-000000000096', true);
+  select tier, monthly_price_paise, annual_months_charged, annual_service_months, renewal_state, billing_interval
+    into fresh_tier, fresh_price, fresh_charged, fresh_service, fresh_state, fresh_interval
+    from app_private.get_billing_view('00000000-0000-4000-8000-000000000097');
+  reset role;
+  if fresh_tier <> 'free' or fresh_price <> 0 or fresh_state <> 'not_applicable' or fresh_interval <> 'monthly' then
+    raise exception 'unsubscribed channel default billing shape changed unexpectedly: tier=%, price=%, state=%, interval=%', fresh_tier, fresh_price, fresh_state, fresh_interval;
+  end if;
+  if fresh_charged <> 1 or fresh_service <> 1 then
+    raise exception 'unsubscribed channel billing view returned the annual charged/service shape (%/%) paired with a monthly interval — violates the same invariant channel_subscriptions'' own CHECK constraint enforces for a real row', fresh_charged, fresh_service;
+  end if;
+exception when others then
+  reset role;
+  raise;
+end
+$$;
+
 select 'L03_APPLICATION_BEHAVIOR=PASS' as result;

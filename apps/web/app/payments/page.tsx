@@ -10,10 +10,9 @@
  * (0071_v1_l03_payment_ledger_read.sql) for why that distinction is drawn
  * on purpose.
  */
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getCurrentUser, getPayments, type CurrentUser, type PaymentLedgerEntry } from '../lib/api';
-import { TopNav } from '../components/TopNav';
+import { AppShell } from '../components/AppShell';
 
 const MAX_EXPORT_PAGES = 20;
 
@@ -117,24 +116,15 @@ export default function PaymentsPage() {
 
   if (loading) {
     return (
-      <main className="page-shell">
-        <TopNav />
+      <AppShell title="Payments">
         <p className="helper-text" role="status">Loading…</p>
-      </main>
+      </AppShell>
     );
   }
 
   return (
-    <main className="page-shell">
-      <TopNav />
-      <section className="dashboard-heading compact-heading">
-        <div>
-          <p className="eyebrow">Payments</p>
-          <h1>Your payment ledger.</h1>
-          <p className="lede">Raw payment and refund records for your channel — owner and admin only.</p>
-        </div>
-        <Link className="secondary-button" href="/dashboard">Back to dashboard</Link>
-      </section>
+    <AppShell title="Payments">
+      <p className="lede" style={{ margin: '0 0 24px' }}>Raw payment and refund records for your channel — owner and admin only.</p>
 
       {error && <p className="inline-message error-text" role="alert">{error}</p>}
 
@@ -179,6 +169,6 @@ export default function PaymentsPage() {
           )}
         </section>
       )}
-    </main>
+    </AppShell>
   );
 }

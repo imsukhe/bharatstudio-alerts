@@ -3,7 +3,11 @@ export type CurrentUser = {
   schemaVersion: 'v1';
   userId: string;
   displayName: string | null;
-  channels: Array<{ channelId: string; role: ChannelRole }>;
+  // payoutOnboardingDone: true once this channel's owner either registered
+  // a payment account or explicitly skipped the onboarding payout step —
+  // drives whether the onboarding wizard treats that step as a real gate.
+  // See onboarding/onboarding-routing.ts.
+  channels: Array<{ channelId: string; role: ChannelRole; payoutOnboardingDone: boolean }>;
 };
 export type AccountSession = { sessionId: string; createdAt: string; lastSeenAt: string; current: boolean; deviceLabel: string | null };
 export type TermsDocumentKey = 'terms_of_service' | 'privacy_notice';
@@ -256,8 +260,8 @@ export function parseOverlaySession(value: unknown): OverlaySession {
 export function parseCurrentUser(value: unknown): CurrentUser {
   requireV1(value);
   if (!hasOnlyKeys(value, new Set(['schemaVersion', 'userId', 'displayName', 'channels'])) || !isUuid(value.userId) || (value.displayName !== null && (typeof value.displayName !== 'string' || value.displayName.length > 120)) || !Array.isArray(value.channels)) invalidResponse();
-  if (!value.channels.every((channel) => isRecord(channel) && hasOnlyKeys(channel, new Set(['channelId', 'role'])) && isUuid(channel.channelId) && typeof channel.role === 'string' && channelRoles.has(channel.role as ChannelRole))) invalidResponse();
-  return { schemaVersion: 'v1', userId: value.userId, displayName: value.displayName as string | null, channels: value.channels.map((channel) => ({ channelId: (channel as Record<string, unknown>).channelId as string, role: (channel as Record<string, unknown>).role as ChannelRole })) };
+  if (!value.channels.every((channel) => isRecord(channel) && hasOnlyKeys(channel, new Set(['channelId', 'role', 'payoutOnboardingDone'])) && isUuid(channel.channelId) && typeof channel.role === 'string' && channelRoles.has(channel.role as ChannelRole) && typeof channel.payoutOnboardingDone === 'boolean')) invalidResponse();
+  return { schemaVersion: 'v1', userId: value.userId, displayName: value.displayName as string | null, channels: value.channels.map((channel) => ({ channelId: (channel as Record<string, unknown>).channelId as string, role: (channel as Record<string, unknown>).role as ChannelRole, payoutOnboardingDone: (channel as Record<string, unknown>).payoutOnboardingDone as boolean })) };
 }
 
 const termsDocumentKeys = new Set<TermsDocumentKey>(['terms_of_service', 'privacy_notice']);
@@ -445,8 +449,15 @@ export function parseCompanionLayout(value: unknown): CompanionLayout {
   return value as unknown as CompanionLayout;
 }
 
-function parseAccessToken(value: unknown): { accessToken: string } {
-  if (!isRecord(value) || !hasOnlyKeys(value, new Set(['accessToken'])) || typeof value.accessToken !== 'string' || value.accessToken.length < 32 || value.accessToken.length > 256) invalidResponse();
+export function parseAccessToken(value: unknown): { accessToken: string } {
+  // The exchange endpoint's real envelope is { schemaVersion, accessToken,
+  // expiresAt, user } (see apps/api/src/routes/auth.ts) — expiresAt and user
+  // aren't consumed by the caller (getCurrentUser() is fetched separately
+  // after the token is stored), but they must still be validated here
+  // rather than rejected, or every real sign-in fails with a parse error.
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'accessToken', 'expiresAt', 'user'])) || typeof value.accessToken !== 'string' || value.accessToken.length < 32 || value.accessToken.length > 256 || !isIsoDate(value.expiresAt)) invalidResponse();
+  parseCurrentUser(value.user);
   return { accessToken: value.accessToken };
 }
 
@@ -475,13 +486,34 @@ export function clearAccessToken(): void {
   window.sessionStorage.removeItem(TOKEN_KEY);
 }
 
+// Turns a failed response into a message worth actually showing, instead
+// of every non-401 failure collapsing into the same generic string. Rate
+// limiting (429) is called out specifically — "Account data is temporarily
+// unavailable" reads like something is broken with the account, when the
+// real cause is just too many requests in too short a window (this app's
+// own AppShell + per-page fetch pattern can add up to 8-10 requests per
+// page navigation; a few quick sidebar clicks can plausibly cross the
+// API's 120-requests-per-minute limit — apps/api/src/app.ts). The server's
+// own JSON body already carries a real `message` for every structured
+// error (including 429's "Too many requests") — read it when present
+// rather than discarding it for a hardcoded fallback.
+async function describeFailure(response: Response, fallback: string): Promise<string> {
+  if (response.status === 401) return 'Authentication required';
+  if (response.status === 429) return 'Too many requests — please wait a moment and try again.';
+  try {
+    const body = await response.json() as { message?: unknown };
+    if (typeof body.message === 'string' && body.message.length > 0 && body.message.length <= 180) return body.message;
+  } catch { /* Keep the bounded fallback for a non-JSON failure body. */ }
+  return fallback;
+}
+
 export async function exchangeGoogleCredential(credential: string): Promise<void> {
   const response = await fetch(`${getApiOrigin()}/v1/auth/google/exchange`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ idToken: credential, deviceLabel: 'BharatStudio web' }),
   });
-  if (!response.ok) throw new Error('Sign-in could not be completed');
+  if (!response.ok) throw new Error(await describeFailure(response, 'Sign-in could not be completed'));
   let data: { accessToken: string };
   try { data = parseAccessToken(await response.json()); } catch { throw new Error('Sign-in response was invalid'); }
   storeAccessToken(data.accessToken);
@@ -491,7 +523,7 @@ export async function getCurrentUser(): Promise<CurrentUser> {
   const token = getAccessToken();
   if (!token) throw new Error('Authentication required');
   const response = await fetch(`${getApiOrigin()}/v1/me`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
-  if (!response.ok) throw new Error(response.status === 401 ? 'Authentication required' : 'Account data is temporarily unavailable');
+  if (!response.ok) throw new Error(await describeFailure(response, 'Account data is temporarily unavailable'));
   try { return parseCurrentUser(await response.json()); } catch { throw new Error('Account data is temporarily unavailable'); }
 }
 
@@ -515,15 +547,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, decode: (value:
     headers: { authorization: `Bearer ${token}`, ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers },
     cache: 'no-store',
   });
-  if (!response.ok) {
-    if (response.status === 401) throw new Error('Authentication required');
-    let message = 'Request could not be completed';
-    try {
-      const body = await response.json() as { message?: unknown };
-      if (typeof body.message === 'string' && body.message.length <= 180) message = body.message;
-    } catch { /* Keep the bounded generic message for non-JSON failures. */ }
-    throw new Error(message);
-  }
+  if (!response.ok) throw new Error(await describeFailure(response, 'Request could not be completed'));
   if (response.status === 204) return undefined as T;
   try {
     return decode(await response.json());
@@ -700,6 +724,20 @@ export function registerPaymentAccount(channelId: string, environment: PaymentAc
 }
 export function revokePaymentAccount(channelId: string, environment: PaymentAccountEnvironment): Promise<void> {
   return apiFetch<void>(`/v1/channels/${pathSegment(channelId)}/payment-accounts/razorpay?environment=${encodeURIComponent(environment)}`, { method: 'DELETE' }, rejectUnexpectedBody);
+}
+
+function parsePayoutOnboardingSkip(value: unknown): { channelId: string; payoutOnboardingSkippedAt: string } {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'payoutOnboardingSkippedAt'])) || !isUuid(value.channelId) || !isIsoDate(value.payoutOnboardingSkippedAt)) invalidResponse();
+  return { channelId: value.channelId, payoutOnboardingSkippedAt: value.payoutOnboardingSkippedAt };
+}
+
+// Records an explicit "Skip for now" on the onboarding payout step —
+// after this, CurrentUser.channels[].payoutOnboardingDone is true for this
+// channel even with no payment account registered. Idempotent: repeated
+// calls keep the first skip time server-side.
+export function skipPayoutOnboarding(channelId: string): Promise<{ channelId: string; payoutOnboardingSkippedAt: string }> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/payout-onboarding/skip`, { method: 'POST' }, parsePayoutOnboardingSkip);
 }
 
 const paymentLedgerStatuses = new Set<PaymentLedgerStatus>(['created', 'pending', 'captured', 'failed', 'refunded', 'partially_refunded']);

@@ -49,4 +49,22 @@ export async function registerPaymentAccountRoutes(app: FastifyInstance, session
       return revoked ? reply.code(204).send() : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'payment_account_not_found', message: 'Payment account not found', traceId: request.id });
     },
   );
+
+  // Records an explicit "Skip for now" on the onboarding payout step —
+  // see migration 0079_v1_l03_payout_onboarding_gate.sql. Owner/admin
+  // only, enforced by app_private.skip_payout_onboarding, matching every
+  // other payment-account route's role gate.
+  app.post<{ Params: { channelId: string } }>(
+    '/v1/channels/:channelId/payout-onboarding/skip',
+    { preHandler: termsAuth, schema: { params: channelParams } },
+    async (request, reply) => {
+      if (!store || !request.auth) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_account_store_unavailable', message: 'Payment account settings are temporarily unavailable', traceId: request.id, retryable: true });
+      try {
+        const skippedAt = await store.skipOnboarding(request.auth.userId, request.params.channelId);
+        return reply.code(200).send({ schemaVersion: 'v1', channelId: request.params.channelId, payoutOnboardingSkippedAt: skippedAt });
+      } catch {
+        return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'payout_onboarding_skip_failed', message: 'Payout onboarding could not be skipped', traceId: request.id });
+      }
+    },
+  );
 }

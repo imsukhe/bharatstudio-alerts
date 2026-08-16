@@ -1,8 +1,7 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { TopNav } from '../components/TopNav';
+import { AppShell } from '../components/AppShell';
 import { clearAccessToken, executeCompanionAction, getBilling, getCompanionLayout, getCompanionState, getCurrentUser, getHistory, getNotificationPreferences, getQueues, getSessions, notificationPreferencesInput, revokeSession, updateCompanionLayout, updateNotificationPreferences, type AccountSession, type AlertHistory, type BillingView, type CompanionAction, type CompanionLayout, type CompanionState, type CurrentUser, type NotificationPreferences, type Queue } from '../lib/api';
 
 const operatorRoles = new Set(['owner', 'admin', 'operator']);
@@ -170,17 +169,7 @@ export default function CompanionPage() {
   }
 
   return (
-    <main className="page-shell">
-      <TopNav />
-      <section className="dashboard-heading">
-        <div>
-          <p className="eyebrow">BharatStudio Companion</p>
-          <h1>Broadcast context without broadcast risk.</h1>
-          <p className="lede">A focused operational view for authorised channel members. Companion never connects this browser directly to OBS or changes financial truth.</p>
-        </div>
-        <Link className="secondary-button" href="/dashboard">Dashboard</Link>
-      </section>
-
+    <AppShell title="Companion">
       <p className="helper-text" role="status">{message}</p>
 
       {user && user.channels.length > 1 && <section className="panel companion-selector" aria-labelledby="companion-channel-title">
@@ -247,6 +236,6 @@ export default function CompanionPage() {
           <details><summary>Recovery guidance</summary><p className="helper-text">If an overlay is disconnected, keep the browser source installed and reconnect it. Accepted alerts remain durable and replayable. If a session is unfamiliar, revoke it and sign in again. Companion never asks this browser to connect directly to OBS.</p></details>
         </article>
       </section>
-    </main>
+    </AppShell>
   );
 }

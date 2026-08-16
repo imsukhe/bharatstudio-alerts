@@ -12,7 +12,12 @@ export type CurrentUser = {
   schemaVersion: 'v1';
   userId: string;
   displayName: string | null;
-  channels: Array<{ channelId: string; role: string }>;
+  // payoutOnboardingDone: true once the owner either registered a payment
+  // account (any environment) or explicitly clicked "Skip for now" on the
+  // onboarding payout step. Drives whether the web client's onboarding
+  // wizard treats the payout step as a real gate — see migration
+  // 0079_v1_l03_payout_onboarding_gate.sql's header comment.
+  channels: Array<{ channelId: string; role: string; payoutOnboardingDone: boolean }>;
 };
 
 type SessionStore = {
@@ -70,16 +75,21 @@ export function createSqlSessionStore(sql: Sql, sessionTtlDays = 30): SessionSto
         `;
         const user = users[0];
         if (!user) throw new Error('Authenticated user not found');
-        const channels = await tx<{ channel_id: string; role: string }[]>`
-          select channel_id, role from channel_memberships
-           where user_id = ${userId}::uuid and revoked_at is null
-           order by created_at asc
+        const channels = await tx<{ channel_id: string; role: string; payout_onboarding_done: boolean }[]>`
+          select cm.channel_id, cm.role,
+                 (c.payout_onboarding_skipped_at is not null
+                   or exists(select 1 from payment_accounts pa where pa.channel_id = cm.channel_id)
+                 ) as payout_onboarding_done
+            from channel_memberships cm
+            join channels c on c.id = cm.channel_id
+           where cm.user_id = ${userId}::uuid and cm.revoked_at is null
+           order by cm.created_at asc
         `;
         return {
           schemaVersion: 'v1',
           userId: user.id,
           displayName: user.display_name,
-          channels: channels.map((channel) => ({ channelId: channel.channel_id, role: channel.role })),
+          channels: channels.map((channel) => ({ channelId: channel.channel_id, role: channel.role, payoutOnboardingDone: channel.payout_onboarding_done })),
         };
       });
     },

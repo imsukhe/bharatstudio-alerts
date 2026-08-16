@@ -108,6 +108,79 @@ begin
 end
 $$;
 
+-- Payout onboarding gate (migration 0079): skipping is idempotent (a
+-- second call keeps the first skip time, not a later one), restricted to
+-- owner/admin same as every other payment-account mutation, and rejects
+-- an unknown/closed channel.
+reset role;
+set local role bsa_app;
+select set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true);
+do $$
+declare
+  first_skip timestamptz;
+  second_skip timestamptz;
+begin
+  select app_private.skip_payout_onboarding(
+    '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000001'
+  ) into first_skip;
+  if first_skip is null then
+    raise exception 'payout onboarding skip did not return a timestamp';
+  end if;
+  perform pg_sleep(0.01);
+  select app_private.skip_payout_onboarding(
+    '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000001'
+  ) into second_skip;
+  if second_skip <> first_skip then
+    raise exception 'payout onboarding skip is not idempotent: first %, second %', first_skip, second_skip;
+  end if;
+end
+$$;
+
+do $$
+declare
+  stored timestamptz;
+begin
+  select payout_onboarding_skipped_at into stored
+    from channels
+   where id = '00000000-0000-4000-8000-000000000011';
+  if stored is null then
+    raise exception 'payout_onboarding_skipped_at was not persisted';
+  end if;
+end
+$$;
+
+select set_config('app.user_id', '00000000-0000-4000-8000-000000000006', true);
+do $$
+begin
+  begin
+    perform app_private.skip_payout_onboarding(
+      '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000006'
+    );
+    raise exception 'viewer role was able to skip payout onboarding';
+  exception when others then
+    if sqlerrm !~ 'invalid payout-onboarding skip' then
+      raise;
+    end if;
+  end;
+end
+$$;
+
+select set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true);
+do $$
+begin
+  begin
+    perform app_private.skip_payout_onboarding(
+      '00000000-0000-4000-8000-000000000099', '00000000-0000-4000-8000-000000000001'
+    );
+    raise exception 'skip succeeded against a nonexistent channel';
+  exception when others then
+    if sqlerrm !~ 'channel not found' and sqlerrm !~ 'invalid payout-onboarding skip' then
+      raise;
+    end if;
+  end;
+end
+$$;
+
 rollback;
 
 select 'L04_PAYMENT_ACCOUNT_ONBOARDING=PASS' as result;

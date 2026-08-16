@@ -22,6 +22,7 @@ test('payment-account onboarding is pending until provider activation', async ()
     async list() { return current ? [current] : []; },
     async register(_user, _channel, environment, ref) { current = { ...account, environment, connectedAccountRef: ref, status: 'pending' }; return current; },
     async revoke() { current = current ? { ...current, status: 'revoked', revokedAt: '2026-08-16T00:01:00.000Z' } : null; return Boolean(current); },
+    async skipOnboarding() { return '2026-08-16T00:02:00.000Z'; },
   };
   const app = await buildApp(config, { sessions, paymentAccounts: store });
   const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
@@ -36,10 +37,45 @@ test('payment-account onboarding is pending until provider activation', async ()
 });
 
 test('payment-account route rejects provider-looking secrets and unauthenticated callers', async () => {
-  const app = await buildApp(config, { sessions, paymentAccounts: { async list() { return []; }, async register() { return account; }, async revoke() { return false; } } });
+  const app = await buildApp(config, { sessions, paymentAccounts: { async list() { return []; }, async register() { return account; }, async revoke() { return false; }, async skipOnboarding() { return '2026-08-16T00:00:00.000Z'; } } });
   const invalid = await app.inject({ method: 'PUT', url: `/v1/channels/${channelId}/payment-accounts/razorpay`, headers: { authorization: `Bearer ${'a'.repeat(48)}` }, payload: { environment: 'test', connectedAccountRef: 'acct value with spaces' } });
   assert.equal(invalid.statusCode, 400);
   const unauthorized = await app.inject({ method: 'GET', url: `/v1/channels/${channelId}/payment-accounts` });
   assert.equal(unauthorized.statusCode, 401);
+  await app.close();
+});
+
+test('skipping payout onboarding is idempotent, returns the recorded time, and requires authentication', async () => {
+  let skippedAt: string | null = null;
+  const store: PaymentAccountStore = {
+    async list() { return []; },
+    async register() { throw new Error('not used'); },
+    async revoke() { throw new Error('not used'); },
+    async skipOnboarding() { skippedAt ??= '2026-08-16T00:03:00.000Z'; return skippedAt; },
+  };
+  const app = await buildApp(config, { sessions, paymentAccounts: store });
+  const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
+  const first = await app.inject({ method: 'POST', url: `/v1/channels/${channelId}/payout-onboarding/skip`, headers });
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.json().payoutOnboardingSkippedAt, '2026-08-16T00:03:00.000Z');
+  const second = await app.inject({ method: 'POST', url: `/v1/channels/${channelId}/payout-onboarding/skip`, headers });
+  assert.equal(second.json().payoutOnboardingSkippedAt, first.json().payoutOnboardingSkippedAt);
+  const unauthorized = await app.inject({ method: 'POST', url: `/v1/channels/${channelId}/payout-onboarding/skip` });
+  assert.equal(unauthorized.statusCode, 401);
+  await app.close();
+});
+
+test('a skip attempt the store rejects (wrong role, unknown channel) surfaces as a safe 403, not a stack trace', async () => {
+  const store: PaymentAccountStore = {
+    async list() { return []; },
+    async register() { throw new Error('not used'); },
+    async revoke() { throw new Error('not used'); },
+    async skipOnboarding() { throw new Error('invalid payout-onboarding skip'); },
+  };
+  const app = await buildApp(config, { sessions, paymentAccounts: store });
+  const response = await app.inject({ method: 'POST', url: `/v1/channels/${channelId}/payout-onboarding/skip`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.json().errorCode, 'payout_onboarding_skip_failed');
+  assert.doesNotMatch(response.body, /invalid payout-onboarding skip/);
   await app.close();
 });

@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { createOverlaySession as createSession, getCurrentUser, revokeOverlaySession, rotateOverlaySession, type CurrentUser, type OverlaySession } from '../../lib/api';
-import { TopNav } from '../../components/TopNav';
+import { AppShell } from '../../components/AppShell';
 
 function formatExpiry(value: string): string {
   const date = new Date(value);
@@ -84,15 +83,8 @@ export default function OverlaySetupPage() {
   }
 
   return (
-    <main className="page-shell">
-      <TopNav />
-      <section className="dashboard-heading compact-heading">
-        <div>
-          <p className="eyebrow">OBS browser source</p>
-          <h1>A calm, secure path to your overlay.</h1>
-          <p className="lede">Create a short-lived overlay session, copy its browser-source URL into OBS, and rotate it any time you need to.</p>
-        </div>
-      </section>
+    <AppShell title="Overlay">
+      <p className="lede" style={{ margin: '0 0 24px' }}>Create a short-lived overlay session, copy its browser-source URL into OBS, and rotate it any time you need to.</p>
       {error && <p className="inline-message error-text" role="alert">{error}</p>}
       {status && <p className="inline-message" role="status">{status}</p>}
       <section className="setup-layout">
@@ -117,9 +109,8 @@ export default function OverlaySetupPage() {
           <h2>Never share a live overlay URL.</h2>
           <p>It grants display access to your channel’s overlay. Rotate it immediately if it appears in a public post or recording.</p>
           {!session && <button className="secondary-button" type="button" onClick={create} disabled={!channelId}>Create session</button>}
-          <Link className="text-link" href="/dashboard">Return to dashboard →</Link>
         </aside>
       </section>
-    </main>
+    </AppShell>
   );
 }

@@ -8,7 +8,6 @@
  *   - PUT/GET/DELETE /v1/channels/:id/payment-accounts/razorpay
  *   - GET /v1/me/export, GET/POST /v1/me/privacy/requests, POST /v1/me/close
  */
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
   clearAccessToken, closeAccount, createPrivacyRequestEntry, emailAccountExport, exportAccount, getChannel, getCurrentUser,
@@ -16,6 +15,7 @@ import {
   type CurrentUser, type PaymentAccount, type PaymentAccountEnvironment, type PrivacyRequest, type PrivacyRequestType,
 } from '../lib/api';
 import { TopNav } from '../components/TopNav';
+import { AppShell } from '../components/AppShell';
 
 const requestTypeLabels: Record<PrivacyRequestType, string> = {
   access: 'Access my data',
@@ -184,7 +184,7 @@ export default function SettingsPage() {
   if (closed) {
     return (
       <main className="page-shell">
-        <TopNav />
+        <TopNav variant="minimal" />
         <section className="panel">
           <h1>Account deactivated.</h1>
           <p className="lede">Access has been revoked immediately.</p>
@@ -198,16 +198,8 @@ export default function SettingsPage() {
   }
 
   return (
-    <main className="page-shell">
-      <TopNav />
-      <section className="dashboard-heading compact-heading">
-        <div>
-          <p className="eyebrow">Account settings</p>
-          <h1>Payout account and your data.</h1>
-          <p className="lede">Register the Razorpay account your tips settle to, and manage your privacy rights.</p>
-        </div>
-        <Link className="secondary-button" href="/dashboard">Back to dashboard</Link>
-      </section>
+    <AppShell title="Settings">
+      <p className="lede" style={{ margin: '0 0 24px' }}>Register the Razorpay account your tips settle to, and manage your privacy rights.</p>
 
       {message && <p className="inline-message" role="status">{message}</p>}
       {error && <p className="inline-message error-text" role="alert">{error}</p>}
@@ -347,6 +339,6 @@ export default function SettingsPage() {
           </aside>
         </div>
       )}
-    </main>
+    </AppShell>
   );
 }

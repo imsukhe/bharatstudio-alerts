@@ -29,7 +29,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'BharatStudio Alerts',
+  title: 'BharatStudio',
   description: 'Creator-controlled tipping and stream alerts.',
 };
 

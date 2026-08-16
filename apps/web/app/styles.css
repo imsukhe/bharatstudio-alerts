@@ -79,6 +79,7 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
 .page-shell, .public-shell { width: min(1180px, 100%); min-height: 100vh; margin: 0 auto; padding: 24px; }
 .top-nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 10px 0 48px; }
 .brand { color: var(--text); font-weight: 700; letter-spacing: -.03em; text-decoration: none; }
+.brand-accent { color: var(--accent); }
 .nav-links { display: flex; align-items: center; gap: 18px; font-size: .92rem; }
 .nav-links a { color: var(--muted); text-decoration: none; transition: color var(--dur-base) var(--ease-out); }
 .nav-links a:hover, .text-link:hover { color: var(--text); }
@@ -88,6 +89,7 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
   transition: background-color var(--dur-micro) var(--ease-out), transform var(--dur-base) var(--ease-spring), box-shadow var(--dur-base) var(--ease-spring);
 }
 .nav-action, .primary-button { background: var(--accent); color: #0a0a0f !important; }
+.nav-action-button { appearance: none; font-size: inherit; line-height: inherit; }
 .nav-action:hover, .primary-button:hover { background: var(--accent-hover); transform: translateY(-2px); box-shadow: 0 10px 28px rgba(247, 201, 72, 0.35); }
 .nav-action:active, .primary-button:active { transform: translateY(0) scale(0.98); box-shadow: none; transition-duration: 80ms; }
 .secondary-button { border: 1px solid var(--border); background: rgb(255 255 255 / 5%); color: var(--text); font-family: var(--font-sans); font-weight: 700; }
@@ -126,6 +128,7 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
 .billing-confirm .helper-text { margin: 0 0 12px; }
 .dashboard-form { display: grid; gap: 14px; max-width: 520px; margin-top: 18px; }
 .dashboard-form label { display: grid; gap: 7px; color: var(--muted); font-size: .86rem; font-weight: 700; }
+.dashboard-form label small { color: var(--muted); font-size: .76rem; font-weight: 400; line-height: 1.4; }
 .dashboard-form input, .dashboard-form textarea, .inline-form input { width: 100%; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; outline: 0; background: rgb(255 255 255 / 5%); color: var(--text); font: inherit; transition: border-color var(--dur-base) var(--ease-out); }
 .dashboard-form input:focus, .dashboard-form textarea:focus, .inline-form input:focus { border-color: rgba(247, 201, 72, 0.5); }
 .dashboard-form textarea { resize: vertical; }
@@ -291,3 +294,142 @@ summary { cursor: pointer; color: var(--text); font-family: var(--font-display);
 .browser-overlay[data-reduced-motion="true"] .browser-alert { animation: none; transition: none; }
 @media (max-width: 960px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 760px) { .top-nav { align-items: flex-start; } .nav-links { gap: 10px; } .dashboard-heading, .content-grid, .setup-layout { display: grid; grid-template-columns: 1fr; } .metric-grid { grid-template-columns: 1fr; } .dashboard-heading .primary-button { width: fit-content; } .session-row { align-items: flex-start; flex-direction: column; } }
+
+/*
+ * App shell — fixed sidebar + sticky topbar for signed-in surfaces
+ * (dashboard, companion, payments, settings, overlay setup). See
+ * components/AppShell.tsx for why this exists instead of TopNav there.
+ */
+.app-shell { display: flex; min-height: 100dvh; }
+.app-sidebar-toggle {
+  display: none; position: fixed; top: 14px; left: 14px; z-index: 30;
+  width: 40px; height: 40px; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 12px; background: rgb(26 26 27 / 92%); color: var(--text); cursor: pointer;
+}
+.app-sidebar {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 20; width: 236px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); background: rgb(15 15 16 / 96%);
+}
+.app-sidebar-brand { display: block; padding: 20px 18px; border-bottom: 1px solid var(--border); font-size: 1rem; }
+.app-nav { flex: 1; overflow-y: auto; padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
+.app-nav-item {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 10px; color: var(--muted); text-decoration: none;
+  font-size: .88rem; font-weight: 500; letter-spacing: -.005em;
+  transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+.app-nav-item:hover { color: var(--text); background: rgb(255 255 255 / 5%); }
+.app-nav-item.is-active { color: var(--text); background: rgb(255 255 255 / 7%); font-weight: 700; }
+.app-nav-item.is-active::before { content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 2px; background: var(--accent); }
+.app-nav-icon { display: flex; flex-shrink: 0; color: inherit; }
+.app-nav-item.is-active .app-nav-icon { color: var(--accent); }
+.app-sidebar-user { border-top: 1px solid var(--border); padding: 14px 16px 18px; }
+.app-tier-badge {
+  display: inline-block; margin-bottom: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: rgb(255 255 255 / 5%); color: var(--muted);
+  font-family: var(--font-mono); font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+}
+.app-tier-badge[data-tier="pro"] { color: #3B7EF6; background: rgba(59, 126, 246, .1); border-color: rgba(59, 126, 246, .25); }
+.app-tier-badge[data-tier="creator"] { color: var(--accent); background: var(--accent-dim); border-color: rgba(247, 201, 72, .3); }
+.app-tier-badge[data-tier="studio"] { color: #a855f7; background: rgba(168, 85, 247, .1); border-color: rgba(168, 85, 247, .25); }
+.app-sidebar-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.app-avatar {
+  display: flex; flex-shrink: 0; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%; background: var(--accent);
+  color: #0a0a0f; font-family: var(--font-display); font-size: .8rem; font-weight: 700;
+}
+.app-identity-text { min-width: 0; }
+.app-identity-name, .app-identity-role { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-identity-name { color: var(--text); font-size: .84rem; font-weight: 600; }
+.app-identity-role { color: var(--muted); font-size: .74rem; text-transform: capitalize; }
+.app-sign-out {
+  width: 100%; margin-top: 12px; padding: 7px 0; border: 1px solid var(--border); border-radius: 9px;
+  background: transparent; color: var(--muted); font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+  transition: border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+.app-sign-out:hover { border-color: rgba(247, 201, 72, .4); color: var(--text); }
+.app-sidebar-scrim { position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 55%); }
+.app-main { flex: 1; min-width: 0; margin-left: 236px; display: flex; flex-direction: column; min-height: 100dvh; }
+.app-topbar {
+  position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  height: 60px; padding: 0 28px; border-bottom: 1px solid var(--border);
+  background: rgb(15 15 16 / 88%); backdrop-filter: blur(12px);
+}
+.app-topbar h1 { margin: 0; max-width: none; font-size: 1.05rem; letter-spacing: -.01em; }
+.app-topbar-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.app-topbar-link { margin-top: 0; font-size: .82rem; }
+.app-content { flex: 1; width: min(1180px, 100%); margin: 0 auto; padding: 28px; }
+@media (max-width: 960px) {
+  .app-sidebar-toggle { display: flex; }
+  .app-sidebar { transform: translateX(-100%); transition: transform var(--dur-base) var(--ease-spring); box-shadow: 0 24px 60px rgb(0 0 0 / 50%); }
+  .app-sidebar.is-open { transform: translateX(0); }
+  .app-main { margin-left: 0; }
+  .app-topbar { padding-left: 64px; }
+  .app-content { padding: 20px; }
+  .app-sidebar-brand { padding-left: 64px; }
+}
+
+/*
+ * Onboarding wizard — minimal chrome, no product nav (see OnboardingShell.tsx).
+ */
+.onboarding-shell { display: flex; flex-direction: column; min-height: 100dvh; }
+.onboarding-topbar { display: flex; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: rgb(15 15 16 / 92%); backdrop-filter: blur(12px); z-index: 10; }
+.onboarding-progress { width: min(420px, 100%); margin: 20px auto 0; padding: 0 24px; }
+.onboarding-progress-track { position: relative; height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; margin-bottom: 10px; }
+.onboarding-progress-fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) var(--ease-spring); }
+.onboarding-progress-dots { display: flex; justify-content: space-between; list-style: none; margin: 0; padding: 0; }
+.onboarding-progress-dots li { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.onboarding-dot {
+  display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid var(--border); background: var(--card); color: var(--muted);
+  font-family: var(--font-mono); font-size: .7rem; font-weight: 700;
+}
+.onboarding-progress-dots li.is-active .onboarding-dot, .onboarding-progress-dots li.is-done .onboarding-dot {
+  border-color: var(--accent); background: var(--accent); color: #0a0a0f;
+}
+.onboarding-dot-label { color: var(--muted); font-size: .68rem; white-space: nowrap; }
+.onboarding-progress-dots li.is-active .onboarding-dot-label { color: var(--text); font-weight: 600; }
+.onboarding-content { flex: 1; display: flex; justify-content: center; padding: clamp(32px, 6vw, 64px) 24px; }
+.onboarding-footer { border-top: 1px solid var(--border); padding: 14px 24px; text-align: center; }
+.onboarding-step { width: min(520px, 100%); }
+.onboarding-step.onboarding-step-wide { width: min(980px, 100%); }
+.onboarding-step h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); margin: 0 0 8px; max-width: none; }
+.onboarding-step .lede { margin: 0 0 28px; font-size: .96rem; }
+.onboarding-url-preview { color: var(--accent); font-family: var(--font-mono); font-weight: 700; }
+.onboarding-identity-card {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 28px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 14px; background: rgb(255 255 255 / 4%);
+}
+.onboarding-identity-name { margin: 0; color: var(--text); font-weight: 600; font-size: .9rem; }
+.onboarding-identity-verified { display: inline-flex; align-items: center; gap: 4px; margin: 3px 0 0; color: var(--success); font-size: .74rem; font-weight: 600; }
+@media (max-width: 640px) {
+  .onboarding-topbar { flex-direction: column; align-items: stretch; gap: 12px; }
+  .onboarding-dot-label { display: none; }
+}
+
+/*
+ * Terms acceptance — compact checkbox rows (not full inline document
+ * text by default) plus a modal for reading either document in full.
+ */
+.terms-checkbox-row { align-items: flex-start; }
+.terms-checkbox-row input { margin-top: 3px; flex-shrink: 0; }
+.terms-read-link {
+  border: 0; padding: 0; background: none; cursor: pointer;
+  font: inherit; font-weight: 700; color: var(--accent); text-decoration: underline;
+}
+.terms-read-link:hover { color: var(--accent-hover); }
+.terms-modal-scrim {
+  position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgb(0 0 0 / 65%); backdrop-filter: blur(2px);
+}
+.terms-modal { width: min(680px, 100%); max-height: min(80vh, 720px); display: flex; flex-direction: column; }
+.terms-modal-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.terms-modal-close { padding: 6px 10px; line-height: 1; }
+.terms-modal-body { overflow-y: auto; margin-top: 18px; padding-right: 4px; }
+.terms-modal-body h3 { margin: 18px 0 6px; font-size: 1rem; }
+.terms-modal-body h3:first-child { margin-top: 0; }
+.terms-modal-body p { color: var(--muted); line-height: 1.6; }
+@media (max-width: 640px) {
+  .terms-modal-actions { flex-direction: column; align-items: flex-end; gap: 6px; }
+}

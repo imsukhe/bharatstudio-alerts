@@ -4,7 +4,7 @@ import LoginClient from './LoginClient';
 export default function LoginPage() {
   return (
     <main className="page-shell">
-      <TopNav />
+      <TopNav variant="minimal" />
       <section className="auth-card" aria-labelledby="login-title">
         <p className="eyebrow">Creator access</p>
         <h1 id="login-title">Sign in to manage your stream.</h1>

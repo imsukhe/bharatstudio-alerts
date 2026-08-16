@@ -55,5 +55,15 @@ export function createSqlPaymentAccountStore(sql: Sql): PaymentAccountStore {
         return rows[0]?.revoked ?? false;
       });
     },
+    async skipOnboarding(userId, channelId) {
+      return inUserTransaction(sql, userId, async (tx) => {
+        const rows = await tx<{ skipped_at: Date }[]>`
+          select app_private.skip_payout_onboarding(${channelId}::uuid, ${userId}::uuid) as skipped_at
+        `;
+        const row = rows[0];
+        if (!row) throw new Error('Payout onboarding skip returned no row');
+        return row.skipped_at.toISOString();
+      });
+    },
   };
 }

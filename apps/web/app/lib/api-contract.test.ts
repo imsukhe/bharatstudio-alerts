@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseLottieAssetList, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseReferralHistory, parseReferralOverview, parseTermsStatus } from './api';
+import { isApprovedCheckoutUrl, notificationPreferencesInput, parseAccessToken, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseLottieAssetList, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseReferralHistory, parseReferralOverview, parseTermsStatus } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -20,9 +20,10 @@ test('accepts only bounded authenticated channel responses', () => {
 });
 
 test('rejects expanded identity and companion projections', () => {
-  assert.equal(parseCurrentUser({ schemaVersion: 'v1', userId: channelId, displayName: null, channels: [{ channelId, role: 'owner' }] }).channels[0]?.role, 'owner');
+  assert.equal(parseCurrentUser({ schemaVersion: 'v1', userId: channelId, displayName: null, channels: [{ channelId, role: 'owner', payoutOnboardingDone: false }] }).channels[0]?.role, 'owner');
   assert.throws(() => parseCurrentUser({ schemaVersion: 'v1', userId: 'not-a-user', displayName: null, channels: [] }), /invalid_response/);
-  assert.throws(() => parseCurrentUser({ schemaVersion: 'v1', userId: channelId, displayName: null, channels: [{ channelId, role: 'owner', email: 'private@example.test' }] }), /invalid_response/);
+  assert.throws(() => parseCurrentUser({ schemaVersion: 'v1', userId: channelId, displayName: null, channels: [{ channelId, role: 'owner', payoutOnboardingDone: false, email: 'private@example.test' }] }), /invalid_response/);
+  assert.throws(() => parseCurrentUser({ schemaVersion: 'v1', userId: channelId, displayName: null, channels: [{ channelId, role: 'owner' }] }), /invalid_response/, 'missing payoutOnboardingDone must fail closed, not default silently');
   assert.equal(parseCompanionState({ schemaVersion: 'v1', channelId, overlayConnected: false, pendingAlerts: 0, lastUpdatedAt: '2099-08-15T10:00:00.000Z' }).pendingAlerts, 0);
   assert.throws(() => parseCompanionState({ schemaVersion: 'v1', channelId, overlayConnected: false, pendingAlerts: 0, lastUpdatedAt: '2099-08-15T10:00:00.000Z', internalState: 'hidden' }), /invalid_response/);
 });
@@ -272,4 +273,20 @@ test('accepts a well-formed Lottie asset list and rejects an unknown displayStyl
     schemaVersion: 'v1',
     items: [{ displayStyle: 'celebration', artifactId, byteSize: 0, updatedAt: '2026-08-16T10:00:00.000Z' }],
   }), /invalid_response/);
+});
+
+test('accepts the real POST /v1/auth/google/exchange envelope, not just a bare accessToken', () => {
+  // Regression: apps/api/src/routes/auth.ts returns { schemaVersion,
+  // accessToken, expiresAt, user }, not a bare { accessToken }. A validator
+  // that only allowed the 'accessToken' key rejected every real sign-in
+  // response with "Sign-in response was invalid", confirmed live against a
+  // real Google account — the exchange succeeded server-side (201) but the
+  // client's own envelope check failed closed on the extra fields.
+  const token = 'a'.repeat(48);
+  const user = { schemaVersion: 'v1' as const, userId: channelId, displayName: 'Demo Creator', channels: [{ channelId, role: 'owner' as const, payoutOnboardingDone: false }] };
+  const parsed = parseAccessToken({ schemaVersion: 'v1', accessToken: token, expiresAt: '2099-08-15T10:00:00.000Z', user });
+  assert.equal(parsed.accessToken, token);
+  assert.throws(() => parseAccessToken({ schemaVersion: 'v1', accessToken: token, expiresAt: '2099-08-15T10:00:00.000Z', user, sessionSecret: 'must-not-cross' }), /invalid_response/);
+  assert.throws(() => parseAccessToken({ schemaVersion: 'v1', accessToken: token, expiresAt: 'not-a-date', user }), /invalid_response/);
+  assert.throws(() => parseAccessToken({ schemaVersion: 'v1', accessToken: token, expiresAt: '2099-08-15T10:00:00.000Z', user: { ...user, role: 'owner' } }), /invalid_response/);
 });

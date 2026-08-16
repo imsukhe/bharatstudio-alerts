@@ -15,6 +15,18 @@ export type PrivacyRequest = { requestId: string; requestType: PrivacyRequestTyp
 export type PaymentAccountEnvironment = 'test' | 'live';
 export type PaymentAccountStatus = 'pending' | 'active' | 'revoked';
 export type PaymentAccount = { schemaVersion: 'v1'; accountId: string; channelId: string; provider: 'razorpay'; environment: PaymentAccountEnvironment; connectedAccountRef: string; status: PaymentAccountStatus; createdAt: string; updatedAt: string; revokedAt: string | null };
+export type PaymentLedgerStatus = 'created' | 'pending' | 'captured' | 'failed' | 'refunded' | 'partially_refunded';
+export type RefundStatus = 'requested' | 'processed' | 'failed' | 'reversed';
+export type PaymentLedgerEntry = {
+  paymentId: string;
+  providerPaymentId: string;
+  grossAmountPaise: number;
+  currency: 'INR';
+  status: PaymentLedgerStatus;
+  createdAt: string;
+  refundTotalPaise: number;
+  latestRefundStatus: RefundStatus | null;
+};
 export type PaidTier = 'pro' | 'creator' | 'studio';
 export type BillingSubscription = {
   schemaVersion: 'v1';
@@ -627,6 +639,40 @@ export function registerPaymentAccount(channelId: string, environment: PaymentAc
 }
 export function revokePaymentAccount(channelId: string, environment: PaymentAccountEnvironment): Promise<void> {
   return apiFetch<void>(`/v1/channels/${pathSegment(channelId)}/payment-accounts/razorpay?environment=${encodeURIComponent(environment)}`, { method: 'DELETE' }, rejectUnexpectedBody);
+}
+
+const paymentLedgerStatuses = new Set<PaymentLedgerStatus>(['created', 'pending', 'captured', 'failed', 'refunded', 'partially_refunded']);
+const refundStatuses = new Set<RefundStatus>(['requested', 'processed', 'failed', 'reversed']);
+
+export function parsePaymentLedgerEntry(value: unknown): PaymentLedgerEntry {
+  if (!isRecord(value)) invalidResponse();
+  if (
+    !hasOnlyKeys(value, new Set(['paymentId', 'providerPaymentId', 'grossAmountPaise', 'currency', 'status', 'createdAt', 'refundTotalPaise', 'latestRefundStatus'])) ||
+    !isUuid(value.paymentId) ||
+    typeof value.providerPaymentId !== 'string' || value.providerPaymentId.length < 1 ||
+    !isSafeInteger(value.grossAmountPaise) || value.grossAmountPaise < 0 ||
+    value.currency !== 'INR' ||
+    typeof value.status !== 'string' || !paymentLedgerStatuses.has(value.status as PaymentLedgerStatus) ||
+    !isIsoDate(value.createdAt) ||
+    !isSafeInteger(value.refundTotalPaise) || value.refundTotalPaise < 0 ||
+    (value.latestRefundStatus !== null && (typeof value.latestRefundStatus !== 'string' || !refundStatuses.has(value.latestRefundStatus as RefundStatus)))
+  ) invalidResponse();
+  return {
+    paymentId: value.paymentId, providerPaymentId: value.providerPaymentId, grossAmountPaise: value.grossAmountPaise,
+    currency: 'INR', status: value.status as PaymentLedgerStatus, createdAt: value.createdAt,
+    refundTotalPaise: value.refundTotalPaise, latestRefundStatus: value.latestRefundStatus as RefundStatus | null,
+  };
+}
+
+export function parsePaymentLedgerPage(value: unknown): { schemaVersion: 'v1'; items: PaymentLedgerEntry[]; nextCursor: string | null } {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'items', 'nextCursor'])) || !Array.isArray(value.items) || value.items.length > 100 || (value.nextCursor !== null && typeof value.nextCursor !== 'string')) invalidResponse();
+  return { schemaVersion: 'v1', items: value.items.map(parsePaymentLedgerEntry), nextCursor: value.nextCursor as string | null };
+}
+
+export function getPayments(channelId: string, cursor?: string, pageSize = 25): Promise<{ schemaVersion: 'v1'; items: PaymentLedgerEntry[]; nextCursor: string | null }> {
+  const query = new URLSearchParams({ pageSize: String(pageSize), ...(cursor ? { cursor } : {}) });
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/payments?${query.toString()}`, {}, parsePaymentLedgerPage);
 }
 
 import { getApiOrigin } from './api-origin';

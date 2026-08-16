@@ -179,6 +179,14 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
 @media (max-width: 760px) { .binding-row { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 760px) { .binding-edit-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .queue-list, .history-list { display: grid; gap: 9px; margin: 18px 0; }
+.payments-table-scroll { margin: 18px 0; overflow-x: auto; }
+.payments-table { width: 100%; border-collapse: collapse; font-size: .86rem; font-variant-numeric: tabular-nums; }
+.payments-table th { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-family: var(--font-mono); font-size: .72rem; font-weight: 600; letter-spacing: .08em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+.payments-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.payments-table tr:last-child td { border-bottom: none; }
+.payments-table-id { color: var(--muted); font-family: var(--font-mono); font-size: .8rem; }
+.payments-table-status { color: var(--muted); text-transform: capitalize; }
+.payments-load-more { margin-top: 16px; }
 .queue-row, .history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); padding: 10px 0; }
 .queue-row small, .history-row > span { color: var(--muted); font-size: .8rem; }
 .inline-form { display: flex; gap: 8px; }

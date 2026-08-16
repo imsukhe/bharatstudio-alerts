@@ -26,6 +26,8 @@ import type { NotificationStore } from './domain/notification-store.js';
 import type { NotificationTokenProtector } from './notifications/token-crypto.js';
 import type { PaymentAccountStore } from './domain/payment-account.js';
 import { registerPaymentAccountRoutes } from './routes/payment-accounts.js';
+import type { PaymentLedgerStore } from './domain/payment-ledger.js';
+import { registerPaymentLedgerRoutes } from './routes/payments.js';
 import type { AccountStore } from './domain/account-store.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerMaintenanceRoutes } from './routes/maintenance.js';
@@ -57,6 +59,7 @@ export type AppDependencies = {
   notifications?: NotificationStore;
   notificationTokenProtector?: NotificationTokenProtector;
   paymentAccounts?: PaymentAccountStore;
+  paymentLedger?: PaymentLedgerStore;
   account?: AccountStore;
   publicAbuseGuard?: PublicAbuseGuard;
   tts?: TtsService;
@@ -171,6 +174,7 @@ export async function buildApp(
   await registerAccountRoutes(app, dependencies.sessions, dependencies.account);
   await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account);
   await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
+  await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePrivacyRequestList, parseQueueList, parseTermsStatus } from './api';
+import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseTermsStatus } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -180,4 +180,24 @@ test('checkout redirect only ever follows an approved Razorpay domain', () => {
   assert.equal(isApprovedCheckoutUrl('https://pages.razorpay.com/checkout/demo'), true);
   assert.equal(isApprovedCheckoutUrl('https://rzp.io.attacker.example/i/demo'), false);
   assert.equal(isApprovedCheckoutUrl('https://attacker.example/?redirect=https://rzp.io/'), false);
+});
+
+test('accepts only the bounded payment-ledger page and rejects an unbalanced refund total', () => {
+  const paymentId = '00000000-0000-4000-8000-000000000007';
+  const parsed = parsePaymentLedgerPage({
+    schemaVersion: 'v1',
+    items: [{ paymentId, providerPaymentId: 'pay_demo123', grossAmountPaise: 50000, currency: 'INR', status: 'partially_refunded', createdAt: '2099-08-15T10:00:00.000Z', refundTotalPaise: 15000, latestRefundStatus: 'requested' }],
+    nextCursor: null,
+  });
+  assert.equal(parsed.items[0]?.refundTotalPaise, 15000);
+  assert.throws(() => parsePaymentLedgerPage({
+    schemaVersion: 'v1',
+    items: [{ paymentId, providerPaymentId: 'pay_demo123', grossAmountPaise: 50000, currency: 'INR', status: 'captured', createdAt: '2099-08-15T10:00:00.000Z', refundTotalPaise: -1, latestRefundStatus: null }],
+    nextCursor: null,
+  }), /invalid_response/);
+  assert.throws(() => parsePaymentLedgerPage({
+    schemaVersion: 'v1',
+    items: [{ paymentId, providerPaymentId: 'pay_demo123', grossAmountPaise: 50000, currency: 'INR', status: 'captured', createdAt: '2099-08-15T10:00:00.000Z', refundTotalPaise: 0, latestRefundStatus: 'not_a_real_status' }],
+    nextCursor: null,
+  }), /invalid_response/);
 });

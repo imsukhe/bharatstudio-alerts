@@ -8,6 +8,7 @@ export function TopNav() {
         <Link href="/dashboard">Dashboard</Link>
         <Link href="/companion">Companion</Link>
         <Link href="/overlay/setup">Overlay</Link>
+        <Link href="/payments">Payments</Link>
         <Link href="/settings">Settings</Link>
         <Link className="nav-action" href="/login">Sign in</Link>
       </div>

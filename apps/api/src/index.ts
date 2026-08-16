@@ -16,6 +16,7 @@ import { createSqlReadiness } from './db/readiness.js';
 import { createSqlNotificationStore } from './db/notification-store.js';
 import { createNotificationTokenProtector } from './notifications/token-crypto.js';
 import { createSqlPaymentAccountStore } from './db/payment-account-store.js';
+import { createSqlPaymentLedgerStore } from './db/payment-ledger.js';
 import { createSqlAccountStore } from './db/account-store.js';
 import { createTurnstileGuard } from './domain/public-abuse.js';
 import { createSqlTtsStore } from './db/tts-store.js';
@@ -53,6 +54,7 @@ const app = await buildApp(config, {
     ? createNotificationTokenProtector(config.notificationTokenEncryptionKey)
     : undefined,
   paymentAccounts: sql ? createSqlPaymentAccountStore(sql) : undefined,
+  paymentLedger: sql ? createSqlPaymentLedgerStore(sql) : undefined,
   account: sql ? createSqlAccountStore(sql) : undefined,
   publicAbuseGuard: config.publicPaymentTurnstileSecret ? createTurnstileGuard(config.publicPaymentTurnstileSecret) : undefined,
   ttsStore: sql ? createSqlTtsStore(sql) : undefined,

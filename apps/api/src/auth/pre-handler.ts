@@ -94,3 +94,49 @@ export function requireAcceptedTerms(account?: AccountStore) {
 export function requireAuthAndTerms(sessions?: SessionStore, account?: AccountStore) {
   return account ? [requireAuth(sessions), requireAcceptedTerms(account)] : requireAuth(sessions);
 }
+
+/**
+ * Cross-channel platform-admin gate for the admin DLQ surface. Unlike
+ * requireAuthAndTerms above, this always composes both checks — an admin
+ * boundary must never silently degrade to "just authenticated" when its
+ * adapter is unconfigured, so isPlatformAdminCheck fails closed (503)
+ * itself rather than being skipped.
+ */
+export function isPlatformAdminCheck(store?: { isPlatformAdmin(userId: string): Promise<boolean> }) {
+  return async function checkPlatformAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    if (!request.auth) return;
+    if (!store) {
+      await reply.code(503).send({
+        schemaVersion: 'v1',
+        errorCode: 'admin_unavailable',
+        message: 'Admin tooling is temporarily unavailable',
+        traceId: request.id,
+        retryable: true,
+      });
+      return;
+    }
+    try {
+      if (await store.isPlatformAdmin(request.auth.userId)) return;
+    } catch {
+      await reply.code(503).send({
+        schemaVersion: 'v1',
+        errorCode: 'admin_unavailable',
+        message: 'Admin tooling is temporarily unavailable',
+        traceId: request.id,
+        retryable: true,
+      });
+      return;
+    }
+    await reply.code(403).send({
+      schemaVersion: 'v1',
+      errorCode: 'platform_admin_required',
+      message: 'Platform admin access is required',
+      traceId: request.id,
+      retryable: false,
+    });
+  };
+}
+
+export function requirePlatformAdmin(sessions?: SessionStore, store?: { isPlatformAdmin(userId: string): Promise<boolean> }) {
+  return [requireAuth(sessions), isPlatformAdminCheck(store)];
+}

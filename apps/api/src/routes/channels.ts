@@ -4,6 +4,8 @@ import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { ChannelStore } from '../domain/channel-store.js';
 import type { AccountStore } from '../domain/account-store.js';
+import type { ReferralStore } from '../domain/referrals.js';
+import { computeIpSubnetHash } from '../domain/ip-subnet.js';
 import { channelConfigValueSchema, validateChannelConfigSemantics } from '../domain/channel-config-schema.js';
 import { logSafeError } from '../observability/safe-log.js';
 
@@ -42,11 +44,11 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'channel_store_unavailable', message: 'Channel data is temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerChannelRoutes(app: FastifyInstance, sessions?: SessionStore, store?: ChannelStore, account?: AccountStore): Promise<void> {
+export async function registerChannelRoutes(app: FastifyInstance, sessions?: SessionStore, store?: ChannelStore, account?: AccountStore, referrals?: ReferralStore): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
 
-  app.post<{ Body: { handle: string; displayName: string } }>('/v1/channels', {
+  app.post<{ Body: { handle: string; displayName: string; referralCode?: string } }>('/v1/channels', {
     preHandler: termsAuth,
     schema: {
       body: {
@@ -54,17 +56,31 @@ export async function registerChannelRoutes(app: FastifyInstance, sessions?: Ses
         properties: {
           handle: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' },
           displayName: { type: 'string', minLength: 1, maxLength: 120 },
+          referralCode: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' },
         },
       },
     },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
+    let channel;
     try {
-      return reply.code(201).send(await store.createChannel(request.auth.userId, { ...request.body, channelId: randomUUID() }));
+      channel = await store.createChannel(request.auth.userId, { handle: request.body.handle, displayName: request.body.displayName, channelId: randomUUID() });
     } catch (error) {
       logSafeError(request, 'channel_create_failed', error);
       return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'channel_create_conflict', message: 'Channel could not be created', traceId: request.id });
     }
+    // Referral attribution is best-effort and runs after the channel is
+    // already committed — an invalid/expired code, a self-referral, or a
+    // referral-store outage must never turn a successful channel creation
+    // into a failed request.
+    if (referrals && request.body.referralCode) {
+      try {
+        await referrals.attribute(channel.channelId, request.body.referralCode, computeIpSubnetHash(request.ip));
+      } catch (error) {
+        logSafeError(request, 'referral_attribution_failed', error);
+      }
+    }
+    return reply.code(201).send(channel);
   });
 
   app.get<{ Params: { channelId: string } }>('/v1/channels/:channelId', { preHandler: auth, schema: { params: channelParams } }, async (request, reply) => {

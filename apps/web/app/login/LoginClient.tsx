@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Script from 'next/script';
 import { exchangeGoogleCredential, getTermsStatus } from '../lib/api';
+import { captureReferralCodeFromUrl } from '../lib/referral-capture';
 
 type GoogleButton = { render: (element: HTMLElement, options: { theme: string; size: string; width: number }) => void };
 type GoogleAccounts = { id: { initialize: (options: { client_id: string; callback: (response: { credential: string }) => void }) => void; renderButton: GoogleButton['render'] } };
@@ -14,6 +15,7 @@ export default function LoginClient() {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
   useEffect(() => {
+    captureReferralCodeFromUrl(window.location.search);
     const google = (window as Window & { google?: { accounts?: GoogleAccounts } }).google;
     if (!google?.accounts || !clientId) return;
     google.accounts.id.initialize({

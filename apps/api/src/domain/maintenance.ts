@@ -6,6 +6,7 @@ export const maintenanceJobs = [
   'event-archive',
   'audit-archive',
   'overlay-expiry-reminder',
+  'referral-lifecycle',
 ] as const;
 
 export type MaintenanceJob = typeof maintenanceJobs[number];

@@ -44,6 +44,8 @@ import type { TtsStore } from './domain/tts-store.js';
 import type { OverlayAudioStore } from './domain/overlay-audio-store.js';
 import { registerTtsRoutes } from './routes/tts.js';
 import { registerOverlayAudioRoutes } from './routes/overlay-audio.js';
+import type { ReferralStore } from './domain/referrals.js';
+import { registerReferralRoutes } from './routes/referrals.js';
 
 export type AppDependencies = {
   publicChannels?: PublicChannelRepository;
@@ -72,6 +74,7 @@ export type AppDependencies = {
   tts?: TtsService;
   ttsStore?: TtsStore;
   overlayAudio?: OverlayAudioStore;
+  referrals?: ReferralStore;
 };
 
 export async function buildApp(
@@ -179,9 +182,10 @@ export async function buildApp(
   await registerAuthRoutes(app, dependencies);
   await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
   await registerAccountRoutes(app, dependencies.sessions, dependencies.account, dependencies.emailOutbox);
-  await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account);
+  await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account, dependencies.referrals);
   await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
+  await registerReferralRoutes(app, dependencies.sessions, dependencies.referrals);
   await registerAdminRoutes(app, dependencies.sessions, dependencies.admin);
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account);

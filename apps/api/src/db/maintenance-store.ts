@@ -18,6 +18,8 @@ async function runJobImplementation(tx: TransactionSql, job: MaintenanceRequest[
       return tx<MaintenanceRunRow[]>`select run_id, job, status from app_private.run_overlay_session_maintenance(${runId}::uuid)`;
     case 'overlay-expiry-reminder':
       return tx<MaintenanceRunRow[]>`select run_id, job, status from app_private.run_overlay_expiry_reminder_maintenance(${runId}::uuid)`;
+    case 'referral-lifecycle':
+      return tx<MaintenanceRunRow[]>`select run_id, job, status from app_private.run_referral_lifecycle_maintenance(${runId}::uuid)`;
     default:
       throw new Error(`Maintenance job is owned by another service: ${job}`);
   }
@@ -26,7 +28,7 @@ async function runJobImplementation(tx: TransactionSql, job: MaintenanceRequest[
 export function createSqlMaintenanceStore(sql: Sql): MaintenanceStore {
   return {
     async execute(request) {
-      if (request.job !== 'overlay-sessions' && request.job !== 'overlay-expiry-reminder') {
+      if (request.job !== 'overlay-sessions' && request.job !== 'overlay-expiry-reminder' && request.job !== 'referral-lifecycle') {
         throw new Error(`Maintenance job is owned by another service: ${request.job}`);
       }
 

@@ -49,6 +49,18 @@ export type SubscriptionLifecycleResult = {
   status: 'requested' | 'provider_confirmed' | 'provider_failed';
   replay: boolean;
 };
+export type ReferralStatus = 'pending' | 'paid_pending_hold' | 'credited' | 'flagged_fraud' | 'revoked' | 'expired';
+export type ReferralOverview = {
+  schemaVersion: 'v1';
+  pendingCount: number;
+  paidPendingHoldCount: number;
+  creditedCount: number;
+  flaggedOrRevokedCount: number;
+  bankedCreditDays: number;
+  lifetimeCreditedDays: number;
+};
+export type ReferralHistoryEntry = { referralId: string; status: ReferralStatus; attributedAt: string; creditedAt: string | null; creditDays: number | null };
+export type ReferralHistory = { schemaVersion: 'v1'; items: ReferralHistoryEntry[] };
 export type NotificationPreferences = { schemaVersion: 'v1'; connectionAlerts: boolean; securityAlerts: boolean; actionFailures: boolean };
 export type NotificationDevice = { schemaVersion: 'v1'; deviceId: string; platform: 'ios' | 'android'; enabled: boolean; createdAt: string; lastSeenAt: string };
 
@@ -494,8 +506,8 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, decode: (value:
   }
 }
 
-export function createChannel(handle: string, displayName: string): Promise<ChannelDetails> {
-  return apiFetch('/v1/channels', { method: 'POST', body: JSON.stringify({ handle, displayName }) }, parseChannelDetails);
+export function createChannel(handle: string, displayName: string, referralCode?: string): Promise<ChannelDetails> {
+  return apiFetch('/v1/channels', { method: 'POST', body: JSON.stringify({ handle, displayName, ...(referralCode ? { referralCode } : {}) }) }, parseChannelDetails);
 }
 
 export function getChannel(channelId: string): Promise<ChannelDetails> { return apiFetch(`/v1/channels/${pathSegment(channelId)}`, {}, parseChannelDetails); }
@@ -687,5 +699,51 @@ export function getPayments(channelId: string, cursor?: string, pageSize = 25): 
   const query = new URLSearchParams({ pageSize: String(pageSize), ...(cursor ? { cursor } : {}) });
   return apiFetch(`/v1/channels/${pathSegment(channelId)}/payments?${query.toString()}`, {}, parsePaymentLedgerPage);
 }
+
+const referralStatuses = new Set<ReferralStatus>(['pending', 'paid_pending_hold', 'credited', 'flagged_fraud', 'revoked', 'expired']);
+
+export function parseReferralOverview(value: unknown): ReferralOverview {
+  requireV1(value);
+  const allowed = new Set(['schemaVersion', 'pendingCount', 'paidPendingHoldCount', 'creditedCount', 'flaggedOrRevokedCount', 'bankedCreditDays', 'lifetimeCreditedDays']);
+  if (
+    !hasOnlyKeys(value, allowed) ||
+    !isSafeInteger(value.pendingCount) || value.pendingCount < 0 ||
+    !isSafeInteger(value.paidPendingHoldCount) || value.paidPendingHoldCount < 0 ||
+    !isSafeInteger(value.creditedCount) || value.creditedCount < 0 ||
+    !isSafeInteger(value.flaggedOrRevokedCount) || value.flaggedOrRevokedCount < 0 ||
+    !isSafeInteger(value.bankedCreditDays) || value.bankedCreditDays < 0 ||
+    !isSafeInteger(value.lifetimeCreditedDays) || value.lifetimeCreditedDays < 0
+  ) invalidResponse();
+  return {
+    schemaVersion: 'v1', pendingCount: value.pendingCount, paidPendingHoldCount: value.paidPendingHoldCount,
+    creditedCount: value.creditedCount, flaggedOrRevokedCount: value.flaggedOrRevokedCount,
+    bankedCreditDays: value.bankedCreditDays, lifetimeCreditedDays: value.lifetimeCreditedDays,
+  };
+}
+
+export function parseReferralHistoryEntry(value: unknown): ReferralHistoryEntry {
+  if (!isRecord(value)) invalidResponse();
+  if (
+    !hasOnlyKeys(value, new Set(['referralId', 'status', 'attributedAt', 'creditedAt', 'creditDays'])) ||
+    !isUuid(value.referralId) ||
+    typeof value.status !== 'string' || !referralStatuses.has(value.status as ReferralStatus) ||
+    !isIsoDate(value.attributedAt) ||
+    (value.creditedAt !== null && !isIsoDate(value.creditedAt)) ||
+    (value.creditDays !== null && (!isSafeInteger(value.creditDays) || value.creditDays < 1))
+  ) invalidResponse();
+  return {
+    referralId: value.referralId, status: value.status as ReferralStatus, attributedAt: value.attributedAt,
+    creditedAt: value.creditedAt as string | null, creditDays: value.creditDays as number | null,
+  };
+}
+
+export function parseReferralHistory(value: unknown): ReferralHistory {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'items'])) || !Array.isArray(value.items) || value.items.length > 100) invalidResponse();
+  return { schemaVersion: 'v1', items: value.items.map(parseReferralHistoryEntry) };
+}
+
+export function getReferralOverview(channelId: string): Promise<ReferralOverview> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/referrals/overview`, {}, parseReferralOverview); }
+export function getReferralHistory(channelId: string): Promise<ReferralHistory> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/referrals`, {}, parseReferralHistory); }
 
 import { getApiOrigin } from './api-origin';

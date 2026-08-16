@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseTermsStatus } from './api';
+import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseReferralHistory, parseReferralOverview, parseTermsStatus } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -201,5 +201,30 @@ test('accepts only the bounded payment-ledger page and rejects an unbalanced ref
     schemaVersion: 'v1',
     items: [{ paymentId, providerPaymentId: 'pay_demo123', grossAmountPaise: 50000, currency: 'INR', status: 'captured', createdAt: '2099-08-15T10:00:00.000Z', refundTotalPaise: 0, latestRefundStatus: 'not_a_real_status' }],
     nextCursor: null,
+  }), /invalid_response/);
+});
+
+test('accepts a well-formed referral overview and rejects a negative count', () => {
+  const overview = { schemaVersion: 'v1', pendingCount: 1, paidPendingHoldCount: 0, creditedCount: 2, flaggedOrRevokedCount: 0, bankedCreditDays: 0, lifetimeCreditedDays: 60 };
+  const parsed = parseReferralOverview(overview);
+  assert.equal(parsed.lifetimeCreditedDays, 60);
+  assert.throws(() => parseReferralOverview({ ...overview, creditedCount: -1 }), /invalid_response/);
+  assert.throws(() => parseReferralOverview({ ...overview, extra: true }), /invalid_response/);
+});
+
+test('accepts a well-formed referral history page and rejects an unknown status', () => {
+  const referralId = '00000000-0000-4000-8000-000000000091';
+  const parsed = parseReferralHistory({
+    schemaVersion: 'v1',
+    items: [{ referralId, status: 'credited', attributedAt: '2026-08-01T10:00:00.000Z', creditedAt: '2026-08-15T10:00:00.000Z', creditDays: 30 }],
+  });
+  assert.equal(parsed.items[0]?.creditDays, 30);
+  assert.throws(() => parseReferralHistory({
+    schemaVersion: 'v1',
+    items: [{ referralId, status: 'not_a_real_status', attributedAt: '2026-08-01T10:00:00.000Z', creditedAt: null, creditDays: null }],
+  }), /invalid_response/);
+  assert.throws(() => parseReferralHistory({
+    schemaVersion: 'v1',
+    items: [{ referralId, status: 'pending', attributedAt: '2026-08-01T10:00:00.000Z', creditedAt: null, creditDays: 0 }],
   }), /invalid_response/);
 });

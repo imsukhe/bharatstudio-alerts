@@ -20,6 +20,7 @@ import { createSqlPaymentLedgerStore } from './db/payment-ledger.js';
 import { createSqlAdminStore } from './db/admin-store.js';
 import { createSqlEmailOutboxStore } from './db/email-store.js';
 import { createResendEmailSender } from './email/resend-sender.js';
+import { createSqlReferralStore } from './db/referral-store.js';
 import { createSqlAccountStore } from './db/account-store.js';
 import { createTurnstileGuard } from './domain/public-abuse.js';
 import { createSqlTtsStore } from './db/tts-store.js';
@@ -64,6 +65,7 @@ const app = await buildApp(config, {
     ? createResendEmailSender(config.resendApiKey, config.resendFromAddress, config.resendEndpoint)
     : undefined,
   account: sql ? createSqlAccountStore(sql) : undefined,
+  referrals: sql ? createSqlReferralStore(sql) : undefined,
   publicAbuseGuard: config.publicPaymentTurnstileSecret ? createTurnstileGuard(config.publicPaymentTurnstileSecret) : undefined,
   ttsStore: sql ? createSqlTtsStore(sql) : undefined,
   overlayAudio: sql ? createSqlOverlayAudioStore(sql) : undefined,

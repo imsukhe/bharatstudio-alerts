@@ -319,6 +319,12 @@ export default function BrowserOverlayPage() {
   const style = first ? styleFor(first, config) : config.defaultStyle;
   const overlayToken = typeof window !== 'undefined' ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token') : null;
   const apiOriginForLottie = (() => { try { return getApiOrigin(); } catch { return undefined; } })();
+  // The connection-status dot is opt-in via ?debug=1, never part of the
+  // plain session URL a creator pastes into OBS (see overlay/setup/page.tsx
+  // — session.streamUrl carries no such param). This overlay must render
+  // nothing until an alert actually fires; a persistent status pixel
+  // composited into every broadcast at all times would violate that.
+  const debugStatusVisible = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
 
   function lottieForStyle(displayStyle: string): { url: string; token: string } | undefined {
     if (config.reducedMotion || !overlayToken || !apiOriginForLottie) return undefined;
@@ -367,7 +373,9 @@ export default function BrowserOverlayPage() {
 
   return (
     <main className={`browser-overlay anchor-${config.display.anchor}`} data-reduced-motion={config.reducedMotion ? 'true' : 'false'} style={overlayStyle} aria-live="polite">
-      <div className={`browser-overlay-status ${connected ? 'is-connected' : ''}`} role="status" aria-live="polite" aria-label={connected ? 'Overlay connected' : 'Overlay reconnecting'} />
+      {debugStatusVisible && (
+        <div className={`browser-overlay-status ${connected ? 'is-connected' : ''}`} role="status" aria-live="polite" aria-label={connected ? 'Overlay connected' : 'Overlay reconnecting'} />
+      )}
       {currentGroup.length > 0 && (
         <div className={`browser-alert-group mode-${mode}`} data-style={style}>
           {mode === 'aggregated' && currentGroup.length > 1 ? (

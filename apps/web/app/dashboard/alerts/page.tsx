@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../../components/AppShell';
+import { authGateStates } from '../../components/AuthGateStates';
 import {
   createBinding, createQueue, getBindings, getChannel, getChannelConfig, getCurrentUser, getQueues, sendTestAlert, updateBinding,
   updateChannelConfig, updateQueue, type ChannelConfig, type ChannelConfigValues, type ChannelDetails, type CurrentUser, type Queue, type QueueBinding,
@@ -42,8 +42,21 @@ export default function AlertsPage() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [queueName, setQueueName] = useState('Main alerts');
   const [testMessage, setTestMessage] = useState('Welcome to the stream!');
+  // Every mutation on this page used to funnel success and failure through
+  // the same `message` string and the same gold inline-message/role="status"
+  // styling — no color distinction for a sighted user, and the same
+  // "polite" (non-interrupting) announcement for a screen reader regardless
+  // of whether the action actually failed. `notify` below is the one place
+  // that sets both message and its kind together, so no call site can
+  // regress back to that.
   const [message, setMessage] = useState<string | null>(null);
+  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
   const [error, setError] = useState<string | null>(null);
+
+  function notify(text: string, kind: 'success' | 'error') {
+    setMessage(text);
+    setMessageKind(kind);
+  }
 
   useEffect(() => {
     getCurrentUser().then(async (nextUser) => {
@@ -65,22 +78,22 @@ export default function AlertsPage() {
     setSavingConfig(true); setMessage(null);
     try {
       const next = await updateChannelConfig(channel.channelId, config.version, configDraft);
-      setConfig(next); setConfigDraft(mergeConfig(next.values)); setMessage('Alert configuration saved.');
+      setConfig(next); setConfigDraft(mergeConfig(next.values)); notify('Alert configuration saved.', 'success');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Configuration could not be saved. Reload and try again.');
+      notify(cause instanceof Error ? cause.message : 'Configuration could not be saved. Reload and try again.', 'error');
     } finally { setSavingConfig(false); }
   }
 
   async function submitQueue(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!channel) return;
-    try { const next = await createQueue(channel.channelId, queueName); setQueues([...queues, next]); setQueueName(''); setMessage('Queue created.'); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Queue could not be created'); }
+    try { const next = await createQueue(channel.channelId, queueName); setQueues([...queues, next]); setQueueName(''); notify('Queue created.', 'success'); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'Queue could not be created', 'error'); }
   }
 
   async function submitTestAlert(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!channel) return;
-    try { await sendTestAlert(channel.channelId, user?.displayName ?? 'Viewer', testMessage); setMessage('Test alert accepted and added to the durable alert path.'); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Test alert could not be accepted'); }
+    try { await sendTestAlert(channel.channelId, user?.displayName ?? 'Viewer', testMessage); notify('Test alert accepted and added to the durable alert path.', 'success'); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'Test alert could not be accepted', 'error'); }
   }
 
   async function toggleQueue(queue: Queue) {
@@ -88,9 +101,9 @@ export default function AlertsPage() {
     try {
       const next = await updateQueue(channel.channelId, queue.queueId, { paused: !queue.paused });
       setQueues(queues.map((candidate) => candidate.queueId === next.queueId ? next : candidate));
-      setMessage(`${next.name} is ${next.paused ? 'paused' : 'ready'}.`);
+      notify(`${next.name} is ${next.paused ? 'paused' : 'ready'}.`, 'success');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Queue could not be updated');
+      notify(cause instanceof Error ? cause.message : 'Queue could not be updated', 'error');
     }
   }
 
@@ -99,8 +112,8 @@ export default function AlertsPage() {
     try {
       const next = await updateBinding(channel.channelId, binding.bindingId, { allowDuplicates: !binding.allowDuplicates });
       setBindings(bindings.map((candidate) => candidate.bindingId === next.bindingId ? next : candidate));
-      setMessage(`Routing for ${next.sourceId === '__channel_default__' ? 'new payments' : next.sourceId} updated.`);
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Binding could not be updated'); }
+      notify(`Routing for ${next.sourceId === '__channel_default__' ? 'new payments' : next.sourceId} updated.`, 'success');
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Binding could not be updated', 'error'); }
   }
 
   async function closeBinding(binding: QueueBinding) {
@@ -108,8 +121,8 @@ export default function AlertsPage() {
     try {
       const next = await updateBinding(channel.channelId, binding.bindingId, { active: false });
       setBindings(bindings.map((candidate) => candidate.bindingId === next.bindingId ? next : candidate));
-      setMessage('Routing binding closed. Existing accepted deliveries are unchanged.');
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Binding could not be closed'); }
+      notify('Routing binding closed. Existing accepted deliveries are unchanged.', 'success');
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Binding could not be closed', 'error'); }
   }
 
   async function reopenBinding(binding: QueueBinding) {
@@ -117,28 +130,30 @@ export default function AlertsPage() {
     try {
       const next = await updateBinding(channel.channelId, binding.bindingId, { active: true });
       setBindings(bindings.map((candidate) => candidate.bindingId === next.bindingId ? next : candidate));
-      setMessage('Routing binding reopened for future events.');
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Binding could not be reopened'); }
+      notify('Routing binding reopened for future events.', 'success');
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Binding could not be reopened', 'error'); }
   }
 
   async function addBinding(input: { queueId: string; sourceType: QueueBinding['sourceType']; sourceId: string; allowDuplicates: boolean; priority: number }) {
     if (!channel) return;
-    try { const next = await createBinding(channel.channelId, input); setBindings([next, ...bindings]); setMessage('Routing binding created for future events.'); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Binding could not be created'); }
+    try { const next = await createBinding(channel.channelId, input); setBindings([next, ...bindings]); notify('Routing binding created for future events.', 'success'); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'Binding could not be created', 'error'); }
   }
 
   async function saveBinding(binding: QueueBinding, input: { priority: number; overrideValues: Record<string, unknown> | null }) {
     if (!channel) return;
-    try { const next = await updateBinding(channel.channelId, binding.bindingId, input); setBindings(bindings.map((candidate) => candidate.bindingId === next.bindingId ? next : candidate)); setMessage('Source routing settings saved for future events.'); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Routing settings could not be saved'); }
+    try { const next = await updateBinding(channel.channelId, binding.bindingId, input); setBindings(bindings.map((candidate) => candidate.bindingId === next.bindingId ? next : candidate)); notify('Source routing settings saved for future events.', 'success'); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'Routing settings could not be saved', 'error'); }
   }
 
-  if (error) return <AppShell title="Alerts"><p className="error-text" role="alert">{error}</p><Link className="text-link" href="/login">Return to sign in →</Link></AppShell>;
-  if (!channel || !config) return <AppShell title="Alerts"><p className="helper-text" role="status">Loading…</p></AppShell>;
+  if (error) return authGateStates({ title: 'Alerts', error, ready: true });
+  if (!channel || !config) return authGateStates({ title: 'Alerts', error: null, ready: false });
 
   return (
     <AppShell title="Alerts">
-      {message && <p className="inline-message" role="status">{message}</p>}
+      {message && (messageKind === 'error'
+        ? <p className="inline-message error-text" role="alert">{message}</p>
+        : <p className="inline-message" role="status">{message}</p>)}
       <ChannelConfigEditor version={config.version} draft={configDraft} saving={savingConfig} onChange={setConfigDraft} onSubmit={submitConfig} />
       <section className="content-grid dashboard-controls">
         <article className="panel">
@@ -198,7 +213,7 @@ function BindingControls({ bindings, queues, onCreate, onSave, onToggle, onClose
 
   return (
     <section className="panel binding-panel" aria-labelledby="binding-controls-title">
-      <div className="panel-heading"><div><p className="muted-label">Source routing</p><h2 id="binding-controls-title">Choose where each source appears</h2></div><span className="helper-text">Staging-gated</span></div>
+      <div className="panel-heading"><div><p className="muted-label">Source routing</p><h2 id="binding-controls-title">Choose where each source appears</h2></div><span className="helper-text">Advanced</span></div>
       <p className="helper-text">The channel default route keeps new payments deliverable before a provider payment ID exists. Enabling duplicates on more than one active binding intentionally sends future matching events to each selected queue. Accepted deliveries already in progress keep their frozen route.</p>
       {bindings.length === 0 ? <p>No routing bindings are available.</p> : (
         <div className="binding-list">
@@ -220,6 +235,7 @@ function BindingControls({ bindings, queues, onCreate, onSave, onToggle, onClose
         <div className="config-grid">
           <label>Queue<select required value={queueId} onChange={(event) => setQueueId(event.target.value)}>{activeQueues.map((queue) => <option key={queue.queueId} value={queue.queueId}>{queue.name}</option>)}</select></label>
           <label>Source type<select value={sourceType} onChange={(event) => setSourceType(event.target.value as QueueBinding['sourceType'])}><option value="payment">Payment</option><option value="manual">Manual</option><option value="companion">Companion</option></select></label>
+          <label>Source ID<input required maxLength={128} value={sourceId} onChange={(event) => setSourceId(event.target.value)} placeholder="Payment provider ID, or a manual/Companion identifier" /></label>
           <label>Priority<input type="number" min="0" max="100000" value={priority} onChange={(event) => setPriority(Number(event.target.value))} /></label>
         </div>
         <label className="checkbox-label"><input type="checkbox" checked={allowDuplicates} onChange={(event) => setAllowDuplicates(event.target.checked)} /> Allow this source to route to another opted-in queue</label>

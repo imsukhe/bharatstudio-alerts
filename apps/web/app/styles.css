@@ -126,6 +126,8 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
 .billing-cancelled-row strong { color: var(--accent) !important; }
 .billing-confirm { margin-top: -1px; border: 1px solid rgba(224, 82, 82, 0.3); border-top: none; border-radius: 0 0 14px 14px; padding: 14px 16px; background: rgba(224, 82, 82, 0.06); }
 .billing-confirm .helper-text { margin: 0 0 12px; }
+.billing-confirm input { display: block; width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; outline: 0; background: rgb(255 255 255 / 5%); color: var(--text); font: inherit; margin-bottom: 12px; transition: border-color var(--dur-base) var(--ease-out); }
+.billing-confirm input:focus { border-color: rgba(247, 201, 72, 0.5); }
 .dashboard-form { display: grid; gap: 14px; max-width: 520px; margin-top: 18px; }
 .dashboard-form label { display: grid; gap: 7px; color: var(--muted); font-size: .86rem; font-weight: 700; }
 .dashboard-form label small { color: var(--muted); font-size: .76rem; font-weight: 400; line-height: 1.4; }
@@ -251,6 +253,9 @@ summary { cursor: pointer; color: var(--text); font-family: var(--font-display);
 .tip-form > input:not([type="checkbox"]) { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: rgb(255 255 255 / 5%); }
 .consent-row { display: flex !important; grid-template-columns: auto 1fr; align-items: flex-start; gap: 9px; margin-top: 4px; line-height: 1.45; }
 .consent-row input { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 2px; accent-color: var(--accent); }
+.pending-order-check { display: grid; gap: 8px; }
+.pending-order-check code { font-family: var(--font-mono); font-size: .82em; color: var(--text); }
+.pending-order-check .secondary-button { justify-self: start; }
 .full-width { width: 100%; margin-top: 8px; }
 
 /*
@@ -344,8 +349,9 @@ summary { cursor: pointer; color: var(--text); font-family: var(--font-display);
 .app-identity-name { color: var(--text); font-size: .84rem; font-weight: 600; }
 .app-identity-role { color: var(--muted); font-size: .74rem; text-transform: capitalize; }
 .app-sign-out {
-  width: 100%; margin-top: 12px; padding: 7px 0; border: 1px solid var(--border); border-radius: 9px;
+  display: block; width: 100%; box-sizing: border-box; margin-top: 12px; padding: 7px 0; border: 1px solid var(--border); border-radius: 9px;
   background: transparent; color: var(--muted); font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+  text-align: center; text-decoration: none;
   transition: border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
 }
 .app-sign-out:hover { border-color: rgba(247, 201, 72, .4); color: var(--text); }

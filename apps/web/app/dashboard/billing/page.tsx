@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../../components/AppShell';
+import { authGateStates } from '../../components/AuthGateStates';
 import { getBilling, getChannel, getCurrentUser, type BillingView, type ChannelDetails } from '../../lib/api';
 import { BillingActionsPanel } from '../BillingActionsPanel';
 
@@ -26,8 +26,8 @@ export default function BillingPage() {
 
   const canManageBilling = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
 
-  if (error) return <AppShell title="Billing"><p className="error-text" role="alert">{error}</p><Link className="text-link" href="/login">Return to sign in →</Link></AppShell>;
-  if (!channel || !billing) return <AppShell title="Billing"><p className="helper-text" role="status">Loading…</p></AppShell>;
+  if (error) return authGateStates({ title: 'Billing', error, ready: true });
+  if (!channel || !billing) return authGateStates({ title: 'Billing', error: null, ready: false });
 
   return (
     <AppShell title="Billing">
@@ -37,7 +37,7 @@ export default function BillingPage() {
             <p className="muted-label">Plan</p>
             <h2 id="billing-title">{billing.tier[0].toUpperCase() + billing.tier.slice(1)} · {formatPlanPrice(billing.monthlyPricePaise)}</h2>
           </div>
-          <span className="helper-text">{billing.renewalState === 'not_applicable' ? 'No recurring subscription' : billing.renewalState.replace('_', ' ')}</span>
+          <span className="helper-text">{billing.renewalState === 'not_applicable' ? 'No recurring subscription' : billing.renewalState.replaceAll('_', ' ')}</span>
         </div>
         <p className="helper-text">
           {billing.billingInterval === 'annual' ? `${billing.annualMonthsCharged} months charged for ${billing.annualServiceMonths} months of service` : 'Monthly billing'} · {billing.autoRenew ? 'Auto-renew on' : 'Auto-renew off'}
@@ -46,7 +46,11 @@ export default function BillingPage() {
           <p className="helper-text">Protected price through {new Date(billing.priceProtectedUntil).toLocaleDateString('en-IN')} while the subscription remains eligible.</p>
         )}
         {billing.renewalState === 'past_due' && billing.currentPeriodEndsAt && (
-          <p className="helper-text">Payment attention required. Access follows the approved grace and dunning policy through {new Date(billing.currentPeriodEndsAt).toLocaleDateString('en-IN')}.</p>
+          <p className="helper-text">
+            Payment attention required. Access follows the approved grace and dunning policy through {new Date(billing.currentPeriodEndsAt).toLocaleDateString('en-IN')}.
+            {' '}There is no self-serve way to update your payment method yet — email{' '}
+            <a href="mailto:support@bharatstudio.in">support@bharatstudio.in</a> if the next automatic retry doesn&apos;t go through.
+          </p>
         )}
         {canManageBilling ? (
           <BillingActionsPanel channelId={channel.channelId} billing={billing} onUpdated={setBilling} />

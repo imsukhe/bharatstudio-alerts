@@ -152,6 +152,11 @@ export function AppShell({ title, actions, children }: Props) {
   const [handle, setHandle] = useState<string | null>(null);
   const [tier, setTier] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Distinct from "still loading" — set only once getCurrentUser() has
+  // actually failed, so the sidebar can stop showing an indefinite
+  // "Loading…" identity chip and a "Sign out" button that implies a session
+  // exists when it doesn't. See the identityLabel/sign-out-button usage below.
+  const [signedOut, setSignedOut] = useState(false);
 
   useEffect(() => {
     // Terms re-acceptance gate. A channel cannot be created without terms
@@ -207,7 +212,7 @@ export function AppShell({ title, actions, children }: Props) {
           // page's own content already surfaces the real error.
         }
       })
-      .catch(() => { /* Signed out or unreachable — sidebar shows the generic state. */ });
+      .catch(() => { if (!cancelled) setSignedOut(true); });
     return () => { cancelled = true; };
   }, []);
 
@@ -216,7 +221,7 @@ export function AppShell({ title, actions, children }: Props) {
     window.location.assign('/login');
   }
 
-  const identityLabel = handle ? `@${handle}` : user?.displayName ?? 'Loading…';
+  const identityLabel = signedOut ? 'Not signed in' : handle ? `@${handle}` : user?.displayName ?? 'Loading…';
   const initials = (identityLabel.replace('@', '')[0] ?? 'B').toUpperCase();
   const role = user?.channels[0]?.role;
 
@@ -266,7 +271,11 @@ export function AppShell({ title, actions, children }: Props) {
               {role && <p className="app-identity-role">{role}</p>}
             </div>
           </div>
-          <button type="button" className="app-sign-out" onClick={signOut}>Sign out</button>
+          {signedOut ? (
+            <Link href="/login" className="app-sign-out">Sign in →</Link>
+          ) : (
+            <button type="button" className="app-sign-out" onClick={signOut}>Sign out</button>
+          )}
         </div>
       </aside>
       {menuOpen && <div className="app-sidebar-scrim" aria-hidden="true" onClick={() => setMenuOpen(false)} />}

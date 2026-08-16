@@ -59,10 +59,13 @@ export function ReferralPanel({ channelId, handle }: Props) {
     try {
       await navigator.clipboard.writeText(referralLink);
       setCopied(true);
+      setError(null);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard access can be denied by the browser; the link is still
-      // visible and selectable, so this is not a hard failure.
+      // Matches Overlay setup's equivalent handler for the same failure
+      // mode — clipboard access denied by the browser previously failed
+      // silently here while the sibling page surfaced a specific message.
+      setError('Clipboard access was unavailable; copy the link from the field above.');
     }
   }
 

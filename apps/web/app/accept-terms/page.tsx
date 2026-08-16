@@ -133,6 +133,17 @@ export default function AcceptTermsPage() {
   );
 }
 
+// terms-content.ts documents that some effectiveDate values are still real
+// placeholders (e.g. the Privacy Notice's 'Launch preparation') pending
+// dated legal review — not a real date, but the UI used to render it as
+// though it were one ("Effective Launch preparation"). This doesn't invent
+// a real date (that decision belongs to the legal review, not this fix);
+// it only stops presenting a placeholder as if it were dated content. A
+// real date always contains a digit, so that's what distinguishes the two.
+function formatEffectiveDate(value: string): string {
+  return /\d/.test(value) ? `Effective ${value}` : `Not yet in effect — ${value}`;
+}
+
 function TermsModal({ doc, onClose }: { doc: TermsDocument; onClose: () => void }) {
   return (
     <div className="terms-modal-scrim" onClick={(event) => event.target === event.currentTarget && onClose()}>
@@ -143,7 +154,7 @@ function TermsModal({ doc, onClose }: { doc: TermsDocument; onClose: () => void 
             <h2>{doc.heading}</h2>
           </div>
           <div className="terms-modal-actions">
-            <span className="helper-text">Effective {doc.effectiveDate}</span>
+            <span className="helper-text">{formatEffectiveDate(doc.effectiveDate)}</span>
             <button type="button" className="secondary-button terms-modal-close" onClick={onClose} aria-label="Close">✕</button>
           </div>
         </div>

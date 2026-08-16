@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../../components/AppShell';
+import { authGateStates } from '../../components/AuthGateStates';
 import { getChannel, getCurrentUser, type ChannelDetails } from '../../lib/api';
 import { ReferralPanel } from '../ReferralPanel';
 
@@ -18,14 +18,14 @@ export default function ReferralsPage() {
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
   }, []);
 
-  const canManageBilling = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
+  const canViewReferrals = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
 
-  if (error) return <AppShell title="Referrals"><p className="error-text" role="alert">{error}</p><Link className="text-link" href="/login">Return to sign in →</Link></AppShell>;
-  if (!channel) return <AppShell title="Referrals"><p className="helper-text" role="status">Loading…</p></AppShell>;
+  if (error) return authGateStates({ title: 'Referrals', error, ready: true });
+  if (!channel) return authGateStates({ title: 'Referrals', error: null, ready: false });
 
   return (
     <AppShell title="Referrals">
-      {!canManageBilling ? (
+      {!canViewReferrals ? (
         <section className="panel"><p className="helper-text">Only the channel owner or an admin can view referrals.</p></section>
       ) : (
         <section className="panel" aria-labelledby="referral-title">

@@ -8,6 +8,7 @@
  *   - PUT/GET/DELETE /v1/channels/:id/payment-accounts/razorpay
  *   - GET /v1/me/export, GET/POST /v1/me/privacy/requests, POST /v1/me/close
  */
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
   clearAccessToken, closeAccount, createPrivacyRequestEntry, emailAccountExport, exportAccount, getChannel, getCurrentUser,
@@ -53,6 +54,14 @@ export default function SettingsPage() {
 
   const [featuredConsent, setFeaturedConsent] = useState(false);
   const [savingFeatured, setSavingFeatured] = useState(false);
+
+  // A single click used to immediately disconnect the account tips settle
+  // to, with no confirmation at all — inconsistent with "Close account"
+  // below, which requires typing CLOSE. This tracks which account (if any)
+  // is mid-confirmation, mirroring BillingActionsPanel's downgrade/cancel
+  // confirm pattern.
+  const [confirmRevokeAccountId, setConfirmRevokeAccountId] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
     getCurrentUser().then(async (nextUser) => {
@@ -104,13 +113,17 @@ export default function SettingsPage() {
   }
 
   async function revoke(account: PaymentAccount) {
-    if (!channelId) return;
+    if (!channelId || revoking) return;
+    setRevoking(true);
     try {
       await revokePaymentAccount(channelId, account.environment);
       setAccounts((prev) => prev.map((a) => (a.accountId === account.accountId ? { ...a, status: 'revoked' as const } : a)));
       setMessage('Payout account revoked.');
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Payout account could not be revoked');
+    } finally {
+      setRevoking(false);
+      setConfirmRevokeAccountId(null);
     }
   }
 
@@ -202,7 +215,12 @@ export default function SettingsPage() {
       <p className="lede" style={{ margin: '0 0 24px' }}>Register the Razorpay account your tips settle to, and manage your privacy rights.</p>
 
       {message && <p className="inline-message" role="status">{message}</p>}
-      {error && <p className="inline-message error-text" role="alert">{error}</p>}
+      {error && (
+        <>
+          <p className="inline-message error-text" role="alert">{error}</p>
+          <Link className="text-link" href="/login">Return to sign in →</Link>
+        </>
+      )}
       {!user && !error && <p className="helper-text" role="status">Loading…</p>}
 
       {user && (
@@ -220,13 +238,35 @@ export default function SettingsPage() {
               {accounts.length > 0 && (
                 <div className="channel-list">
                   {accounts.map((account) => (
-                    <div className="channel-row" key={account.accountId}>
-                      <div>
-                        <strong>{account.connectedAccountRef}</strong>
-                        <span>{account.environment} · {account.status}</span>
+                    <div key={account.accountId}>
+                      <div className="channel-row">
+                        <div>
+                          <strong>{account.connectedAccountRef}</strong>
+                          <span>{account.environment} · {account.status}</span>
+                        </div>
+                        {account.status !== 'revoked' && (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => setConfirmRevokeAccountId(account.accountId)}
+                            disabled={confirmRevokeAccountId !== null}
+                          >
+                            Revoke
+                          </button>
+                        )}
                       </div>
-                      {account.status !== 'revoked' && (
-                        <button type="button" className="secondary-button" onClick={() => void revoke(account)}>Revoke</button>
+                      {confirmRevokeAccountId === account.accountId && (
+                        <div className="billing-confirm">
+                          <p className="helper-text">
+                            Revoke this payout account? Tips will not be able to settle to it until you register a new one.
+                          </p>
+                          <div className="control-actions">
+                            <button type="button" className="primary-button" onClick={() => void revoke(account)} disabled={revoking}>
+                              {revoking ? 'Revoking…' : 'Yes, revoke'}
+                            </button>
+                            <button type="button" className="secondary-button" onClick={() => setConfirmRevokeAccountId(null)} disabled={revoking}>Keep it</button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   ))}

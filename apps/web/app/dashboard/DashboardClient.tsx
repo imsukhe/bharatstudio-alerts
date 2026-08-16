@@ -17,7 +17,7 @@
  */
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { clearAccessToken, executeCompanionAction, getBilling, getChannel, getCompanionState, getCurrentUser, getQueues, getTermsStatus, type BillingView, type ChannelDetails, type CompanionAction, type CompanionState, type CurrentUser, type Queue } from '../lib/api';
+import { executeCompanionAction, getBilling, getChannel, getCompanionState, getCurrentUser, getQueues, getTermsStatus, type BillingView, type ChannelDetails, type CompanionAction, type CompanionState, type CurrentUser, type Queue } from '../lib/api';
 
 function formatPlanPrice(monthlyPricePaise: number): string {
   return monthlyPricePaise === 0 ? 'Free' : `₹${Math.round(monthlyPricePaise / 100).toLocaleString('en-IN')}/month`;
@@ -30,7 +30,13 @@ export default function DashboardClient() {
   const [companion, setCompanion] = useState<CompanionState | null>(null);
   const [queues, setQueues] = useState<Queue[]>([]);
   const [selectedCompanionQueueId, setSelectedCompanionQueueId] = useState<string | null>(null);
+  // Success and failure used to share one `message` string rendered through
+  // the same gold `inline-message`/role="status" treatment — a screen
+  // reader got the same "polite" announcement for both, and a sighted user
+  // got no color distinction. `messageKind` lets the render pick between
+  // that and the app's existing error-text/role="alert" treatment.
   const [message, setMessage] = useState<string | null>(null);
+  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -65,9 +71,9 @@ export default function DashboardClient() {
   async function sendCompanionAction(action: CompanionAction) {
     if (!channel) return;
     const target = queues.find((queue) => queue.queueId === selectedCompanionQueueId && queue.active) ?? queues.find((queue) => queue.active);
-    if (!target) { setMessage('Companion controls are unavailable until an active queue is loaded.'); return; }
-    try { await executeCompanionAction(channel.channelId, action, target.queueId); setMessage('Companion command accepted.'); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Companion command could not be accepted'); }
+    if (!target) { setMessage('Companion controls are unavailable until an active queue is loaded.'); setMessageKind('error'); return; }
+    try { await executeCompanionAction(channel.channelId, action, target.queueId); setMessage('Companion command accepted.'); setMessageKind('success'); }
+    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Companion command could not be accepted'); setMessageKind('error'); }
   }
 
   if (error) {
@@ -83,7 +89,9 @@ export default function DashboardClient() {
         <p>Your account is connected through the reviewed authentication flow.</p>
       </section>
 
-      {message && <p className="inline-message" role="status">{message}</p>}
+      {message && (messageKind === 'error'
+        ? <p className="inline-message error-text" role="alert">{message}</p>
+        : <p className="inline-message" role="status">{message}</p>)}
 
       {!channel ? (
         <section className="panel" role="status">Loading your channel…</section>
@@ -95,7 +103,7 @@ export default function DashboardClient() {
               <h2>{channel.displayName}</h2>
               <p className="handle">@{channel.handle} · {channel.acceptingTips ? 'Tips open' : 'Tips closed'} · {billing?.tier ?? 'Plan loading'}</p>
             </div>
-            <Link className="primary-button" href={`/tips/${channel.handle}`}>Open public page</Link>
+            <Link className="primary-button" href={`/tips/${channel.handle}`} target="_blank" rel="noreferrer">Open public page</Link>
           </section>
 
           {billing && (
@@ -107,7 +115,7 @@ export default function DashboardClient() {
                 </div>
                 <Link className="secondary-button" href="/dashboard/billing">Manage billing →</Link>
               </div>
-              <p className="helper-text">{billing.renewalState === 'not_applicable' ? 'No recurring subscription' : billing.renewalState.replace('_', ' ')} · {billing.autoRenew ? 'Auto-renew on' : 'Auto-renew off'}</p>
+              <p className="helper-text">{billing.renewalState === 'not_applicable' ? 'No recurring subscription' : billing.renewalState.replaceAll('_', ' ')} · {billing.autoRenew ? 'Auto-renew on' : 'Auto-renew off'}</p>
             </section>
           )}
 
@@ -116,7 +124,7 @@ export default function DashboardClient() {
               <div className="panel-heading"><div><p className="muted-label">Quick links</p><h2>Configure your stream</h2></div></div>
               <div className="channel-list">
                 <Link className="channel-row" href="/dashboard/alerts"><div><strong>Alerts</strong><span>Amount brackets, TTS, queues and test alerts</span></div><span aria-hidden="true">→</span></Link>
-                <Link className="channel-row" href="/dashboard/customise"><div><strong>Customise</strong><span>Custom Lottie animations per alert style</span></div><span aria-hidden="true">→</span></Link>
+                <Link className="channel-row" href="/dashboard/customise"><div><strong>Customise</strong><span>Custom Lottie alert animations, per display style</span></div><span aria-hidden="true">→</span></Link>
                 <Link className="channel-row" href="/dashboard/mod"><div><strong>Mod console</strong><span>Recent alerts, approve/hold/suppress/replay</span></div><span aria-hidden="true">→</span></Link>
                 <Link className="channel-row" href="/dashboard/referrals"><div><strong>Referrals</strong><span>Invite creators, earn service time</span></div><span aria-hidden="true">→</span></Link>
               </div>
@@ -149,7 +157,7 @@ export default function DashboardClient() {
           </section>
 
           <section className="panel channel-panel" aria-labelledby="channels-title">
-            <div className="panel-heading"><div><p className="muted-label">Your channels</p><h2 id="channels-title">Channel access</h2></div><button className="secondary-button" type="button" onClick={() => { clearAccessToken(); window.location.assign('/login'); }}>Sign out</button></div>
+            <div className="panel-heading"><div><p className="muted-label">Your channels</p><h2 id="channels-title">Channel access</h2></div></div>
             <div className="channel-list">{user.channels.map((candidate) => <div className="channel-row" key={candidate.channelId}><div><strong>{candidate.channelId}</strong><span>{candidate.role}</span></div><Link className="text-link" href={`/overlay/setup?channelId=${encodeURIComponent(candidate.channelId)}`}>Configure →</Link></div>)}</div>
           </section>
         </>

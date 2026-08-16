@@ -10,6 +10,7 @@
  * (0071_v1_l03_payment_ledger_read.sql) for why that distinction is drawn
  * on purpose.
  */
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getCurrentUser, getPayments, type CurrentUser, type PaymentLedgerEntry } from '../lib/api';
 import { AppShell } from '../components/AppShell';
@@ -51,7 +52,17 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Separate from actionError below: an initial-load failure (e.g. not
+  // signed in) means nothing else on this page can be trusted, so it takes
+  // over the whole page with a real way back to /login — it must never
+  // render alongside the "create a channel"/"no permission" branches below,
+  // which assume a successful load. Those two states used to share one
+  // `error` flag with `!user?.channels.length` and could show both a
+  // contradictory "Authentication required" and "Create a channel first"
+  // message at once.
+  const [initialError, setInitialError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [truncationNotice, setTruncationNotice] = useState<string | null>(null);
 
   useEffect(() => {
     getCurrentUser().then(async (nextUser) => {
@@ -67,7 +78,7 @@ export default function PaymentsPage() {
       setNextCursor(page.nextCursor);
       setLoading(false);
     }).catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : 'Payment ledger is unavailable');
+      setInitialError(cause instanceof Error ? cause.message : 'Payment ledger is unavailable');
       setLoading(false);
     });
   }, []);
@@ -75,13 +86,13 @@ export default function PaymentsPage() {
   async function loadMore() {
     if (!channelId || !nextCursor || loadingMore) return;
     setLoadingMore(true);
-    setError(null);
+    setActionError(null);
     try {
       const page = await getPayments(channelId, nextCursor);
       setEntries((current) => [...current, ...page.items]);
       setNextCursor(page.nextCursor);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'More payments could not be loaded');
+      setActionError(cause instanceof Error ? cause.message : 'More payments could not be loaded');
     } finally {
       setLoadingMore(false);
     }
@@ -90,15 +101,17 @@ export default function PaymentsPage() {
   async function downloadCsv() {
     if (!channelId || exporting) return;
     setExporting(true);
-    setError(null);
+    setActionError(null);
     try {
       const collected: PaymentLedgerEntry[] = [];
       let cursor: string | undefined;
+      let truncated = false;
       for (let page = 0; page < MAX_EXPORT_PAGES; page += 1) {
         const result = await getPayments(channelId, cursor, 100);
         collected.push(...result.items);
         if (!result.nextCursor) break;
         cursor = result.nextCursor;
+        if (page === MAX_EXPORT_PAGES - 1) truncated = true;
       }
       const blob = new Blob([toCsv(collected)], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
@@ -107,8 +120,14 @@ export default function PaymentsPage() {
       link.download = `bharatstudio-payments-${new Date().toISOString().slice(0, 10)}.csv`;
       link.click();
       URL.revokeObjectURL(url);
+      if (truncated) {
+        setActionError(null);
+        setTruncationNotice(`This export stops at ${collected.length.toLocaleString('en-IN')} records (the maximum per download). Contact support for the complete history if your channel has more.`);
+      } else {
+        setTruncationNotice(null);
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Export could not be prepared');
+      setActionError(cause instanceof Error ? cause.message : 'Export could not be prepared');
     } finally {
       setExporting(false);
     }
@@ -122,11 +141,21 @@ export default function PaymentsPage() {
     );
   }
 
+  if (initialError) {
+    return (
+      <AppShell title="Payments">
+        <p className="error-text" role="alert">{initialError}</p>
+        <Link className="text-link" href="/login">Return to sign in →</Link>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell title="Payments">
       <p className="lede" style={{ margin: '0 0 24px' }}>Raw payment and refund records for your channel — owner and admin only.</p>
 
-      {error && <p className="inline-message error-text" role="alert">{error}</p>}
+      {actionError && <p className="inline-message error-text" role="alert">{actionError}</p>}
+      {truncationNotice && <p className="inline-message" role="status">{truncationNotice}</p>}
 
       {!user?.channels.length ? (
         <section className="panel"><p className="helper-text">Create a channel first to see its payment ledger.</p></section>

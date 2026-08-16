@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../../components/AppShell';
+import { authGateStates } from '../../components/AuthGateStates';
 import { getBilling, getChannel, getCurrentUser, type BillingView, type ChannelDetails } from '../../lib/api';
 import { BrandingPanel } from '../BrandingPanel';
 
@@ -22,8 +22,8 @@ export default function CustomisePage() {
 
   const canManageBilling = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
 
-  if (error) return <AppShell title="Customise"><p className="error-text" role="alert">{error}</p><Link className="text-link" href="/login">Return to sign in →</Link></AppShell>;
-  if (!channel || !billing) return <AppShell title="Customise"><p className="helper-text" role="status">Loading…</p></AppShell>;
+  if (error) return authGateStates({ title: 'Customise', error, ready: true });
+  if (!channel || !billing) return authGateStates({ title: 'Customise', error: null, ready: false });
 
   return (
     <AppShell title="Customise">

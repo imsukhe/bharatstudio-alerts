@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { createOverlaySession as createSession, getCurrentUser, revokeOverlaySession, rotateOverlaySession, type CurrentUser, type OverlaySession } from '../../lib/api';
 import { AppShell } from '../../components/AppShell';
@@ -16,6 +17,11 @@ export default function OverlaySetupPage() {
   const [status, setStatus] = useState<string>('Loading your channel…');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Both actions below are one click away from breaking a live OBS setup —
+  // the step-04 checklist copy on this same page already says rotation is
+  // atomic and irreversible, but neither button was gated on that. Tracks
+  // which action (if any) is mid-confirmation.
+  const [confirmAction, setConfirmAction] = useState<'rotate' | 'revoke' | null>(null);
 
   useEffect(() => {
     getCurrentUser().then((nextUser) => {
@@ -48,6 +54,7 @@ export default function OverlaySetupPage() {
 
   async function rotate() {
     if (!session) return;
+    setConfirmAction(null);
     setError(null); setCopied(false); setStatus('Rotating the session…');
     try {
       setSession(await rotateOverlaySession(session.overlayId));
@@ -60,6 +67,7 @@ export default function OverlaySetupPage() {
 
   async function revoke() {
     if (!session) return;
+    setConfirmAction(null);
     setError(null); setStatus('Revoking the session…');
     try {
       await revokeOverlaySession(session.overlayId);
@@ -85,7 +93,12 @@ export default function OverlaySetupPage() {
   return (
     <AppShell title="Overlay">
       <p className="lede" style={{ margin: '0 0 24px' }}>Create a short-lived overlay session, copy its browser-source URL into OBS, and rotate it any time you need to.</p>
-      {error && <p className="inline-message error-text" role="alert">{error}</p>}
+      {error && (
+        <>
+          <p className="inline-message error-text" role="alert">{error}</p>
+          <Link className="text-link" href="/login">Return to sign in →</Link>
+        </>
+      )}
       {status && <p className="inline-message" role="status">{status}</p>}
       <section className="setup-layout">
         <article className="panel setup-panel">
@@ -101,7 +114,29 @@ export default function OverlaySetupPage() {
             <label htmlFor="overlay-url">Browser Source URL</label>
             <input id="overlay-url" readOnly value={session.streamUrl} aria-describedby="overlay-expiry" />
             <p id="overlay-expiry" className="helper-text">Expires {formatExpiry(session.expiresAt)} · Overlay {session.overlayId}</p>
-            <div className="control-actions"><button className="primary-button" type="button" onClick={copyUrl}>{copied ? 'Copied' : 'Copy URL'}</button><button className="secondary-button" type="button" onClick={rotate}>Rotate URL</button><button className="secondary-button" type="button" onClick={revoke}>Revoke</button></div>
+            <div className="control-actions">
+              <button className="primary-button" type="button" onClick={copyUrl}>{copied ? 'Copied' : 'Copy URL'}</button>
+              <button className="secondary-button" type="button" onClick={() => setConfirmAction('rotate')} disabled={confirmAction !== null}>Rotate URL</button>
+              <button className="secondary-button" type="button" onClick={() => setConfirmAction('revoke')} disabled={confirmAction !== null}>Revoke</button>
+            </div>
+            {confirmAction === 'rotate' && (
+              <div className="billing-confirm">
+                <p className="helper-text">Rotate this URL? The current one stops working immediately — update it in OBS right after.</p>
+                <div className="control-actions">
+                  <button type="button" className="primary-button" onClick={rotate}>Yes, rotate</button>
+                  <button type="button" className="secondary-button" onClick={() => setConfirmAction(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
+            {confirmAction === 'revoke' && (
+              <div className="billing-confirm">
+                <p className="helper-text">Revoke this session? Your OBS browser source will stop showing alerts until you create a new one.</p>
+                <div className="control-actions">
+                  <button type="button" className="primary-button" onClick={revoke}>Yes, revoke</button>
+                  <button type="button" className="secondary-button" onClick={() => setConfirmAction(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
           </div>}
         </article>
         <aside className="panel security-panel" aria-label="Overlay security information">

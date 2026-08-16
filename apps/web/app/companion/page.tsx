@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../components/AppShell';
 import { clearAccessToken, executeCompanionAction, getBilling, getCompanionLayout, getCompanionState, getCurrentUser, getHistory, getNotificationPreferences, getQueues, getSessions, notificationPreferencesInput, revokeSession, updateCompanionLayout, updateNotificationPreferences, type AccountSession, type AlertHistory, type BillingView, type CompanionAction, type CompanionLayout, type CompanionState, type CurrentUser, type NotificationPreferences, type Queue } from '../lib/api';
@@ -32,8 +33,20 @@ export default function CompanionPage() {
   const [savingNotifications, setSavingNotifications] = useState(false);
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
   const [message, setMessage] = useState('Loading authorised Companion state…');
+  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
   const [busy, setBusy] = useState<CompanionAction | null>(null);
   const [savingLayout, setSavingLayout] = useState(false);
+  // Distinct from every other load failure: a signed-out visitor must not
+  // see a page full of populated-looking panels ("Read-only access",
+  // "Your channel role can view state...") that describe a permissions
+  // problem when the real condition is "no session at all." See the early
+  // return in the render below.
+  const [signedOut, setSignedOut] = useState(false);
+
+  function notify(text: string, kind: 'success' | 'error' = 'success') {
+    setMessage(text);
+    setMessageKind(kind);
+  }
 
   const channel = user?.channels.find(candidate => candidate.channelId === selectedChannelId);
   const selectedQueue = queues.find(queue => queue.queueId === selectedQueueId) ?? queues.find(queue => queue.active);
@@ -50,12 +63,22 @@ export default function CompanionPage() {
         const selected = currentUser.channels[0];
         setSelectedChannelId(selected?.channelId ?? null);
         if (!selected) {
-          setMessage('Create or join a channel before using Companion.');
+          notify('Create or join a channel before using Companion.');
         }
       } catch (cause) {
         if (cancelled) return;
-        if (cause instanceof Error && /401|unauthor/i.test(cause.message)) clearAccessToken();
-        setMessage(cause instanceof Error ? cause.message : 'Companion state could not be loaded.');
+        // 'Authentication required' is the literal string api.ts throws for
+        // a 401/missing token (see api.ts's own `if (!token) throw new
+        // Error('Authentication required')`) — the original /401|unauthor/i
+        // pattern never actually matched it, so this branch (and its
+        // clearAccessToken() call) never fired on the most common signed-out
+        // case, only on a raw numeric "401" or the word "unauthorized"
+        // appearing verbatim in some other failure's message.
+        if (cause instanceof Error && /401|unauthor|authentication required/i.test(cause.message)) {
+          clearAccessToken();
+          setSignedOut(true);
+        }
+        notify(cause instanceof Error ? cause.message : 'Companion state could not be loaded.', 'error');
       }
     }
     void loadUser();
@@ -83,7 +106,7 @@ export default function CompanionPage() {
         if (billingResult.status === 'fulfilled') setBilling(billingResult.value);
         if (sessionsResult.status === 'fulfilled') setSessions(sessionsResult.value.sessions);
         if (notificationResult.status === 'fulfilled') setNotificationPreferences(notificationResult.value);
-        setMessage('Companion state is loaded from the server.');
+        notify('Companion state is loaded from the server.');
       } catch (cause) {
         if (cancelled) return;
         setState(null);
@@ -93,7 +116,7 @@ export default function CompanionPage() {
         setSessions([]);
         setNotificationPreferences(null);
         setSelectedQueueId(null);
-        setMessage(cause instanceof Error ? cause.message : 'Companion state could not be loaded.');
+        notify(cause instanceof Error ? cause.message : 'Companion state could not be loaded.', 'error');
       }
     }
     void loadChannel();
@@ -103,14 +126,14 @@ export default function CompanionPage() {
   async function runAction(action: CompanionAction) {
     if (!channel || !selectedQueue || !selectedQueue.active || busy) return;
     setBusy(action);
-    setMessage('Sending an authorised Companion command…');
+    notify('Sending an authorised Companion command…');
     try {
       await executeCompanionAction(channel.channelId, action, selectedQueue.queueId);
       const nextState = await getCompanionState(channel.channelId);
       setState(nextState);
-      setMessage('Command accepted. Delivery and payment records remain independent of this control surface.');
+      notify('Command accepted. Delivery and payment records remain independent of this control surface.');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Command could not be accepted.');
+      notify(cause instanceof Error ? cause.message : 'Command could not be accepted.', 'error');
     } finally {
       setBusy(null);
     }
@@ -121,9 +144,9 @@ export default function CompanionPage() {
     setSavingNotifications(true);
     try {
       setNotificationPreferences(await updateNotificationPreferences(next));
-      setMessage('Notification preferences saved on the server.');
+      notify('Notification preferences saved on the server.');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Notification preferences could not be saved.');
+      notify(cause instanceof Error ? cause.message : 'Notification preferences could not be saved.', 'error');
     } finally {
       setSavingNotifications(false);
     }
@@ -131,13 +154,13 @@ export default function CompanionPage() {
 
   async function closeSession(session: AccountSession) {
     if (session.current) return;
-    setMessage('Revoking the selected account session…');
+    notify('Revoking the selected account session…');
     try {
       await revokeSession(session.sessionId);
       setSessions(current => current.filter(candidate => candidate.sessionId !== session.sessionId));
-      setMessage('Session revoked. Any cached client access must authenticate again.');
+      notify('Session revoked. Any cached client access must authenticate again.');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Session could not be revoked.');
+      notify(cause instanceof Error ? cause.message : 'Session could not be revoked.', 'error');
     }
   }
 
@@ -156,21 +179,30 @@ export default function CompanionPage() {
   async function saveLayout() {
     if (!layout || !canOperate || savingLayout) return;
     setSavingLayout(true);
-    setMessage('Saving the server-authorised Companion layout…');
+    notify('Saving the server-authorised Companion layout…');
     try {
       const saved = await updateCompanionLayout(channel?.channelId ?? layout.channelId, layout.version, layout.pageSize, layout.slots);
       setLayout(saved);
-      setMessage('Companion layout saved. Limits apply only to new control configuration.');
+      notify('Companion layout saved. Limits apply only to new control configuration.');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Companion layout could not be saved.');
+      notify(cause instanceof Error ? cause.message : 'Companion layout could not be saved.', 'error');
     } finally {
       setSavingLayout(false);
     }
   }
 
+  if (signedOut) {
+    return (
+      <AppShell title="Companion">
+        <p className="error-text" role="alert">Authentication required</p>
+        <Link className="text-link" href="/login">Return to sign in →</Link>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell title="Companion">
-      <p className="helper-text" role="status">{message}</p>
+      <p className={messageKind === 'error' ? 'helper-text error-text' : 'helper-text'} role={messageKind === 'error' ? 'alert' : 'status'}>{message}</p>
 
       {user && user.channels.length > 1 && <section className="panel companion-selector" aria-labelledby="companion-channel-title">
         <div className="panel-heading"><div><p className="muted-label">Account channels</p><h2 id="companion-channel-title">Choose a channel</h2></div></div>

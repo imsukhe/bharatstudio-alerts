@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { notificationPreferencesInput, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePrivacyRequestList, parseQueueList, parseTermsStatus } from './api';
+import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePrivacyRequestList, parseQueueList, parseTermsStatus } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -140,4 +140,44 @@ test('accepts only the bounded payment-account list envelope', () => {
   assert.equal(parsed.accounts[0]?.status, 'pending');
   assert.throws(() => parsePaymentAccountList({ schemaVersion: 'v1', accounts: [{ schemaVersion: 'v1', accountId, channelId, provider: 'other_provider', environment: 'test', connectedAccountRef: 'acc_demo123', status: 'pending', createdAt: '2099-08-15T10:00:00.000Z', updatedAt: '2099-08-15T10:00:00.000Z', revokedAt: null }] }), /invalid_response/);
   assert.throws(() => parsePaymentAccountList({ schemaVersion: 'v1', accounts: [{ schemaVersion: 'v1', accountId, channelId, provider: 'razorpay', environment: 'unexpected', connectedAccountRef: 'acc_demo123', status: 'pending', createdAt: '2099-08-15T10:00:00.000Z', updatedAt: '2099-08-15T10:00:00.000Z', revokedAt: null }] }), /invalid_response/);
+});
+
+test('accepts only the bounded billing-subscription contract and checks annual pricing consistency', () => {
+  const parsed = parseBillingSubscription({
+    schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_demo123',
+    tier: 'creator', billingInterval: 'annual', monthlyPricePaise: 39900, annualChargePaise: 399000,
+    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: 'https://rzp.io/i/demo',
+  });
+  assert.equal(parsed.checkoutUrl, 'https://rzp.io/i/demo');
+  assert.throws(() => parseBillingSubscription({
+    schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_demo123',
+    tier: 'creator', billingInterval: 'annual', monthlyPricePaise: 39900, annualChargePaise: 399005,
+    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: null,
+  }), /invalid_response/);
+  assert.throws(() => parseBillingSubscription({
+    schemaVersion: 'v1', provider: 'other_provider', status: 'linked', subscriptionId: 'sub_demo123',
+    tier: 'creator', billingInterval: 'annual', monthlyPricePaise: 39900, annualChargePaise: 399000,
+    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: null,
+  }), /invalid_response/);
+  assert.throws(() => parseBillingSubscription({
+    schemaVersion: 'v1', provider: 'razorpay', status: 'linked', subscriptionId: 'sub_demo123',
+    tier: 'free', billingInterval: 'annual', monthlyPricePaise: 0, annualChargePaise: 0,
+    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: null,
+  }), /invalid_response/);
+});
+
+test('accepts only the bounded subscription-lifecycle envelope and rejects an action mismatch', () => {
+  const parseCancel = parseLifecycleResult('cancel');
+  const parsed = parseCancel({ schemaVersion: 'v1', action: 'cancel', requestId: 'req_demo123', status: 'provider_confirmed', replay: false });
+  assert.equal(parsed.status, 'provider_confirmed');
+  assert.throws(() => parseCancel({ schemaVersion: 'v1', action: 'upgrade', requestId: 'req_demo123', status: 'provider_confirmed', replay: false }), /invalid_response/);
+  assert.throws(() => parseCancel({ schemaVersion: 'v1', action: 'cancel', requestId: 'req_demo123', status: 'unknown_status', replay: false }), /invalid_response/);
+  assert.throws(() => parseCancel({ schemaVersion: 'v1', action: 'cancel', requestId: 'req_demo123', status: 'provider_confirmed', replay: false, extra: true }), /invalid_response/);
+});
+
+test('checkout redirect only ever follows an approved Razorpay domain', () => {
+  assert.equal(isApprovedCheckoutUrl('https://rzp.io/i/demo'), true);
+  assert.equal(isApprovedCheckoutUrl('https://pages.razorpay.com/checkout/demo'), true);
+  assert.equal(isApprovedCheckoutUrl('https://rzp.io.attacker.example/i/demo'), false);
+  assert.equal(isApprovedCheckoutUrl('https://attacker.example/?redirect=https://rzp.io/'), false);
 });

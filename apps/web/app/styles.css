@@ -118,6 +118,12 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
 .error-text { color: #ff9b9b !important; }
 .inline-message { margin: 16px 0 0; color: var(--accent) !important; }
 .handle { color: var(--muted); }
+.billing-actions .channel-row span { text-transform: none; }
+.billing-actions .inline-message { margin: 0 0 14px; }
+.billing-cancelled-row { margin-bottom: 14px; border-color: rgba(247, 201, 72, 0.3) !important; background: var(--accent-dim) !important; }
+.billing-cancelled-row strong { color: var(--accent) !important; }
+.billing-confirm { margin-top: -1px; border: 1px solid rgba(224, 82, 82, 0.3); border-top: none; border-radius: 0 0 14px 14px; padding: 14px 16px; background: rgba(224, 82, 82, 0.06); }
+.billing-confirm .helper-text { margin: 0 0 12px; }
 .dashboard-form { display: grid; gap: 14px; max-width: 520px; margin-top: 18px; }
 .dashboard-form label { display: grid; gap: 7px; color: var(--muted); font-size: .86rem; font-weight: 700; }
 .dashboard-form input, .dashboard-form textarea, .inline-form input { width: 100%; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; outline: 0; background: rgb(255 255 255 / 5%); color: var(--text); font: inherit; transition: border-color var(--dur-base) var(--ease-out); }

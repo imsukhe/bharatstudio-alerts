@@ -15,6 +15,28 @@ export type PrivacyRequest = { requestId: string; requestType: PrivacyRequestTyp
 export type PaymentAccountEnvironment = 'test' | 'live';
 export type PaymentAccountStatus = 'pending' | 'active' | 'revoked';
 export type PaymentAccount = { schemaVersion: 'v1'; accountId: string; channelId: string; provider: 'razorpay'; environment: PaymentAccountEnvironment; connectedAccountRef: string; status: PaymentAccountStatus; createdAt: string; updatedAt: string; revokedAt: string | null };
+export type PaidTier = 'pro' | 'creator' | 'studio';
+export type BillingSubscription = {
+  schemaVersion: 'v1';
+  provider: 'razorpay';
+  status: 'linked' | 'pending';
+  subscriptionId: string;
+  tier: PaidTier;
+  billingInterval: 'monthly' | 'annual';
+  monthlyPricePaise: number;
+  annualChargePaise: number;
+  annualMonthsCharged: 10;
+  annualServiceMonths: 12;
+  checkoutUrl: string | null;
+};
+export type SubscriptionLifecycleAction = 'cancel' | 'upgrade' | 'downgrade' | 'reactivate';
+export type SubscriptionLifecycleResult = {
+  schemaVersion: 'v1';
+  action: SubscriptionLifecycleAction;
+  requestId: string;
+  status: 'requested' | 'provider_confirmed' | 'provider_failed';
+  replay: boolean;
+};
 export type NotificationPreferences = { schemaVersion: 'v1'; connectionAlerts: boolean; securityAlerts: boolean; actionFailures: boolean };
 export type NotificationDevice = { schemaVersion: 'v1'; deviceId: string; platform: 'ios' | 'android'; enabled: boolean; createdAt: string; lastSeenAt: string };
 
@@ -482,6 +504,77 @@ export function moderateAlert(channelId: string, alertId: string, action: 'appro
 export function sendTestAlert(channelId: string, displayName: string, message: string): Promise<{ schemaVersion: 'v1'; eventId: string; traceId: string; status: 'accepted' | 'held' }> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/test-alert`, { method: 'POST', body: JSON.stringify({ displayName, message }) }, parseAlertAccepted); }
 export function getBilling(channelId: string): Promise<BillingView> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/billing`, {}, parseBillingView); }
 export function getEntitlements(channelId: string): Promise<{ schemaVersion: 'v1'; channelId: string; tier: BillingView['tier']; source: 'individual_plan'; entitlementVersion: number; values: Record<string, unknown> }> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/entitlements`, {}, parseEntitlements); }
+
+const paidTiers = new Set<PaidTier>(['pro', 'creator', 'studio']);
+const billingIntervalsSet = new Set<BillingSubscription['billingInterval']>(['monthly', 'annual']);
+const lifecycleActions = new Set<SubscriptionLifecycleAction>(['cancel', 'upgrade', 'downgrade', 'reactivate']);
+const lifecycleStatuses = new Set<SubscriptionLifecycleResult['status']>(['requested', 'provider_confirmed', 'provider_failed']);
+
+export function parseBillingSubscription(value: unknown): BillingSubscription {
+  requireV1(value);
+  if (
+    !hasOnlyKeys(value, new Set(['schemaVersion', 'provider', 'status', 'subscriptionId', 'tier', 'billingInterval', 'monthlyPricePaise', 'annualChargePaise', 'annualMonthsCharged', 'annualServiceMonths', 'checkoutUrl'])) ||
+    value.provider !== 'razorpay' ||
+    (value.status !== 'linked' && value.status !== 'pending') ||
+    typeof value.subscriptionId !== 'string' || value.subscriptionId.length < 1 ||
+    typeof value.tier !== 'string' || !paidTiers.has(value.tier as PaidTier) ||
+    typeof value.billingInterval !== 'string' || !billingIntervalsSet.has(value.billingInterval as BillingSubscription['billingInterval']) ||
+    !isSafeInteger(value.monthlyPricePaise) || value.monthlyPricePaise <= 0 ||
+    !isSafeInteger(value.annualChargePaise) || value.annualChargePaise !== value.monthlyPricePaise * 10 ||
+    value.annualMonthsCharged !== 10 || value.annualServiceMonths !== 12 ||
+    (value.checkoutUrl !== null && typeof value.checkoutUrl !== 'string')
+  ) invalidResponse();
+  return {
+    schemaVersion: 'v1', provider: 'razorpay', status: value.status, subscriptionId: value.subscriptionId,
+    tier: value.tier as PaidTier, billingInterval: value.billingInterval as BillingSubscription['billingInterval'],
+    monthlyPricePaise: value.monthlyPricePaise, annualChargePaise: value.annualChargePaise,
+    annualMonthsCharged: 10, annualServiceMonths: 12, checkoutUrl: value.checkoutUrl as string | null,
+  };
+}
+
+export function parseLifecycleResult(expectedAction: SubscriptionLifecycleAction): (value: unknown) => SubscriptionLifecycleResult {
+  return (value) => {
+    requireV1(value);
+    if (
+      !hasOnlyKeys(value, new Set(['schemaVersion', 'action', 'requestId', 'status', 'replay'])) ||
+      value.action !== expectedAction || !lifecycleActions.has(value.action as SubscriptionLifecycleAction) ||
+      typeof value.requestId !== 'string' || value.requestId.length < 1 ||
+      typeof value.status !== 'string' || !lifecycleStatuses.has(value.status as SubscriptionLifecycleResult['status']) ||
+      typeof value.replay !== 'boolean'
+    ) invalidResponse();
+    return { schemaVersion: 'v1', action: value.action as SubscriptionLifecycleAction, requestId: value.requestId, status: value.status as SubscriptionLifecycleResult['status'], replay: value.replay };
+  };
+}
+
+function requireIdempotencyKey(): string {
+  if (!globalThis.crypto?.randomUUID) throw new Error('secure_random_unavailable');
+  return globalThis.crypto.randomUUID();
+}
+
+// SEC-BILLING-001: only a same-origin API response decides where a checkout
+// redirect goes, and even then only to an approved Razorpay checkout domain
+// — this allowlist is the last line of defense against an open redirect if
+// the billing API ever returned an unexpected URL.
+const RAZORPAY_CHECKOUT_DOMAINS = ['https://rzp.io/', 'https://pages.razorpay.com/'];
+export function isApprovedCheckoutUrl(url: string): boolean {
+  return RAZORPAY_CHECKOUT_DOMAINS.some((domain) => url.startsWith(domain));
+}
+
+export function createSubscription(channelId: string, tier: PaidTier, billingInterval: BillingSubscription['billingInterval']): Promise<BillingSubscription> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/billing/subscription`, { method: 'POST', headers: { 'Idempotency-Key': requireIdempotencyKey() }, body: JSON.stringify({ tier, billingInterval }) }, parseBillingSubscription);
+}
+export function cancelSubscription(channelId: string): Promise<SubscriptionLifecycleResult> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/billing/subscription/cancel`, { method: 'POST', headers: { 'Idempotency-Key': requireIdempotencyKey() } }, parseLifecycleResult('cancel'));
+}
+export function upgradeSubscription(channelId: string, targetTier: PaidTier, billingInterval: BillingSubscription['billingInterval']): Promise<SubscriptionLifecycleResult> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/billing/subscription/upgrade`, { method: 'POST', headers: { 'Idempotency-Key': requireIdempotencyKey() }, body: JSON.stringify({ targetTier, billingInterval }) }, parseLifecycleResult('upgrade'));
+}
+export function downgradeSubscription(channelId: string, targetTier: PaidTier, billingInterval: BillingSubscription['billingInterval']): Promise<SubscriptionLifecycleResult> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/billing/subscription/downgrade`, { method: 'POST', headers: { 'Idempotency-Key': requireIdempotencyKey() }, body: JSON.stringify({ targetTier, billingInterval }) }, parseLifecycleResult('downgrade'));
+}
+export function reactivateSubscription(channelId: string): Promise<SubscriptionLifecycleResult> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/billing/subscription/reactivate`, { method: 'POST', headers: { 'Idempotency-Key': requireIdempotencyKey() } }, parseLifecycleResult('reactivate'));
+}
 export function getCompanionState(channelId: string): Promise<CompanionState> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/companion/state`, {}, parseCompanionState); }
 export function getCompanionLayout(channelId: string): Promise<CompanionLayout> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/companion/layout`, {}, parseCompanionLayout); }
 export function updateCompanionLayout(channelId: string, version: number, pageSize: 4 | 8 | 16, slots: CompanionActionSlot[]): Promise<CompanionLayout> {

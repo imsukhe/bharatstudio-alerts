@@ -28,6 +28,12 @@ spec:
               value: projects/PROJECT/locations/REGION/queues/bsa-alert-delivery
             - name: ALERT_WORKER_TASK_TARGET_URL
               value: https://bharatstudio-alert-worker-PROJECT.REGION.run.app/internal/v1/tasks/overlay
+            - name: ALERT_WORKER_TASK_SERVICE_ACCOUNT
+              value: bsa-alert-worker-tasks@PROJECT.iam.gserviceaccount.com
+            - name: ALERT_WORKER_TTS_URL
+              value: https://bharatstudio-alerts-api-PROJECT.REGION.run.app
+            - name: ALERT_WORKER_TTS_AUDIENCE
+              value: https://bharatstudio-alerts-api-PROJECT.REGION.run.app
           startupProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 2

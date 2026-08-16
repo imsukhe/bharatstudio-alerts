@@ -33,6 +33,11 @@ import { createApiMetrics, type ApiMetrics } from './observability/metrics.js';
 import { logSafeError } from './observability/safe-log.js';
 import { channelConfigSchema } from './domain/channel-config-schema.js';
 import type { PublicAbuseGuard } from './domain/public-abuse.js';
+import type { TtsService } from './tts/provider.js';
+import type { TtsStore } from './domain/tts-store.js';
+import type { OverlayAudioStore } from './domain/overlay-audio-store.js';
+import { registerTtsRoutes } from './routes/tts.js';
+import { registerOverlayAudioRoutes } from './routes/overlay-audio.js';
 
 export type AppDependencies = {
   publicChannels?: PublicChannelRepository;
@@ -54,6 +59,9 @@ export type AppDependencies = {
   paymentAccounts?: PaymentAccountStore;
   account?: AccountStore;
   publicAbuseGuard?: PublicAbuseGuard;
+  tts?: TtsService;
+  ttsStore?: TtsStore;
+  overlayAudio?: OverlayAudioStore;
 };
 
 export async function buildApp(
@@ -166,6 +174,8 @@ export async function buildApp(
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);
+  await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts);
+  await registerOverlayAudioRoutes(app, dependencies.overlayAudio);
   await registerOverlayRoutes(
     app,
     dependencies.sessions,

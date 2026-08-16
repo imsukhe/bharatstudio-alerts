@@ -16,6 +16,8 @@ export type RuntimeConfig = {
   notificationTokenEncryptionKey?: string;
   publicPaymentTurnstileRequired?: boolean;
   publicPaymentTurnstileSecret?: string;
+  sarvamApiKey?: string;
+  sarvamTtsEndpoint?: string;
 };
 
 const allowedEnvironments = new Set<RuntimeConfig['nodeEnv']>([
@@ -121,6 +123,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   if (publicPaymentTurnstileRequired && !publicPaymentTurnstileSecret) {
     throw new Error('PUBLIC_PAYMENT_TURNSTILE_SECRET is required when public payment Turnstile is required');
   }
+  const sarvamApiKey = env.SARVAM_API_KEY;
+  const sarvamTtsEndpoint = env.SARVAM_TTS_ENDPOINT;
+  if (sarvamTtsEndpoint) {
+    try {
+      if (new URL(sarvamTtsEndpoint).protocol !== 'https:') throw new Error('not https');
+    } catch {
+      throw new Error('SARVAM_TTS_ENDPOINT must be an HTTPS URL');
+    }
+  }
 
   return {
     nodeEnv,
@@ -138,5 +149,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     notificationTokenEncryptionKey,
     publicPaymentTurnstileRequired,
     publicPaymentTurnstileSecret,
+    sarvamApiKey,
+    sarvamTtsEndpoint,
   };
 }

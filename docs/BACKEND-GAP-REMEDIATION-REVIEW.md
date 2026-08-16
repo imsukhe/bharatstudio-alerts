@@ -10,7 +10,7 @@
 |---|---|
 | Creator payment onboarding absent | Confirmed launch blocker; implement boundary and retain provider gate |
 | TTS completely absent | Corrected: playback/fallback exists; synthesis boundary missing |
-| Queue modes completely absent | Corrected: client presentation exists; server enforcement incomplete |
+| Queue modes completely absent | Corrected: durable server ordering/claim policy exists; stacked/pills/aggregated presentation remains intentionally client-side and is covered by overlay tests |
 | Replay publisher is a broken no-op | Rejected: intentional durable publication design; requires staging proof |
 | Reconciliation manual-review repeat | Confirmed; payment and refund paths both require quarantine |
 | CAPTCHA/abuse controls absent | Confirmed conditional P1 before public payment launch |
@@ -34,7 +34,7 @@ disposition, owner and follow-up. It must not be treated as independent review.
 | Server queue selection | Migration 0065 priority ageing plus client presentation modes | Full isolated DB suite | Implemented; capacity/load proof required |
 | Public abuse | Turnstile adapter, production fail-closed config, tip route limit 20/min | API Turnstile pass/fail test | Implemented; provider/WAF staging external |
 | OIDC audience mismatch | Payment/worker boot checks and deployment env contract | Go unit tests; manifest validation | Implemented; deployed IAM proof external |
-| TTS synthesis boundary | Sarvam adapter, 13 locales, 1.5s timeout/cache key/chime fallback | API provider/fallback/cache tests | Implemented boundary; credentials/artifact hosting external |
+| TTS synthesis boundary | Sarvam adapter, internal worker caller, durable artifact table, scoped overlay audio route, 13 locales, 1.5s timeout/cache key/chime fallback | API route/caller tests, Go race/vet, isolated DB artifact test and cross-replica overlay suite | Integrated; credentials/provider/production artifact-capacity evidence external |
 | Deployment transport | Cloud Run and Cloud Tasks/DLQ templates plus validator | `BSA_DEPLOYMENT_MANIFESTS=PASS` | Defined; not deployed |
 
 The pass uncovered real regressions in the first queue-policy draft: publication
@@ -51,3 +51,21 @@ invariants and the full isolated suite was rerun successfully.
 | Payment ingress identity | A rewrite must not derive deduplication from time or browser input | Go verifier requires `X-Razorpay-Event-Id`; DB uniqueness includes provider/environment/account/event | Locally verified |
 | Provider/WAF controls | Turnstile and API rate limiting do not by themselves provide a distributed edge budget | Deployment contract records mandatory production WAF/edge rate limit; API limit remains defense-in-depth | External staging/provisioning gate |
 | Payment/refund scope | New v1 has reconciliation/status evidence, not an invented user refund API | Provider refund state is webhook/reconciliation-owned; no public refund route is exposed without approved authorization/retention policy | Deliberately bounded; legal/provider decision required for any expansion |
+
+## Pass 4 — 2026-08-16 TTS and queue-mode follow-up
+
+The audit's TTS finding was confirmed and fixed. The provider adapter previously
+had no production caller. The alert-worker now invokes the authenticated API TTS
+enrichment route after a durable claim and before release. An eligible event's
+audio is stored as a bounded artifact and overlay replay derives a scoped URL
+from the active overlay session. The browser fetches that URL with its bearer
+token and plays a blob URL; provider, network, browser and artifact failures
+fall back to the existing non-blocking chime without delaying or dropping the
+visual alert.
+
+The queue-mode finding is narrower than the original audit table: FIFO/priority
+ordering, source rate limits, quiet/approval/moderation gates and no-drop claim
+semantics are server/database responsibilities. Stacked, pills and aggregated
+rendering are presentation decisions in the overlay runtime. The server still
+rejects explicitly unpublished modes through `configFeatures`; it does not
+invent plan restrictions when the feature matrix is absent.

@@ -18,7 +18,8 @@
 - [x] R6 Public-payment abuse controls and provider/CSP/CORS contract checks.
 - [x] R7 Cloud Tasks, IAM/OIDC, DLQ, secrets, migration and SSE/replay deployment
   contracts.
-- [x] R8 TTS provider boundary, safe audio policy and explicit unavailable state.
+- [x] R8 TTS provider boundary, alert-worker caller, durable scoped audio
+  artifact, safe audio policy and explicit unavailable state.
 - [ ] R9 Cross-repository contract, failure, load and end-to-end evidence.
 - [ ] R10 Independent review, remediation audit and release-authority update.
 
@@ -35,8 +36,9 @@
 - [x] R6 public abuse: production-required Turnstile and route-specific limit.
 - [x] R7 OIDC/deployment contract: boot audience checks and Cloud Run/Tasks
   templates with secret substitution markers.
-- [x] R8 TTS provider boundary: bounded Sarvam adapter, 1.5s timeout, cache
-  key and chime fallback.
+- [x] R8 TTS integration: bounded Sarvam adapter, alert-worker OIDC caller,
+  durable artifact/overlay-audio route, 1.5s timeout, cache key and chime
+  fallback.
 - [x] R9a Terms/privacy mutation gate: product writes require current accepted
   documents; account acceptance/export/privacy/closure remain available.
 - [x] R9b Public-payment defense-in-depth: Turnstile plus instance-local API

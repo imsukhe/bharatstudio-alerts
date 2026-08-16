@@ -32,6 +32,10 @@ spec:
               valueFrom: { secretKeyRef: { name: bsa-database-url-direct, key: current } }
             - name: PUBLIC_PAYMENT_TURNSTILE_REQUIRED
               value: "true"
+            - name: SARVAM_API_KEY
+              valueFrom: { secretKeyRef: { name: bsa-sarvam-api-key, key: current } }
+            - name: SARVAM_TTS_ENDPOINT
+              value: https://api.sarvam.ai/text-to-speech
           startupProbe:
             httpGet: { path: /healthz, port: 4100 }
             initialDelaySeconds: 2

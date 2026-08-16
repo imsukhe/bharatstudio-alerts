@@ -18,6 +18,10 @@ import { createNotificationTokenProtector } from './notifications/token-crypto.j
 import { createSqlPaymentAccountStore } from './db/payment-account-store.js';
 import { createSqlAccountStore } from './db/account-store.js';
 import { createTurnstileGuard } from './domain/public-abuse.js';
+import { createSqlTtsStore } from './db/tts-store.js';
+import { createSqlOverlayAudioStore } from './db/overlay-audio-store.js';
+import { createSqlTtsCache } from './db/tts-cache.js';
+import { createSarvamTtsProvider, createTtsService } from './tts/provider.js';
 
 const config = loadConfig();
 const sql = config.databaseUrlApp ? createSqlClient(config.databaseUrlApp) : undefined;
@@ -51,6 +55,11 @@ const app = await buildApp(config, {
   paymentAccounts: sql ? createSqlPaymentAccountStore(sql) : undefined,
   account: sql ? createSqlAccountStore(sql) : undefined,
   publicAbuseGuard: config.publicPaymentTurnstileSecret ? createTurnstileGuard(config.publicPaymentTurnstileSecret) : undefined,
+  ttsStore: sql ? createSqlTtsStore(sql) : undefined,
+  overlayAudio: sql ? createSqlOverlayAudioStore(sql) : undefined,
+  tts: config.sarvamApiKey
+    ? createTtsService(createSarvamTtsProvider(config.sarvamApiKey, config.sarvamTtsEndpoint), sql ? createSqlTtsCache(sql) : undefined)
+    : createTtsService(undefined, sql ? createSqlTtsCache(sql) : undefined),
 });
 
 await app.listen({ host: config.host, port: config.port });

@@ -257,12 +257,21 @@ export default function BrowserOverlayPage() {
     const plan = ttsPlaybackPlan(first, config);
     if (plan.mode === 'silent') return;
     let audio: HTMLAudioElement | undefined;
+    let objectUrl: string | undefined;
     let cancelled = false;
     const play = async () => {
       const url = plan.mode === 'audio' && plan.audioUrl ? safeAudioUrl(plan.audioUrl) : undefined;
       if (url) {
-        audio = new Audio(url);
         try {
+          // Audio playback cannot attach Authorization headers through the
+          // HTMLAudioElement constructor. Fetch the scoped artifact with the
+          // overlay bearer token, then play a short-lived blob URL instead.
+          const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
+          if (!token) throw new Error('overlay token missing');
+          const response = await fetch(url, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
+          if (!response.ok) throw new Error('overlay audio unavailable');
+          objectUrl = URL.createObjectURL(await response.blob());
+          audio = new Audio(objectUrl);
           if (await playAudioWithTimeout(audio)) return;
         } catch {
           // Provider/audio playback failures fall through to the non-blocking chime.
@@ -275,6 +284,8 @@ export default function BrowserOverlayPage() {
       cancelled = true;
       audio?.pause();
       audio = undefined;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = undefined;
     };
   }, [currentGroup, first, config]);
 

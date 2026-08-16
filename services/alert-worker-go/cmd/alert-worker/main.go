@@ -18,6 +18,7 @@ import (
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/observability"
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/store"
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/tasks"
+	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/tts"
 )
 
 func main() {
@@ -69,6 +70,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	ttsURL, err := requiredEnv("ALERT_WORKER_TTS_URL")
+	if err != nil {
+		return err
+	}
+	ttsAudience, err := requiredEnv("ALERT_WORKER_TTS_AUDIENCE")
+	if err != nil {
+		return err
+	}
 
 	database, err := db.Open(ctx, db.Config{DSN: dsn, MaxOpenConns: maxOpen, MaxIdleConns: maxIdle})
 	if err != nil {
@@ -90,6 +99,10 @@ func run() error {
 		return fmt.Errorf("configure private oidc verifier: %w", err)
 	}
 	authorizer := auth.OIDCAuthorizer{Audience: audience, Verifier: verifier}
+	ttsClient, err := tts.NewClient(ctx, ttsURL, ttsAudience, nil)
+	if err != nil {
+		return fmt.Errorf("configure TTS enricher: %w", err)
+	}
 	deliveryStore := store.NewSQLDeliveryStore(database)
 	readyStore := store.NewSQLReadyDeliveryStore(database)
 	notifier := store.NewSQLWakeupNotifier(database)
@@ -101,6 +114,7 @@ func run() error {
 		Store:         deliveryStore,
 		Publisher:     publisher,
 		Notifier:      notifier,
+		Enricher:      ttsClient,
 		LeaseDuration: 30 * time.Second,
 		RetryDelay:    5 * time.Second,
 		Metrics:       metrics,

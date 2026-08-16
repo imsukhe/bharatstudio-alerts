@@ -36,11 +36,16 @@ type Notifier interface {
 	Notify(ctx context.Context, channelID, eventID string) error
 }
 
+type Enricher interface {
+	Enrich(ctx context.Context, eventID string) error
+}
+
 type Config struct {
 	Authorizer    Authorizer
 	Store         DeliveryStore
 	Publisher     Publisher
 	Notifier      Notifier
+	Enricher      Enricher
 	Now           func() time.Time
 	BodyLimit     int64
 	LeaseDuration time.Duration
@@ -155,6 +160,13 @@ func (h Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		_, _ = h.config.Store.Retry(request.Context(), command.DeliveryID, leaseToken, now.Add(h.config.RetryDelay), "publish_failed")
 		writeRetryable(response)
 		return
+	}
+	// TTS is an optional enrichment. It runs after the durable claim and before
+	// release so a successful artifact can be included in replay, but every
+	// provider/network failure is deliberately ignored: the visual alert must
+	// still be released and the browser falls back to its chime.
+	if h.config.Enricher != nil {
+		_ = h.config.Enricher.Enrich(request.Context(), delivery.EventID)
 	}
 	if _, released, err := h.config.Store.Release(request.Context(), command.DeliveryID, leaseToken); err != nil || !released {
 		h.config.Metrics.ObserveTaskOutcome("retryable")

@@ -35,6 +35,10 @@ values in these manifests or commit them:
 
 - `DATABASE_URL_APP`, `DATABASE_URL_DIRECT` (API); `PAYMENT_DATABASE_URL`
   (payment); `ALERT_WORKER_DATABASE_URL` (worker);
+- `SARVAM_API_KEY` is optional for the API: without it the internal TTS route
+  returns the safe chime outcome. The worker still calls that route for every
+  eligible alert, so enabling the secret activates synthesis without changing
+  payment or delivery semantics.
 - Razorpay live/test key ID, key secret, webhook secret and connected-account
   approval configuration;
 - Google/OIDC client and service-audience configuration;

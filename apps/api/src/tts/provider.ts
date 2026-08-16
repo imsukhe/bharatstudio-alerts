@@ -65,6 +65,8 @@ export type TtsSynthesisResult =
   | { mode: 'audio'; audio: TtsAudio; cacheHit: boolean }
   | { mode: 'chime'; reason: 'provider_timeout' | 'provider_failure' | 'not_configured' };
 
+export type TtsService = ReturnType<typeof createTtsService>;
+
 export function createTtsService(provider?: TtsProvider, cache?: TtsCache) {
   return {
     async synthesize(request: TtsSynthesisRequest): Promise<TtsSynthesisResult> {

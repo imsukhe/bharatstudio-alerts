@@ -14,7 +14,7 @@
 | R5 | Deactivation/export/privacy/Terms/retention authorization and audit tests | Local account lifecycle SQL/API tests, fail-closed no-document migration and mutation terms-gate tests pass on 2026-08-16 |
 | R6 | Public abuse/rate-limit/CSP/CORS/provider-header tests | API Turnstile pass/fail, route limit, CORS/security-header and Go Razorpay header tests pass; distributed edge/WAF staging proof remains open |
 | R7 | OIDC audience/IAM/DLQ/migration/SSE-reconnect deployment rehearsal | Boot checks, manifest validator, isolated migrations and SSE cross-replica tests pass; IAM/Cloud Tasks/DLQ rehearsal is blocked until staging |
-| R8 | TTS timeout/fallback/provider-unavailable and safe-origin tests | Sarvam adapter boundary, timeout, cache and chime fallback tests pass; credentials/provider/audio artifact staging remains external |
+| R8 | TTS timeout/fallback/provider-unavailable, internal caller, durable artifact and safe-origin tests | API 79-test suite, Go TTS caller tests, isolated DB TTS artifact test and authenticated overlay-audio route pass; credentials/provider/production artifact-capacity staging remains external |
 | R9 | Cross-service contract, failure, load, restore and browser/OBS evidence | Contracts, Go/TS unit/integration and disposable DB evidence pass; deployed load/restore/browser/OBS evidence remains open |
 | R10 | Fresh independent review with disposition for every finding | Self-review updated through Pass 3; independent review is still required |
 
@@ -25,6 +25,8 @@ deployment, legal, store or production-capacity gates.
 
 - `apps/api`: 76/76 tests passed; TypeScript build passed, including the
   channel-store entitlement boundary regression.
+- After TTS caller integration: `apps/api` 79/79 tests passed; Go alert-worker
+  race/vet suite and TTS caller tests passed.
 - Payment and alert-worker Go test suites, `go vet`, and race checks passed in
   the corresponding service packages.
 - `sh packages/db/tests/run-l03-application-behavior.sh` passed the isolated

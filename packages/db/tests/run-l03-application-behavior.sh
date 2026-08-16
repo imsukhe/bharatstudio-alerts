@@ -57,6 +57,7 @@ psql < "$ROOT/packages/db/tests/l04_payment_account_onboarding.sql"
 psql < "$ROOT/packages/db/tests/l04_downgrade_enforcement.sql"
 psql < "$ROOT/packages/db/tests/l07_notification_preferences.sql"
 psql < "$ROOT/packages/db/tests/l03_referral_growth_engine.sql"
+psql < "$ROOT/packages/db/tests/l03_lottie_branding_upload.sql"
 
 (cd "$ROOT/services/payment-webhook-go" && \
   BSA_PAYMENT_SQL_DSN="postgres://postgres:test@127.0.0.1:${PORT}/postgres?sslmode=disable" \

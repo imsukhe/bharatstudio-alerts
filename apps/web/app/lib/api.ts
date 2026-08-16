@@ -49,6 +49,8 @@ export type SubscriptionLifecycleResult = {
   status: 'requested' | 'provider_confirmed' | 'provider_failed';
   replay: boolean;
 };
+export type DisplayStyle = 'small_pill' | 'compact_card' | 'standard_card' | 'large_card' | 'banner' | 'celebration';
+export type LottieAssetSummary = { displayStyle: DisplayStyle; artifactId: string; byteSize: number; updatedAt: string };
 export type ReferralStatus = 'pending' | 'paid_pending_hold' | 'credited' | 'flagged_fraud' | 'revoked' | 'expired';
 export type ReferralOverview = {
   schemaVersion: 'v1';
@@ -745,5 +747,40 @@ export function parseReferralHistory(value: unknown): ReferralHistory {
 
 export function getReferralOverview(channelId: string): Promise<ReferralOverview> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/referrals/overview`, {}, parseReferralOverview); }
 export function getReferralHistory(channelId: string): Promise<ReferralHistory> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/referrals`, {}, parseReferralHistory); }
+
+const displayStylesSet = new Set<DisplayStyle>(['small_pill', 'compact_card', 'standard_card', 'large_card', 'banner', 'celebration']);
+
+export function parseLottieAssetSummary(value: unknown): LottieAssetSummary {
+  if (!isRecord(value)) invalidResponse();
+  if (
+    !hasOnlyKeys(value, new Set(['displayStyle', 'artifactId', 'byteSize', 'updatedAt'])) ||
+    typeof value.displayStyle !== 'string' || !displayStylesSet.has(value.displayStyle as DisplayStyle) ||
+    !isUuid(value.artifactId) ||
+    !isSafeInteger(value.byteSize) || value.byteSize < 1 ||
+    !isIsoDate(value.updatedAt)
+  ) invalidResponse();
+  return { displayStyle: value.displayStyle as DisplayStyle, artifactId: value.artifactId, byteSize: value.byteSize, updatedAt: value.updatedAt };
+}
+
+export function parseLottieAssetList(value: unknown): { schemaVersion: 'v1'; items: LottieAssetSummary[] } {
+  requireV1(value);
+  if (!hasOnlyKeys(value, new Set(['schemaVersion', 'items'])) || !Array.isArray(value.items) || value.items.length > 6) invalidResponse();
+  return { schemaVersion: 'v1', items: value.items.map(parseLottieAssetSummary) };
+}
+
+export function getLottieAssets(channelId: string): Promise<{ schemaVersion: 'v1'; items: LottieAssetSummary[] }> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/branding/lottie`, {}, parseLottieAssetList);
+}
+
+export function uploadLottieAsset(channelId: string, displayStyle: DisplayStyle, document: unknown): Promise<{ displayStyle: DisplayStyle; artifactId: string }> {
+  return apiFetch(`/v1/channels/${pathSegment(channelId)}/branding/lottie/${pathSegment(displayStyle)}`, { method: 'PUT', body: JSON.stringify(document) }, (value) => {
+    if (!isRecord(value) || !isUuid(value.artifactId) || typeof value.displayStyle !== 'string' || !displayStylesSet.has(value.displayStyle as DisplayStyle)) invalidResponse();
+    return { displayStyle: value.displayStyle as DisplayStyle, artifactId: value.artifactId };
+  });
+}
+
+export function deleteLottieAsset(channelId: string, displayStyle: DisplayStyle): Promise<void> {
+  return apiFetch<void>(`/v1/channels/${pathSegment(channelId)}/branding/lottie/${pathSegment(displayStyle)}`, { method: 'DELETE' }, rejectUnexpectedBody);
+}
 
 import { getApiOrigin } from './api-origin';

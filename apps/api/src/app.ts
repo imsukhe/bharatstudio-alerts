@@ -46,6 +46,9 @@ import { registerTtsRoutes } from './routes/tts.js';
 import { registerOverlayAudioRoutes } from './routes/overlay-audio.js';
 import type { ReferralStore } from './domain/referrals.js';
 import { registerReferralRoutes } from './routes/referrals.js';
+import type { BrandingStore, OverlayBrandingStore } from './domain/branding.js';
+import { registerBrandingRoutes } from './routes/branding.js';
+import { registerOverlayLottieRoutes } from './routes/overlay-lottie.js';
 
 export type AppDependencies = {
   publicChannels?: PublicChannelRepository;
@@ -75,6 +78,8 @@ export type AppDependencies = {
   ttsStore?: TtsStore;
   overlayAudio?: OverlayAudioStore;
   referrals?: ReferralStore;
+  branding?: BrandingStore;
+  overlayBranding?: OverlayBrandingStore;
 };
 
 export async function buildApp(
@@ -186,12 +191,14 @@ export async function buildApp(
   await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
   await registerReferralRoutes(app, dependencies.sessions, dependencies.referrals);
+  await registerBrandingRoutes(app, dependencies.sessions, dependencies.branding, dependencies.account);
   await registerAdminRoutes(app, dependencies.sessions, dependencies.admin);
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts);
   await registerOverlayAudioRoutes(app, dependencies.overlayAudio);
+  await registerOverlayLottieRoutes(app, dependencies.overlayBranding);
   await registerOverlayRoutes(
     app,
     dependencies.sessions,

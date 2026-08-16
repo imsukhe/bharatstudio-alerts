@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseReferralHistory, parseReferralOverview, parseTermsStatus } from './api';
+import { isApprovedCheckoutUrl, notificationPreferencesInput, parseBillingSubscription, parseBindingList, parseBillingView, parseChannelConfig, parseChannelDetails, parseCompanionActionResult, parseCompanionLayout, parseCompanionState, parseCurrentUser, parseEntitlements, parseHistoryPage, parseLifecycleResult, parseLottieAssetList, parseNotificationDeviceList, parseNotificationPreferences, parseOverlaySession, parsePaymentAccountList, parsePaymentLedgerPage, parsePrivacyRequestList, parseQueueList, parseReferralHistory, parseReferralOverview, parseTermsStatus } from './api';
 
 const channelId = '00000000-0000-4000-8000-000000000001';
 const overlayId = '00000000-0000-4000-8000-000000000002';
@@ -226,5 +226,22 @@ test('accepts a well-formed referral history page and rejects an unknown status'
   assert.throws(() => parseReferralHistory({
     schemaVersion: 'v1',
     items: [{ referralId, status: 'pending', attributedAt: '2026-08-01T10:00:00.000Z', creditedAt: null, creditDays: 0 }],
+  }), /invalid_response/);
+});
+
+test('accepts a well-formed Lottie asset list and rejects an unknown displayStyle', () => {
+  const artifactId = '00000000-0000-4000-8000-000000000091';
+  const parsed = parseLottieAssetList({
+    schemaVersion: 'v1',
+    items: [{ displayStyle: 'celebration', artifactId, byteSize: 1024, updatedAt: '2026-08-16T10:00:00.000Z' }],
+  });
+  assert.equal(parsed.items[0]?.byteSize, 1024);
+  assert.throws(() => parseLottieAssetList({
+    schemaVersion: 'v1',
+    items: [{ displayStyle: 'not_a_real_style', artifactId, byteSize: 1024, updatedAt: '2026-08-16T10:00:00.000Z' }],
+  }), /invalid_response/);
+  assert.throws(() => parseLottieAssetList({
+    schemaVersion: 'v1',
+    items: [{ displayStyle: 'celebration', artifactId, byteSize: 0, updatedAt: '2026-08-16T10:00:00.000Z' }],
   }), /invalid_response/);
 });

@@ -19,6 +19,7 @@ import {
 } from '../overlay-policy';
 import { playAudioWithTimeout } from '../tts-runtime';
 import { getApiOrigin } from '../../lib/api-origin';
+import type { AnimationItem } from 'lottie-web';
 
 function textValue(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
@@ -62,6 +63,37 @@ function safeAudioUrl(value: string): string | undefined {
   }
 }
 
+// A creator-uploaded Lottie document rendered inside a live overlay
+// browser source. Fetching, parsing and loading are entirely best-effort:
+// a failure here must never block or replace the existing CSS-driven
+// alert card, matching the same non-blocking principle the TTS chime
+// fallback above already follows.
+function LottieLayer({ url, token }: { url: string; token: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let cancelled = false;
+    let animation: AnimationItem | undefined;
+    (async () => {
+      try {
+        const response = await fetch(url, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
+        if (!response.ok) return;
+        const animationData: unknown = await response.json();
+        if (cancelled || !containerRef.current) return;
+        const lottie = (await import('lottie-web')).default;
+        animation = lottie.loadAnimation({ container: containerRef.current, renderer: 'svg', loop: false, autoplay: true, animationData });
+      } catch {
+        // Best-effort enrichment only — see the function comment above.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      animation?.destroy();
+    };
+  }, [url, token]);
+  return <div className="browser-alert-lottie" ref={containerRef} aria-hidden="true" />;
+}
+
 export default function BrowserOverlayPage() {
   const params = useParams<{ overlayId: string }>();
   const [currentGroup, setCurrentGroup] = useState<OverlayItem[]>([]);
@@ -70,6 +102,7 @@ export default function BrowserOverlayPage() {
   const active = useRef(false);
   const pending = useRef(new Set<string>());
   const arrivalSequence = useRef(0);
+  const [lottieAssets, setLottieAssets] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     document.documentElement.classList.add('browser-overlay-document');
@@ -246,10 +279,53 @@ export default function BrowserOverlayPage() {
     };
   }, [params.overlayId]);
 
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
+    if (!params.overlayId || !token) return;
+    let apiOrigin: string;
+    try {
+      apiOrigin = getApiOrigin();
+    } catch {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(`${apiOrigin}/v1/overlay-lottie/${encodeURIComponent(params.overlayId)}`, {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+        if (!response.ok || cancelled) return;
+        const body: unknown = await response.json();
+        if (!body || typeof body !== 'object' || !Array.isArray((body as { items?: unknown }).items)) return;
+        const next = new Map<string, string>();
+        for (const item of (body as { items: unknown[] }).items) {
+          if (item && typeof item === 'object' && typeof (item as { displayStyle?: unknown }).displayStyle === 'string' && typeof (item as { artifactId?: unknown }).artifactId === 'string') {
+            next.set((item as { displayStyle: string }).displayStyle, (item as { artifactId: string }).artifactId);
+          }
+        }
+        if (!cancelled) setLottieAssets(next);
+      } catch {
+        // Best-effort — an overlay with no custom branding (the common
+        // case) simply renders with the existing CSS-driven cards.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [params.overlayId]);
+
   const first = currentGroup[0];
   const config = useMemo(() => first ? configForItem(first) : normalizeOverlayConfig(undefined), [first]);
   const mode = config.queue.mode;
   const style = first ? styleFor(first, config) : config.defaultStyle;
+  const overlayToken = typeof window !== 'undefined' ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token') : null;
+  const apiOriginForLottie = (() => { try { return getApiOrigin(); } catch { return undefined; } })();
+
+  function lottieForStyle(displayStyle: string): { url: string; token: string } | undefined {
+    if (config.reducedMotion || !overlayToken || !apiOriginForLottie) return undefined;
+    const artifactId = lottieAssets.get(displayStyle);
+    if (!artifactId) return undefined;
+    return { url: `${apiOriginForLottie}/v1/overlay-lottie/${encodeURIComponent(params.overlayId)}/${encodeURIComponent(artifactId)}`, token: overlayToken };
+  }
   const overlayStyle = { '--overlay-offset-x': `${config.display.offsetX}px`, '--overlay-offset-y': `${config.display.offsetY}px`, '--overlay-scale': String(config.display.scale), '--overlay-width': `${config.display.widthPercent}%` } as React.CSSProperties;
 
   useEffect(() => {
@@ -296,6 +372,7 @@ export default function BrowserOverlayPage() {
         <div className={`browser-alert-group mode-${mode}`} data-style={style}>
           {mode === 'aggregated' && currentGroup.length > 1 ? (
             <article className="browser-alert browser-alert-aggregate" data-style={style}>
+              {(() => { const lottie = lottieForStyle(style); return lottie ? <LottieLayer url={lottie.url} token={lottie.token} /> : null; })()}
               <div className="browser-alert-kicker">BharatStudio · supporters</div>
               <strong>{aggregateLabel(currentGroup)}</strong>
               {currentGroup.map((item) => <p key={item.cursor}>{textValue(item.payload, 'displayName') || 'Someone'}{amountValue(item) ? ` · ${amountValue(item)}` : ''}{textValue(item.payload, 'message') ? ` — ${truncateMessage(item.payload.message, bracketFor(item, config).charLimit)}` : ''}</p>)}
@@ -305,8 +382,10 @@ export default function BrowserOverlayPage() {
             const limit = bracketFor(item, config).charLimit;
             const name = textValue(item.payload, 'displayName') || 'Someone';
             const message = truncateMessage(item.payload.message, limit);
+            const lottie = lottieForStyle(itemStyle);
             return (
               <article className="browser-alert" data-style={itemStyle} key={item.cursor}>
+                {lottie && <LottieLayer url={lottie.url} token={lottie.token} />}
                 <div className="browser-alert-kicker">BharatStudio</div>
                 <strong>{name}{amountValue(item) ? ` · ${amountValue(item)}` : ''}</strong>
                 {message && <p>{message}</p>}

@@ -21,6 +21,8 @@ import { createSqlAdminStore } from './db/admin-store.js';
 import { createSqlEmailOutboxStore } from './db/email-store.js';
 import { createResendEmailSender } from './email/resend-sender.js';
 import { createSqlReferralStore } from './db/referral-store.js';
+import { createSqlBrandingStore } from './db/branding-store.js';
+import { createSqlOverlayBrandingStore } from './db/overlay-branding-store.js';
 import { createSqlAccountStore } from './db/account-store.js';
 import { createTurnstileGuard } from './domain/public-abuse.js';
 import { createSqlTtsStore } from './db/tts-store.js';
@@ -66,6 +68,8 @@ const app = await buildApp(config, {
     : undefined,
   account: sql ? createSqlAccountStore(sql) : undefined,
   referrals: sql ? createSqlReferralStore(sql) : undefined,
+  branding: sql ? createSqlBrandingStore(sql) : undefined,
+  overlayBranding: sql ? createSqlOverlayBrandingStore(sql) : undefined,
   publicAbuseGuard: config.publicPaymentTurnstileSecret ? createTurnstileGuard(config.publicPaymentTurnstileSecret) : undefined,
   ttsStore: sql ? createSqlTtsStore(sql) : undefined,
   overlayAudio: sql ? createSqlOverlayAudioStore(sql) : undefined,

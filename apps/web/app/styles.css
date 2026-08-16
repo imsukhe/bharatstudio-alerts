@@ -197,6 +197,9 @@ h1 { margin: 0; max-width: 12ch; font-size: clamp(2.4rem, 7vw, 5.5rem); line-hei
 .referral-history-table th { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-family: var(--font-mono); font-size: .72rem; font-weight: 600; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
 .referral-history-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .referral-history-table tr:last-child td { border-bottom: none; }
+.branding-panel .channel-list { margin-top: 18px; }
+.branding-upload-label { position: relative; cursor: pointer; }
+.branding-upload-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .queue-row, .history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); padding: 10px 0; }
 .queue-row small, .history-row > span { color: var(--muted); font-size: .8rem; }
 .inline-form { display: flex; gap: 8px; }
@@ -269,7 +272,9 @@ summary { cursor: pointer; color: var(--text); font-family: var(--font-display);
 .browser-alert-group.mode-stacked .browser-alert { transform-origin: bottom center; }
 .browser-alert-group.mode-pills { width: min(560px, 92vw); }
 .browser-alert-group.mode-pills .browser-alert { border-radius: 999px; padding-block: 12px; }
-.browser-alert { width: 100%; padding: 20px 26px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 20px; background: linear-gradient(115deg, rgb(10 10 15 / 96%), rgb(14 14 20 / 94%)); box-shadow: 0 16px 60px rgb(0 0 0 / 45%); animation: browser-alert-in 320ms var(--ease-spring) both; overflow-wrap: anywhere; }
+.browser-alert { position: relative; width: 100%; padding: 20px 26px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 20px; background: linear-gradient(115deg, rgb(10 10 15 / 96%), rgb(14 14 20 / 94%)); box-shadow: 0 16px 60px rgb(0 0 0 / 45%); animation: browser-alert-in 320ms var(--ease-spring) both; overflow-wrap: anywhere; }
+.browser-alert-lottie { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: inherit; }
+.browser-alert-lottie ~ * { position: relative; z-index: 1; }
 .browser-alert[data-style="small_pill"] { border-radius: 999px; padding-block: 12px; }
 .browser-alert[data-style="compact_card"] { border-radius: 12px; }
 .browser-alert[data-style="large_card"], .browser-alert[data-style="celebration"] { border-radius: 26px; padding: 24px 28px; }

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from '../auth/pre-handler.js';
+import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { AlertStore, CompanionAction, CompanionActionSlot, CompanionControlSession } from '../domain/alert-store.js';
+import type { AccountStore } from '../domain/account-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -25,8 +26,9 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'companion_store_unavailable', message: 'Companion controls are temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerCompanionRoutes(app: FastifyInstance, sessions?: SessionStore, store?: AlertStore): Promise<void> {
+export async function registerCompanionRoutes(app: FastifyInstance, sessions?: SessionStore, store?: AlertStore, account?: AccountStore): Promise<void> {
   const auth = requireAuth(sessions);
+  const termsAuth = requireAuthAndTerms(sessions, account);
 
   app.get<{ Params: { channelId: string } }>('/v1/channels/:channelId/companion/state', { preHandler: auth, schema: { params: channelParams } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
@@ -45,7 +47,7 @@ export async function registerCompanionRoutes(app: FastifyInstance, sessions?: S
     Headers: { 'if-match-version'?: string };
     Body: { pageSize: 4 | 8 | 16; slots: CompanionActionSlot[] };
   }>('/v1/channels/:channelId/companion/layout', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: channelParams,
       headers: { type: 'object', required: ['if-match-version'], properties: { 'if-match-version': { type: 'string', pattern: '^(0|[1-9][0-9]*)$' } } },
@@ -72,7 +74,7 @@ export async function registerCompanionRoutes(app: FastifyInstance, sessions?: S
     Params: { channelId: string };
     Body: { clientType: CompanionControlSession['clientType']; clientInstanceId: string };
   }>('/v1/channels/:channelId/companion/control-session', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: channelParams,
       body: {
@@ -97,7 +99,7 @@ export async function registerCompanionRoutes(app: FastifyInstance, sessions?: S
   });
 
   app.delete<{ Params: { channelId: string; sessionId: string } }>('/v1/channels/:channelId/companion/control-session/:sessionId', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: { params: controlSessionParams },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
@@ -111,7 +113,7 @@ export async function registerCompanionRoutes(app: FastifyInstance, sessions?: S
   });
 
   app.post<{ Params: { channelId: string }; Headers: { 'idempotency-key'?: string }; Body: { action: CompanionAction; targetId: string } }>('/v1/channels/:channelId/companion/actions', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: channelParams,
       headers: { type: 'object', properties: { 'idempotency-key': { type: 'string', minLength: 16, maxLength: 128, pattern: idempotencyKeyPattern } } },

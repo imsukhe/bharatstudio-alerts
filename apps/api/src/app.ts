@@ -24,10 +24,15 @@ import type { PublicPaymentStatusRepository } from './domain/public-payment-stat
 import type { MaintenanceStore, ServiceIdentityVerifier } from './domain/maintenance.js';
 import type { NotificationStore } from './domain/notification-store.js';
 import type { NotificationTokenProtector } from './notifications/token-crypto.js';
+import type { PaymentAccountStore } from './domain/payment-account.js';
+import { registerPaymentAccountRoutes } from './routes/payment-accounts.js';
+import type { AccountStore } from './domain/account-store.js';
+import { registerAccountRoutes } from './routes/account.js';
 import { registerMaintenanceRoutes } from './routes/maintenance.js';
 import { createApiMetrics, type ApiMetrics } from './observability/metrics.js';
 import { logSafeError } from './observability/safe-log.js';
 import { channelConfigSchema } from './domain/channel-config-schema.js';
+import type { PublicAbuseGuard } from './domain/public-abuse.js';
 
 export type AppDependencies = {
   publicChannels?: PublicChannelRepository;
@@ -46,12 +51,18 @@ export type AppDependencies = {
   readiness?: () => Promise<boolean>;
   notifications?: NotificationStore;
   notificationTokenProtector?: NotificationTokenProtector;
+  paymentAccounts?: PaymentAccountStore;
+  account?: AccountStore;
+  publicAbuseGuard?: PublicAbuseGuard;
 };
 
 export async function buildApp(
   config: RuntimeConfig,
   dependencies: AppDependencies = {},
 ): Promise<FastifyInstance> {
+  if ((config.nodeEnv === 'staging' || config.nodeEnv === 'production') && !dependencies.account) {
+    throw new Error('Account store is required in staging and production for terms and privacy enforcement');
+  }
   const app = Fastify({
     // Reject, rather than silently strip, unknown creator-controlled fields.
     // Silent removal would make a client believe a configuration was saved
@@ -144,12 +155,16 @@ export async function buildApp(
     dependencies.paymentOrders,
     config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'),
     dependencies.publicPaymentStatus,
+    dependencies.publicAbuseGuard,
+    config.publicPaymentTurnstileRequired === true,
   );
   await registerAuthRoutes(app, dependencies);
-  await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector);
-  await registerChannelRoutes(app, dependencies.sessions, dependencies.channels);
-  await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'));
-  await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts);
+  await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
+  await registerAccountRoutes(app, dependencies.sessions, dependencies.account);
+  await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account);
+  await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
+  await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account);
+  await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);
   await registerOverlayRoutes(
     app,
@@ -160,6 +175,7 @@ export async function buildApp(
       windowMs: config.overlayStreamWindowMs ?? (config.nodeEnv === 'test' ? 0 : 25_000),
       pollMs: config.overlayPollMs ?? 2_000,
     },
+    dependencies.account,
   );
 
   app.addHook('onClose', async () => {

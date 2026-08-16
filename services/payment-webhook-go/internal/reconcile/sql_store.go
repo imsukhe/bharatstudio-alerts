@@ -68,6 +68,13 @@ select work_item_id::text
 	return workItemID != "", nil
 }
 
+func (s SQLStore) QuarantinePayment(ctx context.Context, intentID, reason string) (bool, error) {
+	var quarantined bool
+	err := s.db.QueryRowContext(ctx, `
+select app_private.quarantine_payment_reconciliation($1::uuid, $2::text)`, intentID, reason).Scan(&quarantined)
+	return quarantined, err
+}
+
 func (s SQLStore) ListRefundCandidates(ctx context.Context, limit int) ([]RefundCandidate, error) {
 	rows, err := s.db.QueryContext(ctx, `
 select refund_id::text, connected_account_ref, provider_refund_id, provider_payment_id, amount_paise, currency, status
@@ -102,4 +109,11 @@ select refund_id::text, refund_status, payment_status
 		return errors.New("refund reconciliation returned invalid state")
 	}
 	return nil
+}
+
+func (s SQLStore) QuarantineRefund(ctx context.Context, refundID, reason string) (bool, error) {
+	var quarantined bool
+	err := s.db.QueryRowContext(ctx, `
+select app_private.quarantine_refund_reconciliation($1::uuid, $2::text)`, refundID, reason).Scan(&quarantined)
+	return quarantined, err
 }

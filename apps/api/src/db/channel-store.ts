@@ -1,6 +1,7 @@
 import type { JSONValue, Sql, TransactionSql } from 'postgres';
 import type { ChannelConfig, ChannelDetails, ChannelStore, Queue, QueueBinding } from '../domain/channel-store.js';
 import { hasReachedEntitlementLimit, parsePositiveEntitlementLimit } from '../domain/entitlement-limits.js';
+import { validateConfigEntitlement } from '../domain/entitlement-policy.js';
 
 async function inUserTransaction<T>(sql: Sql, userId: string, callback: (tx: TransactionSql) => Promise<T>): Promise<T> {
   const result = await sql.begin(async (tx) => {
@@ -89,6 +90,13 @@ export function createSqlChannelStore(sql: Sql): ChannelStore {
         `;
         const version = current[0]?.version ?? 0;
         if (version !== expectedVersion) return null;
+        const entitlements = await tx<{ values: Record<string, unknown> }[]>`
+          select values from channel_entitlement_versions
+           where channel_id = ${channelId}::uuid
+           order by version desc limit 1
+        `;
+        const entitlementIssues = validateConfigEntitlement(values, entitlements[0]?.values ?? {});
+        if (entitlementIssues.length > 0) throw new Error(`Configuration exceeds entitlement: ${entitlementIssues[0]!.code}`);
         const next = version + 1;
         const rows = await tx<{ channel_id: string; version: number; values: Record<string, unknown>; effective_at: Date }[]>`
           insert into channel_configs (channel_id, version, values, effective_at, created_at)

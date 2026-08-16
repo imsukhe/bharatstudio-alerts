@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PaymentOrderService } from '../domain/payment-order.js';
 import type { PublicPaymentStatusRepository } from '../domain/public-payment-status.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { PublicAbuseGuard } from '../domain/public-abuse.js';
 
 const handlePattern = '^[A-Za-z0-9._-]+$';
 const idempotencyKeyPattern = '^[A-Za-z0-9._:-]+$';
@@ -14,6 +15,8 @@ export async function registerPublicRoutes(
   paymentOrders?: PaymentOrderService,
   paymentEnvironment: 'test' | 'live' = 'test',
   paymentStatus?: PublicPaymentStatusRepository,
+  abuseGuard?: PublicAbuseGuard,
+  turnstileRequired = false,
 ): Promise<void> {
   app.get<{ Params: { handle: string } }>(
     '/v1/public/channels/:handle',
@@ -70,6 +73,7 @@ export async function registerPublicRoutes(
       donorDisplayName?: string | null;
       message?: string | null;
       alertConsent?: boolean;
+      turnstileToken?: string | null;
     };
   }>(
     '/v1/public/channels/:handle/tips/orders',
@@ -99,9 +103,11 @@ export async function registerPublicRoutes(
             donorDisplayName: { type: ['string', 'null'], maxLength: 80 },
             message: { type: ['string', 'null'], maxLength: 500 },
             alertConsent: { type: 'boolean', default: true },
+            turnstileToken: { type: ['string', 'null'], maxLength: 2048 },
           },
         },
       },
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       if (!repository || !paymentOrders) {
@@ -112,6 +118,13 @@ export async function registerPublicRoutes(
           traceId: request.id,
           retryable: true,
         });
+      }
+
+      if (turnstileRequired) {
+        const token = typeof request.body.turnstileToken === 'string' ? request.body.turnstileToken : '';
+        if (!abuseGuard || !(await abuseGuard.verify(token, request.ip))) {
+          return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'bot_verification_required', message: 'Please complete the security check and try again', traceId: request.id, retryable: false });
+        }
       }
 
       const idempotencyKey = request.headers['idempotency-key'];

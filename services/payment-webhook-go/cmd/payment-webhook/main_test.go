@@ -15,6 +15,7 @@ func TestRunFailsClosedWithoutPanicWhenRequiredConfigurationIsMissing(t *testing
 		"PAYMENT_DATABASE_URL",
 		"ALERT_WORKER_PUMP_URL",
 		"ALERT_WORKER_PUMP_AUDIENCE",
+		"ALERT_WORKER_PRIVATE_AUDIENCE",
 	} {
 		t.Setenv(name, "")
 	}
@@ -39,5 +40,14 @@ func TestRequiredEnvAndEnvIntReturnErrorsInsteadOfPanicking(t *testing.T) {
 	value, err := envInt("BSA_TEST_INT", 8)
 	if err != nil || value != 8 {
 		t.Fatalf("envInt fallback = (%d, %v), want (8, nil)", value, err)
+	}
+}
+
+func TestWorkerAudienceMustMatchAtBoot(t *testing.T) {
+	if err := validateWorkerAudience("audience-a", "audience-b"); err == nil {
+		t.Fatal("mismatched worker audience should fail closed")
+	}
+	if err := validateWorkerAudience("audience-a", "audience-a"); err != nil {
+		t.Fatalf("matching worker audience rejected: %v", err)
 	}
 }

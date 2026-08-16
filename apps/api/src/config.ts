@@ -14,6 +14,8 @@ export type RuntimeConfig = {
   overlayStreamWindowMs?: number;
   overlayPollMs?: number;
   notificationTokenEncryptionKey?: string;
+  publicPaymentTurnstileRequired?: boolean;
+  publicPaymentTurnstileSecret?: string;
 };
 
 const allowedEnvironments = new Set<RuntimeConfig['nodeEnv']>([
@@ -107,6 +109,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   if (notificationTokenEncryptionKey && !/^[0-9a-fA-F]{64}$/.test(notificationTokenEncryptionKey)) {
     throw new Error('NOTIFICATION_TOKEN_ENCRYPTION_KEY must be 64 hexadecimal characters');
   }
+  const turnstileRequiredRaw = env.PUBLIC_PAYMENT_TURNSTILE_REQUIRED;
+  if (turnstileRequiredRaw && turnstileRequiredRaw !== 'true' && turnstileRequiredRaw !== 'false') {
+    throw new Error('PUBLIC_PAYMENT_TURNSTILE_REQUIRED must be true or false');
+  }
+  if (nodeEnv === 'production' && turnstileRequiredRaw === 'false') {
+    throw new Error('PUBLIC_PAYMENT_TURNSTILE_REQUIRED cannot be disabled in production');
+  }
+  const publicPaymentTurnstileRequired = nodeEnv === 'production' || turnstileRequiredRaw === 'true';
+  const publicPaymentTurnstileSecret = env.PUBLIC_PAYMENT_TURNSTILE_SECRET;
+  if (publicPaymentTurnstileRequired && !publicPaymentTurnstileSecret) {
+    throw new Error('PUBLIC_PAYMENT_TURNSTILE_SECRET is required when public payment Turnstile is required');
+  }
 
   return {
     nodeEnv,
@@ -122,5 +136,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     paymentServiceAudience,
     internalServiceAudiences,
     notificationTokenEncryptionKey,
+    publicPaymentTurnstileRequired,
+    publicPaymentTurnstileSecret,
   };
 }

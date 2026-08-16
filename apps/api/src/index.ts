@@ -15,6 +15,9 @@ import { createSqlMaintenanceStore } from './db/maintenance-store.js';
 import { createSqlReadiness } from './db/readiness.js';
 import { createSqlNotificationStore } from './db/notification-store.js';
 import { createNotificationTokenProtector } from './notifications/token-crypto.js';
+import { createSqlPaymentAccountStore } from './db/payment-account-store.js';
+import { createSqlAccountStore } from './db/account-store.js';
+import { createTurnstileGuard } from './domain/public-abuse.js';
 
 const config = loadConfig();
 const sql = config.databaseUrlApp ? createSqlClient(config.databaseUrlApp) : undefined;
@@ -45,6 +48,9 @@ const app = await buildApp(config, {
   notificationTokenProtector: config.notificationTokenEncryptionKey
     ? createNotificationTokenProtector(config.notificationTokenEncryptionKey)
     : undefined,
+  paymentAccounts: sql ? createSqlPaymentAccountStore(sql) : undefined,
+  account: sql ? createSqlAccountStore(sql) : undefined,
+  publicAbuseGuard: config.publicPaymentTurnstileSecret ? createTurnstileGuard(config.publicPaymentTurnstileSecret) : undefined,
 });
 
 await app.listen({ host: config.host, port: config.port });

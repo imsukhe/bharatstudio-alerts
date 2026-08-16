@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from '../auth/pre-handler.js';
+import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { OverlayStore } from '../domain/overlay-store.js';
 import type { OverlayWakeup } from '../domain/overlay-wakeup.js';
+import type { AccountStore } from '../domain/account-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -13,10 +14,11 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_store_unavailable', message: 'Overlay sessions are temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerOverlayRoutes(app: FastifyInstance, sessions?: SessionStore, store?: OverlayStore, wakeup?: OverlayWakeup, streamOptions: { windowMs: number; pollMs: number } = { windowMs: 25_000, pollMs: 2_000 }): Promise<void> {
+export async function registerOverlayRoutes(app: FastifyInstance, sessions?: SessionStore, store?: OverlayStore, wakeup?: OverlayWakeup, streamOptions: { windowMs: number; pollMs: number } = { windowMs: 25_000, pollMs: 2_000 }, account?: AccountStore): Promise<void> {
   const auth = requireAuth(sessions);
+  const termsAuth = requireAuthAndTerms(sessions, account);
 
-  app.post<{ Params: { channelId: string } }>('/v1/channels/:channelId/overlay/session', { preHandler: auth, schema: { params: channelParams } }, async (request, reply) => {
+  app.post<{ Params: { channelId: string } }>('/v1/channels/:channelId/overlay/session', { preHandler: termsAuth, schema: { params: channelParams } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
     try {
       return reply.code(201).send(await store.create(request.auth.userId, request.params.channelId));
@@ -26,13 +28,13 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
     }
   });
 
-  app.delete<{ Params: { overlayId: string } }>('/v1/overlays/:overlayId', { preHandler: auth, schema: { params: overlayParams } }, async (request, reply) => {
+  app.delete<{ Params: { overlayId: string } }>('/v1/overlays/:overlayId', { preHandler: termsAuth, schema: { params: overlayParams } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
     const revoked = await store.revoke(request.auth.userId, request.params.overlayId);
     return revoked ? reply.code(204).send() : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Overlay session not found', traceId: request.id });
   });
 
-  app.post<{ Params: { overlayId: string } }>('/v1/overlays/:overlayId/rotate', { preHandler: auth, schema: { params: overlayParams } }, async (request, reply) => {
+  app.post<{ Params: { overlayId: string } }>('/v1/overlays/:overlayId/rotate', { preHandler: termsAuth, schema: { params: overlayParams } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
     const replacement = await store.rotate(request.auth.userId, request.params.overlayId);
     return replacement ? reply.code(201).send(replacement) : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Overlay session not found', traceId: request.id });

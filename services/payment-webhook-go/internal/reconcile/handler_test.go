@@ -26,6 +26,9 @@ type fakeReconcileStore struct{}
 func (fakeReconcileStore) ListCandidates(context.Context, int) ([]Candidate, error) {
 	return nil, nil
 }
+func (fakeReconcileStore) QuarantinePayment(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (fakeReconcileStore) ExpireLocalIntent(context.Context, string, string) (bool, error) {
 	return false, nil
 }

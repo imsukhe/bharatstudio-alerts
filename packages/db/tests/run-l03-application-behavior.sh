@@ -44,6 +44,10 @@ for migration in "$ROOT"/packages/db/migrations/*.sql; do
   psql < "$migration" >/dev/null
 done
 psql < "$ROOT/packages/db/tests/l03_application_behavior.sql"
+psql < "$ROOT/packages/db/tests/l02_terms_consent.sql"
+psql < "$ROOT/packages/db/tests/l05_queue_policy_enforcement.sql"
+psql < "$ROOT/packages/db/tests/l04_reconciliation_quarantine.sql"
+psql < "$ROOT/packages/db/tests/l04_payment_account_onboarding.sql"
 psql < "$ROOT/packages/db/tests/l07_notification_preferences.sql"
 
 (cd "$ROOT/services/payment-webhook-go" && \

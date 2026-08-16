@@ -14,6 +14,7 @@ type CandidateStore interface {
 	ListCandidates(context.Context, int) ([]Candidate, error)
 	ExpireLocalIntent(context.Context, string, string) (bool, error)
 	QueuePaymentRecovery(context.Context, string, string, time.Time) (bool, error)
+	QuarantinePayment(context.Context, string, string) (bool, error)
 }
 
 type OrdersClient interface {
@@ -72,6 +73,9 @@ func (r Runner) RunOnce(ctx context.Context, limit int) (Summary, error) {
 		decision, decisionErr := Evaluate(candidate, order, now)
 		if decisionErr != nil {
 			summary.ManualReview++
+			if _, quarantineErr := r.Store.QuarantinePayment(ctx, candidate.IntentID, decisionErr.Error()); quarantineErr != nil {
+				summary.Retryable++
+			}
 			partial = true
 			continue
 		}

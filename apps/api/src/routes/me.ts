@@ -1,16 +1,19 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from '../auth/pre-handler.js';
+import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { NotificationStore } from '../domain/notification-store.js';
 import type { NotificationTokenProtector } from '../notifications/token-crypto.js';
+import type { AccountStore } from '../domain/account-store.js';
 
 export async function registerMeRoutes(
   app: FastifyInstance,
   sessions?: SessionStore,
   notifications?: NotificationStore,
   tokenProtector?: NotificationTokenProtector,
+  account?: AccountStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
+  const termsAuth = requireAuthAndTerms(sessions, account);
   app.get('/v1/me', { preHandler: auth }, async (request, reply) => {
     if (!sessions || !request.auth) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'unauthorized', message: 'Authentication required', traceId: request.id });
     return sessions.getCurrentUser(request.auth.userId);
@@ -26,7 +29,7 @@ export async function registerMeRoutes(
   app.delete<{ Params: { sessionId: string } }>(
     '/v1/me/sessions/:sessionId',
     {
-      preHandler: auth,
+      preHandler: termsAuth,
       schema: {
         params: {
           type: 'object',
@@ -51,7 +54,7 @@ export async function registerMeRoutes(
   app.put<{ Body: { connectionAlerts: boolean; securityAlerts: boolean; actionFailures: boolean } }>(
     '/v1/me/notifications/preferences',
     {
-      preHandler: auth,
+      preHandler: termsAuth,
       schema: {
         body: {
           type: 'object',
@@ -79,7 +82,7 @@ export async function registerMeRoutes(
   app.put<{ Body: { platform: 'ios' | 'android'; token: string } }>(
     '/v1/me/notifications/devices',
     {
-      preHandler: auth,
+      preHandler: termsAuth,
       schema: {
         body: {
           type: 'object',
@@ -104,7 +107,7 @@ export async function registerMeRoutes(
   app.delete<{ Params: { deviceId: string } }>(
     '/v1/me/notifications/devices/:deviceId',
     {
-      preHandler: auth,
+      preHandler: termsAuth,
       schema: {
         params: {
           type: 'object',

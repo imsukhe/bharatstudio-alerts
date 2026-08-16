@@ -10,9 +10,10 @@ import (
 )
 
 type fakeStore struct {
-	candidates []Candidate
-	expired    []string
-	recovery   []string
+	candidates  []Candidate
+	expired     []string
+	recovery    []string
+	quarantined []string
 }
 
 func (s *fakeStore) ListCandidates(context.Context, int) ([]Candidate, error) {
@@ -24,6 +25,10 @@ func (s *fakeStore) ExpireLocalIntent(_ context.Context, id, _ string) (bool, er
 }
 func (s *fakeStore) QueuePaymentRecovery(_ context.Context, id, _ string, _ time.Time) (bool, error) {
 	s.recovery = append(s.recovery, id)
+	return true, nil
+}
+func (s *fakeStore) QuarantinePayment(_ context.Context, id, reason string) (bool, error) {
+	s.quarantined = append(s.quarantined, id+":"+reason)
 	return true, nil
 }
 
@@ -116,5 +121,21 @@ func TestRunnerFetchesAndPersistsMatchingPaymentLevelEvidence(t *testing.T) {
 	summary, err := runner.RunOnce(context.Background(), 20)
 	if err != nil || summary.Recovered != 1 || len(recovery.recovered) != 1 || len(recovery.completed) != 1 {
 		t.Fatalf("unexpected recovery result: summary=%+v err=%v store=%+v", summary, err, recovery)
+	}
+}
+
+func TestRunnerQuarantinesUnsupportedProviderStateSoItCannotPoisonFutureRuns(t *testing.T) {
+	candidate := candidate()
+	candidate.ProviderOrderID = "order-unknown"
+	store := &fakeStore{candidates: []Candidate{candidate}}
+	runner := Runner{
+		Store: store,
+		Provider: fakeProvider{orders: map[string]provider.Order{
+			candidate.ProviderOrderID: {Entity: "order", ID: candidate.ProviderOrderID, AmountPaise: candidate.AmountPaise, Currency: candidate.Currency, Status: "cancelled", AmountDue: candidate.AmountPaise},
+		}},
+	}
+	summary, err := runner.RunOnce(context.Background(), 20)
+	if !errors.Is(err, ErrPartialRun) || summary.ManualReview != 1 || len(store.quarantined) != 1 {
+		t.Fatalf("expected quarantined manual review: summary=%+v err=%v store=%+v", summary, err, store)
 	}
 }

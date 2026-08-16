@@ -57,6 +57,19 @@ test('staging and production reject using the pooled app endpoint as the direct 
     PAYMENT_SERVICE_AUDIENCE: 'payment',
     INTERNAL_SERVICE_AUDIENCES: 'worker',
   }), /DATABASE_URL_APP must be a PostgreSQL URL/);
+
+  assert.throws(() => loadConfig({
+    NODE_ENV: 'production',
+    APP_ORIGIN: 'https://alerts.example',
+    DATABASE_URL_APP: 'postgres://app.example/db',
+    DATABASE_URL_DIRECT: 'postgres://direct.example/db',
+    GOOGLE_CLIENT_ID: 'client',
+    PAYMENT_SERVICE_ORIGIN: 'https://payment.example',
+    PAYMENT_SERVICE_AUDIENCE: 'payment',
+    INTERNAL_SERVICE_AUDIENCES: 'worker',
+    NOTIFICATION_TOKEN_ENCRYPTION_KEY: 'a'.repeat(64),
+    PUBLIC_PAYMENT_TURNSTILE_REQUIRED: 'false',
+  }), /cannot be disabled in production/);
 });
 
 test('health endpoint is available without exposing runtime details', async () => {
@@ -370,6 +383,30 @@ test('public tip order rejects an amount below the channel-configured minimum be
   assert.match(response.json().message, /₹25/);
   assert.equal(paymentCalled, false);
   await app.close();
+});
+
+test('production public payment boundary requires a successful Turnstile verification', async () => {
+  const repository: PublicChannelRepository = {
+    async findByHandle() {
+      return { channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 };
+    },
+  };
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      return { schemaVersion: 'v1', orderId: '00000000-0000-4000-8000-000000000091', provider: 'razorpay', providerOrderId: 'order_synthetic', amountPaise: input.amountPaise, currency: 'INR', status: 'created' };
+    },
+  };
+  const protectedConfig = { ...config, publicPaymentTurnstileRequired: true };
+  const blocked = await buildApp(protectedConfig, { publicChannels: repository, paymentOrders, publicAbuseGuard: { verify: async () => false } });
+  const blockedResponse = await blocked.inject({ method: 'POST', url: '/v1/public/channels/demo_creator/tips/orders', headers: { 'idempotency-key': 'synthetic-turnstile-001' }, payload: { amountPaise: 1000, currency: 'INR', turnstileToken: 'bad' } });
+  assert.equal(blockedResponse.statusCode, 403);
+  assert.equal(blockedResponse.json().errorCode, 'bot_verification_required');
+  await blocked.close();
+
+  const allowed = await buildApp(protectedConfig, { publicChannels: repository, paymentOrders, publicAbuseGuard: { verify: async (token, ip) => token === 'good' && ip === '127.0.0.1' } });
+  const allowedResponse = await allowed.inject({ method: 'POST', url: '/v1/public/channels/demo_creator/tips/orders', headers: { 'idempotency-key': 'synthetic-turnstile-002' }, payload: { amountPaise: 1000, currency: 'INR', turnstileToken: 'good' } });
+  assert.equal(allowedResponse.statusCode, 201);
+  await allowed.close();
 });
 
 test('payment service client validates the internal order response before returning it', async () => {

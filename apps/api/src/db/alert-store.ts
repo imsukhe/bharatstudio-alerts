@@ -60,13 +60,14 @@ export function createSqlAlertStore(sql: Sql): AlertStore {
     },
     async moderate(userId, channelId, eventId, action, reason) {
       return inUserTransaction(sql, userId, async (tx) => {
-        const rows = await tx<{ id: string; created_at: Date }[]>`
-          insert into alert_moderation_actions (id, event_id, channel_id, actor_user_id, action, reason, created_at)
-          values (${randomUUID()}::uuid, ${eventId}::uuid, ${channelId}::uuid, ${userId}::uuid, ${action}, ${reason}, current_timestamp)
-          returning id, created_at
+        const rows = await tx<{ event_id: string; action: string; applied_at: Date }[]>`
+          select event_id, action, applied_at
+            from app_private.apply_moderation_action(
+              ${eventId}::uuid, ${channelId}::uuid, ${userId}::uuid, ${action}, ${reason}
+            )
         `;
         const row = rows[0];
-        return row ? { eventId, action, appliedAt: row.created_at.toISOString() } : null;
+        return row ? { eventId: row.event_id, action: row.action, appliedAt: row.applied_at.toISOString() } : null;
       });
     },
     async getBilling(userId, channelId) {

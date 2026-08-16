@@ -21,6 +21,7 @@ type RefundCandidate struct {
 type RefundStore interface {
 	ListRefundCandidates(context.Context, int) ([]RefundCandidate, error)
 	ApplyRefundReconciliation(context.Context, RefundCandidate, provider.Refund) error
+	QuarantineRefund(context.Context, string, string) (bool, error)
 }
 
 type RefundProvider interface {
@@ -60,6 +61,9 @@ func (r RefundRunner) RunOnce(ctx context.Context, limit int) (RefundSummary, er
 		}
 		if refund.ID != candidate.ProviderRefundID || refund.PaymentID != candidate.ProviderPaymentID || refund.AmountPaise != candidate.AmountPaise || refund.Currency != candidate.Currency {
 			summary.ManualReview++
+			if _, quarantineErr := r.Store.QuarantineRefund(ctx, candidate.RefundID, "provider refund identity mismatch"); quarantineErr != nil {
+				summary.Retryable++
+			}
 			partial = true
 			continue
 		}
@@ -70,6 +74,9 @@ func (r RefundRunner) RunOnce(ctx context.Context, limit int) (RefundSummary, er
 		}
 		if status != "processed" && status != "failed" && status != "reversed" {
 			summary.ManualReview++
+			if _, quarantineErr := r.Store.QuarantineRefund(ctx, candidate.RefundID, "unsupported provider refund status: "+status); quarantineErr != nil {
+				summary.Retryable++
+			}
 			partial = true
 			continue
 		}

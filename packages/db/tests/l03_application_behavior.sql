@@ -1989,8 +1989,14 @@ $$;
 begin;
 set local role bsa_app;
 select set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true);
-insert into alert_moderation_actions (id, event_id, channel_id, actor_user_id, action, reason, created_at)
-values ('00000000-0000-4000-8000-000000000091', '00000000-0000-4000-8000-000000000051', '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000001', 'hold', 'integration test', current_timestamp);
+-- Moderation is now a state transition, not an audit-only insert. Approve
+-- keeps this projection fixture dispatchable; the dedicated L05 test covers
+-- hold/suppress/quiet blocking without deleting the accepted row.
+select * from app_private.apply_moderation_action(
+  '00000000-0000-4000-8000-000000000051',
+  '00000000-0000-4000-8000-000000000011',
+  '00000000-0000-4000-8000-000000000001', 'approve', 'integration test'
+);
 commit;
 
 begin;

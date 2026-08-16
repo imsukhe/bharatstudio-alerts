@@ -38,6 +38,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	pumpAudience, err := requiredEnv("ALERT_WORKER_PUMP_AUDIENCE")
+	if err != nil {
+		return err
+	}
+	if err := validateWorkerAudience(pumpAudience, audience); err != nil {
+		return err
+	}
 	maxOpen, err := envInt("ALERT_WORKER_DB_MAX_OPEN", 8)
 	if err != nil {
 		return err
@@ -141,6 +148,13 @@ func run() error {
 		defer cancel()
 		return server.Shutdown(graceContext)
 	}
+}
+
+func validateWorkerAudience(pumpAudience, configuredAudience string) error {
+	if pumpAudience == "" || configuredAudience == "" || pumpAudience != configuredAudience {
+		return errors.New("ALERT_WORKER_PUMP_AUDIENCE must match ALERT_WORKER_PRIVATE_AUDIENCE")
+	}
+	return nil
 }
 
 func requiredEnv(name string) (string, error) {

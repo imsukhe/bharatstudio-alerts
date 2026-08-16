@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from '../auth/pre-handler.js';
+import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { AlertStore } from '../domain/alert-store.js';
+import type { AccountStore } from '../domain/account-store.js';
 import type { PaymentSubscriptionService } from '../domain/payment-subscription.js';
 import { parseHistoryCursor } from '../db/history-cursor.js';
 import { logSafeError } from '../observability/safe-log.js';
@@ -14,11 +15,12 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'alert_store_unavailable', message: 'Alert data is temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerAlertRoutes(app: FastifyInstance, sessions?: SessionStore, store?: AlertStore, paymentSubscriptions?: PaymentSubscriptionService, paymentEnvironment: 'test' | 'live' = 'test'): Promise<void> {
+export async function registerAlertRoutes(app: FastifyInstance, sessions?: SessionStore, store?: AlertStore, paymentSubscriptions?: PaymentSubscriptionService, paymentEnvironment: 'test' | 'live' = 'test', account?: AccountStore): Promise<void> {
   const auth = requireAuth(sessions);
+  const termsAuth = requireAuthAndTerms(sessions, account);
 
   app.post<{ Params: { channelId: string }; Body: { displayName: string; message?: string; queueIds?: string[] } }>('/v1/channels/:channelId/test-alert', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: channelParams,
       body: {
@@ -41,7 +43,7 @@ export async function registerAlertRoutes(app: FastifyInstance, sessions?: Sessi
   });
 
   app.get<{ Params: { channelId: string }; Querystring: { cursor?: string; pageSize?: number } }>('/v1/channels/:channelId/alert-history', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: channelParams,
       querystring: { type: 'object', additionalProperties: false, properties: { cursor: { type: 'string', maxLength: 64 }, pageSize: { type: 'integer', minimum: 1, maximum: 100, default: 25 } } },
@@ -57,7 +59,7 @@ export async function registerAlertRoutes(app: FastifyInstance, sessions?: Sessi
   });
 
   app.post<{ Params: { channelId: string; alertId: string }; Body: { action: 'approve' | 'hold' | 'suppress' | 'replay'; reason?: string } }>('/v1/channels/:channelId/moderation/:alertId', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: alertParams,
       body: { type: 'object', additionalProperties: false, required: ['action'], properties: { action: { type: 'string', enum: ['approve', 'hold', 'suppress', 'replay'] }, reason: { type: 'string', maxLength: 500 } } },
@@ -81,7 +83,7 @@ export async function registerAlertRoutes(app: FastifyInstance, sessions?: Sessi
   });
 
   app.post<{ Params: { channelId: string }; Body: { tier: 'pro' | 'creator' | 'studio'; billingInterval: 'monthly' | 'annual' } }>('/v1/channels/:channelId/billing/subscription', {
-    preHandler: auth,
+    preHandler: termsAuth,
     schema: {
       params: channelParams,
       body: {

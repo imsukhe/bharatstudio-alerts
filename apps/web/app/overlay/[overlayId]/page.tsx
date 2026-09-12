@@ -18,6 +18,7 @@ import {
   type OverlayItem,
 } from '../overlay-policy';
 import { playAudioWithTimeout } from '../tts-runtime';
+import { browserTtsFallback, cancelBrowserTts, shouldShowWatermark, speakWithBrowserTts } from './tts-fallback';
 import { getApiOrigin } from '../../lib/api-origin';
 import type { AnimationItem } from 'lottie-web';
 
@@ -359,6 +360,15 @@ export default function BrowserOverlayPage() {
           // Provider/audio playback failures fall through to the non-blocking chime.
         }
       }
+      // §10.3 item 5: only engages when the server durably recorded that
+      // premium TTS was skipped for an entitlement/quota reason (see
+      // tts-fallback.ts) — never for a plain provider/network hiccup above,
+      // which still falls through to the chime exactly as before.
+      const fallback = browserTtsFallback(first, config, Boolean(url));
+      if (fallback.engage) {
+        speakWithBrowserTts(fallback.text, fallback.locale);
+        return;
+      }
       if (!cancelled) playChime();
     };
     void play();
@@ -368,6 +378,7 @@ export default function BrowserOverlayPage() {
       audio = undefined;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = undefined;
+      cancelBrowserTts();
     };
   }, [currentGroup, first, config]);
 
@@ -381,7 +392,7 @@ export default function BrowserOverlayPage() {
           {mode === 'aggregated' && currentGroup.length > 1 ? (
             <article className="browser-alert browser-alert-aggregate" data-style={style}>
               {(() => { const lottie = lottieForStyle(style); return lottie ? <LottieLayer url={lottie.url} token={lottie.token} /> : null; })()}
-              <div className="browser-alert-kicker">BharatStudio · supporters</div>
+              {shouldShowWatermark(currentGroup[0]!) && <div className="browser-alert-kicker">BharatStudio · supporters</div>}
               <strong>{aggregateLabel(currentGroup)}</strong>
               {currentGroup.map((item) => <p key={item.cursor}>{textValue(item.payload, 'displayName') || 'Someone'}{amountValue(item) ? ` · ${amountValue(item)}` : ''}{textValue(item.payload, 'message') ? ` — ${truncateMessage(item.payload.message, bracketFor(item, config).charLimit)}` : ''}</p>)}
             </article>
@@ -394,7 +405,7 @@ export default function BrowserOverlayPage() {
             return (
               <article className="browser-alert" data-style={itemStyle} key={item.cursor}>
                 {lottie && <LottieLayer url={lottie.url} token={lottie.token} />}
-                <div className="browser-alert-kicker">BharatStudio</div>
+                {shouldShowWatermark(item) && <div className="browser-alert-kicker">BharatStudio</div>}
                 <strong>{name}{amountValue(item) ? ` · ${amountValue(item)}` : ''}</strong>
                 {message && <p>{message}</p>}
               </article>

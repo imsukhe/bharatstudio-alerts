@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/viewer-dashboard-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "supportedChannels"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "supportedChannels": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channelId", "channelHandle", "channelDisplayName", "firstSupportedAt", "lastSupportedAt", "lifetimeAmountPaise", "tipCount", "challengeCount", "memberState"],
+        "properties": {
+          "channelId": { "type": "string", "format": "uuid" },
+          "channelHandle": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "channelDisplayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "firstSupportedAt": { "type": "string", "format": "date-time" },
+          "lastSupportedAt": { "type": "string", "format": "date-time" },
+          "lifetimeAmountPaise": { "type": "string", "pattern": "^[0-9]+$" },
+          "tipCount": { "type": "string", "pattern": "^[0-9]+$" },
+          "challengeCount": { "type": "string", "pattern": "^[0-9]+$" },
+          "memberState": { "enum": ["none", "active", "lapsed"] }
+        }
+      }
+    }
+  }
+}

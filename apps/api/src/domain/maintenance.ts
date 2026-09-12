@@ -1,3 +1,5 @@
+import { retentionJobs } from './retention-policy.js';
+
 export const maintenanceJobs = [
   'payment-reconcile',
   'refund-reconcile',
@@ -7,6 +9,7 @@ export const maintenanceJobs = [
   'audit-archive',
   'overlay-expiry-reminder',
   'referral-lifecycle',
+  ...retentionJobs,
 ] as const;
 
 export type MaintenanceJob = typeof maintenanceJobs[number];

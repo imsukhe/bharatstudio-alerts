@@ -1,0 +1,4 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/readiness-response.schema.json",
+  "status": "ready"
+}

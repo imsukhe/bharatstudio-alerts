@@ -51,6 +51,28 @@ function isKnownPooledEndpoint(value: string): boolean {
   }
 }
 
+function parseAppOrigin(value: string, nodeEnv: RuntimeConfig['nodeEnv']): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('APP_ORIGIN must be an absolute HTTP(S) origin');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('APP_ORIGIN must use HTTP or HTTPS');
+  }
+  if (nodeEnv === 'staging' || nodeEnv === 'production') {
+    if (url.protocol !== 'https:') throw new Error('APP_ORIGIN must use HTTPS in staging and production');
+  }
+  // CORS `Origin` values never contain a path, query, fragment, or userinfo.
+  // Rejecting those configuration mistakes is safer than starting with a
+  // credentialed allowlist that no legitimate browser request can match.
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('APP_ORIGIN must contain only scheme, host, and optional port');
+  }
+  return url.origin;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const rawNodeEnv = env.NODE_ENV ?? 'development';
   if (!allowedEnvironments.has(rawNodeEnv as RuntimeConfig['nodeEnv'])) {
@@ -58,10 +80,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   }
 
   const nodeEnv = rawNodeEnv as RuntimeConfig['nodeEnv'];
-  const appOrigin = env.APP_ORIGIN;
-  if (!appOrigin) {
+  const appOriginRaw = env.APP_ORIGIN;
+  if (!appOriginRaw) {
     throw new Error('APP_ORIGIN is required');
   }
+  const appOrigin = parseAppOrigin(appOriginRaw, nodeEnv);
 
   const port = Number(env.PORT ?? '4100');
   if (!Number.isInteger(port) || port < 1 || port > 65535) {

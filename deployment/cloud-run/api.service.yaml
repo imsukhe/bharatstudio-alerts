@@ -26,12 +26,24 @@ spec:
               value: 0.0.0.0
             - name: APP_ORIGIN
               value: https://alerts.bharatstudio.in
+            - name: GOOGLE_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: bsa-google-client-id, key: current } }
             - name: DATABASE_URL_APP
               valueFrom: { secretKeyRef: { name: bsa-database-url-app, key: current } }
             - name: DATABASE_URL_DIRECT
               valueFrom: { secretKeyRef: { name: bsa-database-url-direct, key: current } }
+            - name: PAYMENT_SERVICE_ORIGIN
+              value: https://bharatstudio-payment-webhook-PROJECT.REGION.run.app
+            - name: PAYMENT_SERVICE_AUDIENCE
+              value: https://bharatstudio-payment-webhook-PROJECT.REGION.run.app
+            - name: INTERNAL_SERVICE_AUDIENCES
+              value: https://bharatstudio-alerts-api-PROJECT.REGION.run.app
+            - name: NOTIFICATION_TOKEN_ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: bsa-notification-token-encryption-key, key: current } }
             - name: PUBLIC_PAYMENT_TURNSTILE_REQUIRED
               value: "true"
+            - name: PUBLIC_PAYMENT_TURNSTILE_SECRET
+              valueFrom: { secretKeyRef: { name: bsa-public-payment-turnstile-secret, key: current } }
             - name: SARVAM_API_KEY
               valueFrom: { secretKeyRef: { name: bsa-sarvam-api-key, key: current } }
             - name: SARVAM_TTS_ENDPOINT

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-leaderboard-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "leaderboard"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "leaderboard": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "window", "rows"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "window": { "enum": ["weekly", "monthly", "all"] },
+            "rows": {
+              "type": "array", "maxItems": 100,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["rank", "viewerRef", "tierLabel"],
+                "properties": {
+                  "rank": { "type": "integer", "minimum": 1 },
+                  "viewerRef": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "tierLabel": { "type": "string", "minLength": 1, "maxLength": 80 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/viewer-channel-badges-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "badges"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "badges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["netTipCount", "netLifetimeAmountPaise", "firstSupportedAt", "currentStreakDays", "badges"],
+      "properties": {
+        "netTipCount": { "type": "string", "pattern": "^[0-9]+$" },
+        "netLifetimeAmountPaise": { "type": "string", "pattern": "^[0-9]+$" },
+        "firstSupportedAt": { "type": ["string", "null"], "format": "date-time" },
+        "currentStreakDays": { "type": "integer", "minimum": 0 },
+        "badges": {
+          "type": "array",
+          "maxItems": 4,
+          "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+        }
+      }
+    }
+  }
+}

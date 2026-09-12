@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/viewer-auth-session.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "accessToken", "expiresAt"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "accessToken": { "type": "string", "minLength": 32, "maxLength": 256 },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  }
+}

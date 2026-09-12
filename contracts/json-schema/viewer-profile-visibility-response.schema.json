@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/viewer-profile-visibility-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "visibility", "slug"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "visibility": { "enum": ["private", "public"] },
+    "slug": { "type": ["string", "null"], "minLength": 3, "maxLength": 60 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "visibility": { "const": "public" } }, "required": ["visibility"] },
+      "then": { "properties": { "slug": { "type": "string", "minLength": 3, "maxLength": 60 } } }
+    },
+    {
+      "if": { "properties": { "visibility": { "const": "private" } }, "required": ["visibility"] },
+      "then": { "properties": { "slug": { "type": "null" } } }
+    }
+  ]
+}

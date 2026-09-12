@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-paid-vote-tally-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "tally"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "tally": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "votingMode", "options", "resolved", "resolvedOptionKey"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "votingMode": { "const": "paid" },
+            "options": {
+              "type": "array", "maxItems": 16,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["optionKey", "label", "amountPaise"],
+                "properties": {
+                  "optionKey": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[a-z0-9_-]+$" },
+                  "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "amountPaise": { "type": "integer", "minimum": 0 }
+                }
+              }
+            },
+            "resolved": { "type": "boolean" },
+            "resolvedOptionKey": { "type": ["string", "null"], "minLength": 1, "maxLength": 40, "pattern": "^[a-z0-9_-]+$" }
+          }
+        }
+      ]
+    }
+  }
+}

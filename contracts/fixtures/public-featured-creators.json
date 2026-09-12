@@ -1,0 +1,12 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-featured-creators.schema.json",
+  "schemaVersion": "v1",
+  "creators": [
+    {
+      "handle": "featured_creator",
+      "displayName": "Featured Creator",
+      "acceptingTips": true,
+      "locale": "hi-IN"
+    }
+  ]
+}

@@ -71,3 +71,19 @@ test('overlay audio requires the overlay bearer token and returns the scoped art
   assert.equal(response.rawPayload.toString(), 'RIFF');
   await app.close();
 });
+
+test('overlay audio distinguishes missing bearer from an unwired or rejected store', async () => {
+  const url = '/v1/overlay-audio/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000099';
+  const noStore = await buildApp(config, {});
+  const unavailable = await noStore.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token' } });
+  assert.equal(unavailable.statusCode, 503);
+  assert.equal(unavailable.json().errorCode, 'overlay_audio_unavailable');
+  await noStore.close();
+
+  const failed = await buildApp(config, { overlayAudio: { async read() { throw new Error('synthetic database outage'); } } });
+  const failedResponse = await failed.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token' } });
+  assert.equal(failedResponse.statusCode, 503);
+  assert.equal(failedResponse.json().retryable, true);
+  assert.equal(JSON.stringify(failedResponse.json()).includes('database outage'), false);
+  await failed.close();
+});

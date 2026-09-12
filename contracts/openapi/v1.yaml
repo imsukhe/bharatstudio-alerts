@@ -10,6 +10,7 @@ servers:
     description: Placeholder only; production domain is not yet approved.
 tags:
   - name: Auth
+  - name: Viewer
   - name: Public
   - name: Creator
   - name: Configuration
@@ -20,6 +21,31 @@ tags:
   - name: Companion
   - name: Internal
 paths:
+  /healthz:
+    get:
+      tags: [Operations]
+      operationId: getHealth
+      responses:
+        '200':
+          description: Process liveness only; no runtime dependency, credential, user or database detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /readyz:
+    get:
+      tags: [Operations]
+      operationId: getReadiness
+      responses:
+        '200':
+          description: Every required runtime adapter is configured and available.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadinessReadyResponse' }
+        '503':
+          description: Required runtime adapter configuration or availability is not ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadinessUnavailableResponse' }
   /v1/auth/google/exchange:
     post:
       tags: [Auth]
@@ -43,6 +69,175 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /v1/viewer/signup:
+    post:
+      tags: [Viewer]
+      operationId: signupViewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViewerSignupRequest' }
+      responses:
+        '201':
+          description: Opaque viewer session created. This is not a creator session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerAuthSessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/login:
+    post:
+      tags: [Viewer]
+      operationId: loginViewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViewerLoginRequest' }
+      responses:
+        '201':
+          description: Opaque viewer session created. Invalid credentials never identify which input failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerAuthSessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/password/forgot:
+    post:
+      tags: [Viewer]
+      operationId: requestViewerPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViewerPasswordForgotRequest' }
+      responses:
+        '202':
+          description: Fixed response for registered, unregistered, and temporarily failed requests; it never discloses account existence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerPasswordResetRequestedResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/password/reset:
+    post:
+      tags: [Viewer]
+      operationId: resetViewerPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViewerPasswordResetRequest' }
+      responses:
+        '200':
+          description: Password reset completed; callers must sign in again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerPasswordResetResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/logout:
+    post:
+      tags: [Viewer]
+      operationId: logoutViewer
+      security: [{ viewerBearerAuth: [] }]
+      responses:
+        '204': { description: Current viewer session revoked; no content. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/sessions:
+    get:
+      tags: [Viewer]
+      operationId: listViewerSessions
+      security: [{ viewerBearerAuth: [] }]
+      responses:
+        '200':
+          description: Session metadata scoped to the authenticated viewer account only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerSessionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/sessions/{sessionId}:
+    delete:
+      tags: [Viewer]
+      operationId: revokeViewerSession
+      security: [{ viewerBearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204': { description: Scoped viewer session revoked; no content. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/deletion-requests:
+    post:
+      tags: [Viewer]
+      operationId: requestViewerDeletion
+      security: [{ viewerBearerAuth: [] }]
+      responses:
+        '202':
+          description: Account-deletion request accepted with the disclosed erased-versus-retained categories.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerDeletionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/dashboard:
+    get:
+      tags: [Viewer]
+      operationId: getViewerDashboard
+      security: [{ viewerBearerAuth: [] }]
+      responses:
+        '200':
+          description: The authenticated viewer's newest 100 creator-support relations only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerDashboardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/channels/{channelId}/badges:
+    get:
+      tags: [Viewer]
+      operationId: getViewerChannelBadges
+      security: [{ viewerBearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Live-derived support badges for the authenticated viewer and requested channel only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerChannelBadgesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/viewer/profile-visibility:
+    put:
+      tags: [Viewer]
+      operationId: setViewerProfileVisibility
+      security: [{ viewerBearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ViewerProfileVisibilityRequest' }
+      responses:
+        '200':
+          description: The authenticated viewer's resulting profile visibility state only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ViewerProfileVisibilityResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/public/channels/{handle}:
     get:
       tags: [Public]
@@ -58,6 +253,26 @@ paths:
                 $ref: '#/components/schemas/PublicChannel'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/public/featured:
+    get:
+      tags: [Public]
+      operationId: listFeaturedCreators
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 60 }
+      responses:
+        '200':
+          description: Opt-in creators currently eligible to accept tips. This anonymous projection intentionally excludes channel IDs, consent state and financial data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeaturedCreatorList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
   /v1/public/channels/{handle}/tips/orders:
     post:
       tags: [Public]
@@ -169,6 +384,87 @@ paths:
               schema: { $ref: '#/components/schemas/NotificationPreferences' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/receipts:
+    post:
+      tags: [PublicDonor]
+      operationId: mintPublicReceipt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MintReceiptRequest'
+      responses:
+        '201':
+          description: Opaque receipt token minted for the payment intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MintReceiptResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/receipts/{token}:
+    get:
+      tags: [PublicDonor]
+      operationId: getPublicReceipt
+      parameters:
+        - $ref: '#/components/parameters/ReceiptToken'
+      responses:
+        '200':
+          description: Token-scoped public receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicReceiptResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/tip-intents/{token}:
+    get:
+      tags: [PublicDonor]
+      operationId: resolvePublicTipIntent
+      parameters:
+        - $ref: '#/components/parameters/TipIntentToken'
+      responses:
+        '200':
+          description: Ready TipIntent detail or a used/expired identity-only state.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/TipIntentReadyResponse'
+                  - $ref: '#/components/schemas/TipIntentClosedResponse'
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/tip-intents/{token}/orders:
+    post:
+      tags: [PublicDonor]
+      operationId: confirmPublicTipIntent
+      parameters:
+        - $ref: '#/components/parameters/TipIntentToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmTipIntentRequest'
+      responses:
+        '201':
+          description: Payment-provider order created from the server-side TipIntent values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTipOrderResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/me/notifications/devices:
     get:
@@ -742,6 +1038,147 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '503':
           $ref: '#/components/responses/RetryableFailure'
+  /v1/overlay-goals/{overlayId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayGoal
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Current public goal render projection for this overlay token, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayGoalResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-challenges/{overlayId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayChallenge
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Current public challenge render projection for this overlay token, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayChallengeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-lottie/{overlayId}:
+    get:
+      tags: [Overlay]
+      operationId: listOverlayLottieAssets
+      security: [{ overlayToken: [] }]
+      parameters: [{ $ref: '#/components/parameters/OverlayId' }]
+      responses:
+        '200':
+          description: Token-scoped Lottie asset references.
+          content: { application/json: { schema: { $ref: '#/components/schemas/OverlayLottieListResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-lottie/{overlayId}/{artifactId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayLottieAsset
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+        - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: Token-scoped Lottie bytes; private and never cacheable.
+          headers: { Cache-Control: { schema: { type: string, const: 'private, no-store' } } }
+          content: { application/json: { schema: { type: object } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-audio/{overlayId}/{artifactId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayAudioAsset
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+        - $ref: '#/components/parameters/ArtifactId'
+      responses:
+        '200':
+          description: Token-scoped audio bytes; private and never cacheable.
+          headers: { Cache-Control: { schema: { type: string, const: 'private, no-store' } } }
+          content: { audio/wav: { schema: { type: string, format: binary } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/votes/{definitionId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayVoteTally
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+        - $ref: '#/components/parameters/InteractionDefinitionId'
+      responses:
+        '200':
+          description: Token-scoped support-vote rendering state, or null when unavailable for this overlay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayVoteTallyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/hype/{definitionId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayHypeState
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+        - $ref: '#/components/parameters/InteractionDefinitionId'
+      responses:
+        '200':
+          description: Token-scoped hype rendering state, or null when no active hype mode exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayHypeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/leaderboard:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayLeaderboard
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: [weekly, monthly, all], default: all }
+      responses:
+        '200':
+          description: Token-scoped leaderboard rendering projection, or null when unavailable for this overlay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayLeaderboardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/paid-votes/{definitionId}:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayPaidVoteTally
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+        - $ref: '#/components/parameters/InteractionDefinitionId'
+      responses:
+        '200':
+          description: Token-scoped money-derived paid-vote rendering state, or null when unavailable for this overlay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayPaidVoteTallyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/channels/{channelId}/companion/state:
     get:
       tags: [Companion]
@@ -913,6 +1350,10 @@ paths:
       responses:
         '202':
           description: Idempotent maintenance run accepted or already recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaintenanceResult'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '503':
@@ -930,6 +1371,97 @@ paths:
               schema: { type: string }
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/public/viewer-profiles:
+    get:
+      tags: [PublicViewer]
+      operationId: searchPublicViewerProfiles
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '200':
+          description: Default-private filtered public profile search results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicProfileSearchResponse' }
+  /v1/public/viewer-profiles/{slug}:
+    get:
+      tags: [PublicViewer]
+      operationId: getPublicViewerProfile
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        '200':
+          description: Opted-in public profile projection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicProfileResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/interactions/{definitionId}/votes:
+    post:
+      tags: [PublicInteraction]
+      operationId: castPublicSupportVote
+      parameters:
+        - name: definitionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CastPublicVoteRequest' }
+      responses:
+        '200':
+          description: Vote accepted; counted is false for the same anonymised voter fingerprint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CastPublicVoteResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/channels/{channelId}/stickers:
+    get:
+      tags: [PublicInteraction]
+      operationId: listPublicStickers
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Enabled, tier-eligible sticker picker projection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicStickerList' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/channels/{channelId}/stickers/selections:
+    post:
+      tags: [PublicInteraction]
+      operationId: attachPublicSticker
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttachStickerRequest' }
+      responses:
+        '201':
+          description: A sticker was attached to the paid order after server-side eligibility validation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachStickerResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
 components:
   parameters:
     Handle:
@@ -952,6 +1484,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ReceiptToken:
+      name: token
+      in: path
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 32 }
+    TipIntentToken:
+      name: token
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[0-9A-Za-z]{10}$' }
     SessionId:
       name: sessionId
       in: path
@@ -959,6 +1501,16 @@ components:
       schema: { type: string, format: uuid }
     OverlayId:
       name: overlayId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ArtifactId:
+      name: artifactId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    InteractionDefinitionId:
+      name: definitionId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -993,6 +1545,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: opaque-session-token
+    viewerBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-viewer-session-token
     overlayToken:
       type: http
       scheme: bearer
@@ -1041,6 +1597,188 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status: { type: string, const: ok }
+        service: { type: string, const: bharatstudio-alerts-api }
+    ReadinessReadyResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, const: ready }
+    ReadinessUnavailableResponse:
+      type: object
+      additionalProperties: false
+      required: [status, reason]
+      properties:
+        status: { type: string, const: not_ready }
+        reason: { type: string, enum: [runtime_adapters_not_configured, runtime_dependency_unavailable] }
+    OverlayGoal:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, goalId, title, targetAmountPaise, window, progressPaise, reached]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        goalId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        targetAmountPaise: { type: integer, minimum: 0 }
+        window: { type: string, enum: [stream, daily, monthly, open] }
+        progressPaise: { type: integer, minimum: 0 }
+        reached: { type: boolean }
+    OverlayGoalResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, goal]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        goal:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayGoal'
+    OverlayChallenge:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, challengeId, title, kind, targetAmountPaise, state, progressPaise, targetReached]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        challengeId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        kind: { type: string, enum: [stake, bounty] }
+        targetAmountPaise: { type: integer, minimum: 0 }
+        state: { type: string, enum: [draft, active, succeeded, failed, cancelled] }
+        progressPaise: { type: integer, minimum: 0 }
+        targetReached: { type: boolean }
+    OverlayChallengeResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, challenge]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        challenge:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayChallenge'
+    OverlayLottieAssetRef:
+      type: object
+      additionalProperties: false
+      required: [displayStyle, artifactId]
+      properties:
+        displayStyle: { type: string, enum: [small_pill, compact_card, standard_card, large_card, banner, celebration] }
+        artifactId: { type: string, format: uuid }
+    OverlayLottieListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items: { type: array, maxItems: 6, items: { $ref: '#/components/schemas/OverlayLottieAssetRef' } }
+    OverlayVoteOption:
+      type: object
+      additionalProperties: false
+      required: [optionKey, label, voteCount]
+      properties:
+        optionKey: { type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9_-]+$' }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        voteCount: { type: integer, minimum: 0 }
+    OverlayVoteTally:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, options, resolved, resolvedOptionKey]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        options: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/OverlayVoteOption' } }
+        resolved: { type: boolean }
+        resolvedOptionKey: { type: [string, 'null'], minLength: 1, maxLength: 40, pattern: '^[a-z0-9_-]+$' }
+    OverlayVoteTallyResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, tally]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        tally:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayVoteTally'
+    OverlayHype:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, meterPaise, thresholdPaise, reached, startedAt, endsAt, ended]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        meterPaise: { type: integer, minimum: 0 }
+        thresholdPaise: { type: integer, minimum: 0 }
+        reached: { type: boolean }
+        startedAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        ended: { type: boolean }
+    OverlayHypeResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, hype]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        hype:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayHype'
+    OverlayLeaderboardRow:
+      type: object
+      additionalProperties: false
+      required: [rank, viewerRef, tierLabel]
+      properties:
+        rank: { type: integer, minimum: 1 }
+        viewerRef: { type: string, minLength: 1, maxLength: 128 }
+        tierLabel: { type: string, minLength: 1, maxLength: 80 }
+    OverlayLeaderboard:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, window, rows]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        window: { type: string, enum: [weekly, monthly, all] }
+        rows: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/OverlayLeaderboardRow' } }
+    OverlayLeaderboardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, leaderboard]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        leaderboard:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayLeaderboard'
+    OverlayPaidVoteOption:
+      type: object
+      additionalProperties: false
+      required: [optionKey, label, amountPaise]
+      properties:
+        optionKey: { type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9_-]+$' }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        amountPaise: { type: integer, minimum: 0 }
+    OverlayPaidVoteTally:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, votingMode, options, resolved, resolvedOptionKey]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        votingMode: { type: string, const: paid }
+        options: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/OverlayPaidVoteOption' } }
+        resolved: { type: boolean }
+        resolvedOptionKey: { type: [string, 'null'], minLength: 1, maxLength: 40, pattern: '^[a-z0-9_-]+$' }
+    OverlayPaidVoteTallyResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, tally]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        tally:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayPaidVoteTally'
     ErrorEnvelope:
       type: object
       additionalProperties: false
@@ -1059,10 +1797,28 @@ components:
         channelId: { type: string, format: uuid }
         handle: { type: string }
         displayName: { type: string, maxLength: 120 }
-        avatarUrl: { type: [string, 'null'], format: uri }
         acceptingTips: { type: boolean }
         minimumTipPaise: { type: integer, minimum: 1000 }
         publicConfigVersion: { type: integer, minimum: 1 }
+    FeaturedCreator:
+      type: object
+      additionalProperties: false
+      required: [handle, displayName, acceptingTips, locale]
+      properties:
+        handle: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        acceptingTips: { type: boolean, const: true }
+        locale: { type: string, enum: [en-IN, hi-IN, bn-IN, ta-IN, te-IN, mr-IN, gu-IN, kn-IN, ml-IN, pa-IN, or-IN, as-IN, ur-IN] }
+    FeaturedCreatorList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, creators]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        creators:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/FeaturedCreator' }
     PublicTipOrderStatus:
       type: object
       additionalProperties: false
@@ -1096,6 +1852,136 @@ components:
         amountPaise: { type: integer, minimum: 1000 }
         currency: { type: string, const: INR }
         status: { type: string, enum: [created, pending] }
+    MintReceiptRequest:
+      type: object
+      additionalProperties: false
+      required: [intentId]
+      properties:
+        intentId: { type: string, format: uuid }
+    MintReceiptResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, token]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        token: { type: string, minLength: 8, maxLength: 32 }
+    PublicReceipt:
+      type: object
+      additionalProperties: false
+      required: [channelHandle, channelDisplayName, grossAmountPaise, refundedAmountPaise, netAmountPaise, currency, donorDisplayName, message, paymentStatus, paidAt]
+      properties:
+        channelHandle: { type: string, minLength: 1, maxLength: 64 }
+        channelDisplayName: { type: string, minLength: 1, maxLength: 120 }
+        grossAmountPaise: { type: string, pattern: '^[0-9]+$' }
+        refundedAmountPaise: { type: string, pattern: '^[0-9]+$' }
+        netAmountPaise: { type: string, pattern: '^[0-9]+$' }
+        currency: { type: string, const: INR }
+        donorDisplayName: { type: [string, 'null'], maxLength: 80 }
+        message: { type: [string, 'null'], maxLength: 500 }
+        paymentStatus: { type: string, minLength: 1, maxLength: 80 }
+        paidAt: { type: string, format: date-time }
+    PublicReceiptResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, receipt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        receipt: { $ref: '#/components/schemas/PublicReceipt' }
+    TipIntentReadyResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, state, channelHandle, channelDisplayName, amountPaise, currency, donorDisplayName, message]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        state: { type: string, const: ready }
+        channelHandle: { type: string, minLength: 1, maxLength: 64 }
+        channelDisplayName: { type: string, minLength: 1, maxLength: 120 }
+        amountPaise: { type: integer, minimum: 1 }
+        currency: { type: string, const: INR }
+        donorDisplayName: { type: [string, 'null'], maxLength: 80 }
+        message: { type: [string, 'null'], maxLength: 500 }
+    TipIntentClosedResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, state, channelHandle, channelDisplayName]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        state: { type: string, enum: [used, expired] }
+        channelHandle: { type: string, minLength: 1, maxLength: 64 }
+        channelDisplayName: { type: string, minLength: 1, maxLength: 120 }
+    ConfirmTipIntentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        turnstileToken: { type: [string, 'null'], maxLength: 2048 }
+    PublicProfileSummary:
+      type: object
+      additionalProperties: false
+      required: [displayName, profileSlug]
+      properties:
+        displayName: { type: [string, 'null'], maxLength: 80 }
+        profileSlug: { type: string, minLength: 1, maxLength: 60 }
+    PublicProfileSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, profiles]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        profiles:
+          type: array
+          maxItems: 25
+          items: { $ref: '#/components/schemas/PublicProfileSummary' }
+    PublicProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, profile]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        profile: { $ref: '#/components/schemas/PublicProfileSummary' }
+    CastPublicVoteRequest:
+      type: object
+      additionalProperties: false
+      required: [optionKey, voterFingerprint]
+      properties:
+        optionKey: { type: string, pattern: '^[a-z0-9_-]{1,40}$' }
+        voterFingerprint: { type: string, minLength: 8, maxLength: 128 }
+    CastPublicVoteResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, counted]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        counted: { type: boolean }
+    PublicSticker:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, category]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        category: { type: string, minLength: 1, maxLength: 80 }
+    PublicStickerList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items: { type: array, maxItems: 200, items: { $ref: '#/components/schemas/PublicSticker' } }
+    AttachStickerRequest:
+      type: object
+      additionalProperties: false
+      required: [orderId, stickerId]
+      properties:
+        orderId: { type: string, format: uuid }
+        stickerId: { type: string, format: uuid }
+    AttachStickerResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, selectionId, stickerId]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        selectionId: { type: string, format: uuid }
+        stickerId: { type: string, format: uuid }
     CurrentUser:
       type: object
       additionalProperties: false
@@ -1123,6 +2009,178 @@ components:
       properties:
         idToken: { type: string, minLength: 20, maxLength: 8192 }
         deviceLabel: { type: string, minLength: 1, maxLength: 80 }
+    ViewerSignupRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, deviceLabel]
+      properties:
+        email: { type: string, format: email, minLength: 5, maxLength: 254 }
+        password: { type: string, minLength: 8, maxLength: 200, writeOnly: true }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        deviceLabel: { type: string, minLength: 1, maxLength: 80 }
+    ViewerLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, deviceLabel]
+      properties:
+        email: { type: string, format: email, minLength: 5, maxLength: 254 }
+        password: { type: string, minLength: 8, maxLength: 200, writeOnly: true }
+        deviceLabel: { type: string, minLength: 1, maxLength: 80 }
+    ViewerAuthSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, accessToken, expiresAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        accessToken: { type: string, minLength: 32, maxLength: 256 }
+        expiresAt: { type: string, format: date-time }
+    ViewerPasswordForgotRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, minLength: 5, maxLength: 254 }
+    ViewerPasswordResetRequestedResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, status, message]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        status: { type: string, const: requested }
+        message: { type: string, minLength: 1, maxLength: 240 }
+    ViewerPasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required: [token, newPassword]
+      properties:
+        token: { type: string, minLength: 16, maxLength: 512, writeOnly: true }
+        newPassword: { type: string, minLength: 8, maxLength: 200, writeOnly: true }
+    ViewerPasswordResetResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, status, message]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        status: { type: string, const: reset }
+        message: { type: string, minLength: 1, maxLength: 240 }
+    ViewerSessionListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, sessions]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sessions:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ViewerSession' }
+    ViewerSession:
+      type: object
+      additionalProperties: false
+      required: [sessionId, createdAt, lastSeenAt, expiresAt, deviceLabel, current]
+      properties:
+        sessionId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        deviceLabel: { type: [string, 'null'], maxLength: 80 }
+        current: { type: boolean }
+    ViewerDeletionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, erased, retained, legalDispositionOpen]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        erased:
+          type: array
+          maxItems: 32
+          items: { type: string, minLength: 1, maxLength: 160 }
+        retained:
+          type: array
+          maxItems: 32
+          items: { type: string, minLength: 1, maxLength: 160 }
+        legalDispositionOpen: { type: boolean, const: true }
+    ViewerDashboardRow:
+      type: object
+      additionalProperties: false
+      required: [channelId, channelHandle, channelDisplayName, firstSupportedAt, lastSupportedAt, lifetimeAmountPaise, tipCount, challengeCount, memberState]
+      properties:
+        channelId: { type: string, format: uuid }
+        channelHandle: { type: string, minLength: 1, maxLength: 64 }
+        channelDisplayName: { type: string, minLength: 1, maxLength: 120 }
+        firstSupportedAt: { type: string, format: date-time }
+        lastSupportedAt: { type: string, format: date-time }
+        lifetimeAmountPaise: { type: string, pattern: '^[0-9]+$' }
+        tipCount: { type: string, pattern: '^[0-9]+$' }
+        challengeCount: { type: string, pattern: '^[0-9]+$' }
+        memberState: { type: string, enum: [none, active, lapsed] }
+    ViewerDashboardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, supportedChannels]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        supportedChannels:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ViewerDashboardRow' }
+    ViewerChannelBadges:
+      type: object
+      additionalProperties: false
+      required: [netTipCount, netLifetimeAmountPaise, firstSupportedAt, currentStreakDays, badges]
+      properties:
+        netTipCount: { type: string, pattern: '^[0-9]+$' }
+        netLifetimeAmountPaise: { type: string, pattern: '^[0-9]+$' }
+        firstSupportedAt: { type: [string, 'null'], format: date-time }
+        currentStreakDays: { type: integer, minimum: 0 }
+        badges:
+          type: array
+          maxItems: 4
+          items: { type: string, minLength: 1, maxLength: 80 }
+    ViewerChannelBadgesResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, badges]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        badges: { $ref: '#/components/schemas/ViewerChannelBadges' }
+    ViewerProfileVisibilityRequest:
+      type: object
+      additionalProperties: false
+      required: [visibility]
+      properties:
+        visibility: { type: string, enum: [private, public] }
+        slug: { type: [string, 'null'], minLength: 3, maxLength: 60 }
+      allOf:
+        - if:
+            required: [visibility]
+            properties: { visibility: { const: public } }
+          then:
+            required: [slug]
+            properties: { slug: { type: string, minLength: 3, maxLength: 60 } }
+        - if:
+            required: [visibility]
+            properties: { visibility: { const: private } }
+          then:
+            properties: { slug: { type: 'null' } }
+    ViewerProfileVisibilityResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, visibility, slug]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        visibility: { type: string, enum: [private, public] }
+        slug: { type: [string, 'null'], minLength: 3, maxLength: 60 }
+      allOf:
+        - if:
+            required: [visibility]
+            properties: { visibility: { const: public } }
+          then:
+            properties: { slug: { type: string, minLength: 3, maxLength: 60 } }
+        - if:
+            required: [visibility]
+            properties: { visibility: { const: private } }
+          then:
+            properties: { slug: { type: 'null' } }
     AuthSessionResponse:
       type: object
       additionalProperties: false
@@ -1201,19 +2259,20 @@ components:
       properties:
         displayName: { type: string, minLength: 1, maxLength: 120 }
         acceptingTips: { type: boolean }
-        avatarUrl: { type: [string, 'null'], format: uri }
+        featuredConsent: { type: boolean }
+        handle: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' }
     ChannelDetails:
       type: object
       additionalProperties: false
-      required: [schemaVersion, channelId, handle, displayName, acceptingTips, publicConfigVersion]
+      required: [schemaVersion, channelId, handle, displayName, acceptingTips, publicConfigVersion, featuredConsent]
       properties:
         schemaVersion: { type: string, const: v1 }
         channelId: { type: string, format: uuid }
         handle: { type: string }
         displayName: { type: string, maxLength: 120 }
         acceptingTips: { type: boolean }
-        avatarUrl: { type: [string, 'null'], format: uri }
         publicConfigVersion: { type: integer, minimum: 1 }
+        featuredConsent: { type: boolean }
         role: { $ref: '#/components/schemas/ChannelMembership/properties/role' }
     ChannelConfig:
       type: object
@@ -1563,9 +2622,16 @@ components:
     InternalJobRequest:
       type: object
       additionalProperties: false
-      required: [schemaVersion, jobId, requestedAt]
+      required: [idempotencyKey]
+      properties:
+        idempotencyKey: { type: string, minLength: 16, maxLength: 160 }
+        window: { type: string, minLength: 1, maxLength: 80 }
+    MaintenanceResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, job, status, runId]
       properties:
         schemaVersion: { type: string, const: v1 }
-        jobId: { type: string, format: uuid }
-        requestedAt: { type: string, format: date-time }
-        cursor: { type: [string, 'null'], maxLength: 256 }
+        job: { type: string, enum: [overlay-sessions] }
+        status: { type: string, enum: [accepted, completed, already_completed] }
+        runId: { type: string, format: uuid }

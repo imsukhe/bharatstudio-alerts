@@ -1,0 +1,6 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/viewer-profile-visibility-response.schema.json",
+  "schemaVersion": "v1",
+  "visibility": "public",
+  "slug": "synthetic-viewer"
+}

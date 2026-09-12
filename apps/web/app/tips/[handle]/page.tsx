@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { TopNav } from '../../components/TopNav';
 import { TipForm } from './TipForm';
 import { loadPublicChannel } from './public-channel-loader';
@@ -5,6 +6,14 @@ import { loadPublicChannel } from './public-channel-loader';
 export default async function PublicTipsPage({ params }: { params: Promise<{ handle: string }> }) {
   const { handle } = await params;
   const result = await loadPublicChannel(process.env.API_ORIGIN, handle, fetch);
+  // The requested handle was released in a rename and the API resolved it
+  // to the channel's current handle (renamedFrom is only ever set in that
+  // case — see public-channel-contract.ts). Land the visitor on the real,
+  // canonical URL via an HTTP redirect rather than silently rendering the
+  // current channel's content under the old, dead handle.
+  if (result.state === 'ready' && result.channel.renamedFrom) {
+    redirect(`/tips/${encodeURIComponent(result.channel.handle)}`);
+  }
   const channel = result.state === 'ready' ? result.channel : undefined;
   const displayName = channel?.displayName ?? handle;
   const acceptingTips = channel?.acceptingTips ?? false;

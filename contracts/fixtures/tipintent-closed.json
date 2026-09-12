@@ -1,0 +1,7 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/tipintent-resolution.schema.json",
+  "schemaVersion": "v1",
+  "state": "used",
+  "channelHandle": "synthetic_creator",
+  "channelDisplayName": "Synthetic Creator"
+}

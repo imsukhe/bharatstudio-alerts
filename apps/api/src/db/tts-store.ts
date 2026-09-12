@@ -41,5 +41,8 @@ export function createSqlTtsStore(sql: Sql): TtsStore {
       if (!rows[0]?.artifact_id) throw new Error('TTS artifact was not stored');
       return rows[0].artifact_id;
     },
+    async storeFallbackReason(eventId, reason) {
+      await sql`select app_private.store_alert_tts_fallback_reason(${eventId}::uuid, ${reason})`;
+    },
   };
 }

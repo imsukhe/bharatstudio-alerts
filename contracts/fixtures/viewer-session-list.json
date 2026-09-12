@@ -1,0 +1,14 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/viewer-session-list.schema.json",
+  "schemaVersion": "v1",
+  "sessions": [
+    {
+      "sessionId": "00000000-0000-4000-8000-000000005e01",
+      "createdAt": "2030-01-01T00:00:00.000Z",
+      "lastSeenAt": "2030-01-01T00:00:00.000Z",
+      "expiresAt": "2030-02-01T00:00:00.000Z",
+      "deviceLabel": "BharatStudio web",
+      "current": true
+    }
+  ]
+}

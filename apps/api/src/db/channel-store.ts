@@ -51,6 +51,20 @@ export function createSqlChannelStore(sql: Sql): ChannelStore {
     },
     async updateChannel(userId, channelId, input) {
       return inUserTransaction(sql, userId, async (tx) => {
+        // A handle change goes through the security-definer function first
+        // (see 0087_v1_l03_channel_handle_reservation.sql): it re-asserts
+        // owner/admin authorization itself (this bypasses the table's own
+        // channels_owner_update RLS policy by running as definer), enforces
+        // the format/uniqueness rules, and reserves the outgoing handle —
+        // all atomically with the rest of this transaction, so a failure
+        // here (invalid format, role, or a taken handle) rolls back any
+        // other field in the same PATCH body too.
+        if (input.handle !== undefined) {
+          const renamed = await tx<{ id: string }[]>`
+            select id from app_private.change_channel_handle(${channelId}::uuid, ${input.handle})
+          `;
+          if (!renamed[0]) return null;
+        }
         const rows = await tx<{ id: string; handle: string; display_name: string; accepting_tips: boolean; public_config_version: number; featured_consent: boolean; role: string }[]>`
           update channels
              set display_name = coalesce(${input.displayName ?? null}, display_name),

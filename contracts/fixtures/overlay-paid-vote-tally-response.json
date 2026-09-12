@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-paid-vote-tally-response.schema.json",
+  "schemaVersion": "v1",
+  "tally": { "schemaVersion": "v1", "votingMode": "paid", "options": [{ "optionKey": "option-a", "label": "Option A", "amountPaise": 300000 }], "resolved": false, "resolvedOptionKey": null }
+}

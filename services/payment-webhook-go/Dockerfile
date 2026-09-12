@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # Pin both stages to the digests resolved by the 2026-08-15 verified build.
 FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS build
 

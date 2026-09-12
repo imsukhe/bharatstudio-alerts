@@ -1,0 +1,16 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-receipt-response.schema.json",
+  "schemaVersion": "v1",
+  "receipt": {
+    "channelHandle": "synthetic_creator",
+    "channelDisplayName": "Synthetic Creator",
+    "grossAmountPaise": "5000",
+    "refundedAmountPaise": "0",
+    "netAmountPaise": "5000",
+    "currency": "INR",
+    "donorDisplayName": "Synthetic Donor",
+    "message": null,
+    "paymentStatus": "captured",
+    "paidAt": "2026-01-01T00:00:00.000Z"
+  }
+}

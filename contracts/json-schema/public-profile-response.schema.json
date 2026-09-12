@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/public-profile-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "profile"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName", "profileSlug"],
+      "properties": {
+        "displayName": { "type": ["string", "null"], "maxLength": 80 },
+        "profileSlug": { "type": "string", "minLength": 1, "maxLength": 60 }
+      }
+    }
+  }
+}

@@ -5,6 +5,7 @@ import type { SessionStore } from '../auth/session-store.js';
 import type { ChannelStore } from '../domain/channel-store.js';
 import type { AccountStore } from '../domain/account-store.js';
 import type { ReferralStore } from '../domain/referrals.js';
+import type { SeatStore } from '../domain/seat-store.js';
 import { computeIpSubnetHash } from '../domain/ip-subnet.js';
 import { channelConfigValueSchema, validateChannelConfigSemantics } from '../domain/channel-config-schema.js';
 import { logSafeError } from '../observability/safe-log.js';
@@ -12,6 +13,8 @@ import { logSafeError } from '../observability/safe-log.js';
 const uuid = { type: 'string', format: 'uuid' } as const;
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: uuid } } as const;
 const bindingParams = { type: 'object', additionalProperties: false, required: ['channelId', 'bindingId'], properties: { channelId: uuid, bindingId: uuid } } as const;
+const memberParams = { type: 'object', additionalProperties: false, required: ['channelId', 'userId'], properties: { channelId: uuid, userId: uuid } } as const;
+const memberRoleEnum = ['owner', 'admin', 'operator', 'moderator', 'viewer'] as const;
 const bindingOverrideValuesSchema = {
   type: ['object', 'null'],
   maxProperties: 16,
@@ -44,7 +47,7 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'channel_store_unavailable', message: 'Channel data is temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerChannelRoutes(app: FastifyInstance, sessions?: SessionStore, store?: ChannelStore, account?: AccountStore, referrals?: ReferralStore): Promise<void> {
+export async function registerChannelRoutes(app: FastifyInstance, sessions?: SessionStore, store?: ChannelStore, account?: AccountStore, referrals?: ReferralStore, seats?: SeatStore): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
 
@@ -89,10 +92,32 @@ export async function registerChannelRoutes(app: FastifyInstance, sessions?: Ses
     return channel ? reply.code(200).send(channel) : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
   });
 
-  app.patch<{ Params: { channelId: string }; Body: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean } }>('/v1/channels/:channelId', { preHandler: termsAuth, schema: { params: channelParams, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { displayName: { type: 'string', minLength: 1, maxLength: 120 }, acceptingTips: { type: 'boolean' }, featuredConsent: { type: 'boolean' } } } } }, async (request, reply) => {
+  app.patch<{ Params: { channelId: string }; Body: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean; handle?: string } }>('/v1/channels/:channelId', { preHandler: termsAuth, schema: { params: channelParams, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { displayName: { type: 'string', minLength: 1, maxLength: 120 }, acceptingTips: { type: 'boolean' }, featuredConsent: { type: 'boolean' }, handle: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' } } } } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
-    const channel = await store.updateChannel(request.auth.userId, request.params.channelId, request.body);
-    return channel ? reply.code(200).send(channel) : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
+    try {
+      const channel = await store.updateChannel(request.auth.userId, request.params.channelId, request.body);
+      return channel ? reply.code(200).send(channel) : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
+    } catch (error) {
+      // Postgres error codes raised by app_private.change_channel_handle
+      // (0087_v1_l03_channel_handle_reservation.sql): 23505 the requested
+      // handle is already live or was previously released by another
+      // channel; 42501 the caller isn't owner/admin (re-asserted inside the
+      // security-definer function since it bypasses the table's own RLS
+      // policy); 22023 the handle failed the format check. Anything else is
+      // an unexpected failure and fails closed like every other write here.
+      const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : undefined;
+      if (code === '23505') {
+        return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'handle_unavailable', message: 'That handle is already taken', traceId: request.id, retryable: false });
+      }
+      if (code === '42501') {
+        return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'forbidden', message: 'Only the channel owner or an admin can change the handle', traceId: request.id, retryable: false });
+      }
+      if (code === '22023') {
+        return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_handle', message: 'Handle format is invalid', traceId: request.id, retryable: false });
+      }
+      logSafeError(request, 'channel_update_failed', error);
+      return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'channel_update_conflict', message: 'Channel could not be updated', traceId: request.id });
+    }
   });
 
   app.get<{ Params: { channelId: string } }>('/v1/channels/:channelId/config', { preHandler: auth, schema: { params: channelParams } }, async (request, reply) => {
@@ -215,6 +240,50 @@ export async function registerChannelRoutes(app: FastifyInstance, sessions?: Ses
     } catch (error) {
       logSafeError(request, 'binding_create_failed', error);
       return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'binding_create_conflict', message: 'Binding could not be created', traceId: request.id });
+    }
+  });
+
+  // MASTER-PLAN §3.14: grants or changes a member's role, including the
+  // moderator seat this channel's tier has left. This route is a pure
+  // translator — app_private.set_channel_membership_role
+  // (0104_v1_l03_moderator_seat_enforcement.sql) is the sole enforcement
+  // point for both authorization and the seat limit.
+  app.put<{
+    Params: { channelId: string; userId: string };
+    Body: { role: (typeof memberRoleEnum)[number] };
+  }>('/v1/channels/:channelId/members/:userId', {
+    preHandler: termsAuth,
+    schema: {
+      params: memberParams,
+      body: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { type: 'string', enum: [...memberRoleEnum] } } },
+    },
+  }, async (request, reply) => {
+    if (!seats || !request.auth) return unavailable(reply, request.id);
+    try {
+      const membership = await seats.setMemberRole(request.auth.userId, request.params.channelId, request.params.userId, request.body.role);
+      return reply.code(200).send(membership);
+    } catch (error) {
+      // Postgres error codes raised by app_private.set_channel_membership_role
+      // (0104_v1_l03_moderator_seat_enforcement.sql): 23514 the channel is
+      // already at its tier's moderator seat limit; 42501 the caller isn't
+      // owner/admin; 23503 the channel doesn't exist; 22023 an invalid role
+      // string reached the function (the JSON schema above already blocks
+      // this at the HTTP boundary — this branch is defense in depth only).
+      const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : undefined;
+      if (code === '23514') {
+        return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'moderator_seat_limit_reached', message: 'This channel plan has no more moderator seats available', traceId: request.id, retryable: false });
+      }
+      if (code === '42501') {
+        return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'forbidden', message: 'Only the channel owner or an admin can manage members', traceId: request.id, retryable: false });
+      }
+      if (code === '23503') {
+        return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
+      }
+      if (code === '22023') {
+        return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_role', message: 'Role is invalid', traceId: request.id, retryable: false });
+      }
+      logSafeError(request, 'member_role_update_failed', error);
+      return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'member_update_conflict', message: 'Member could not be updated', traceId: request.id });
     }
   });
 }

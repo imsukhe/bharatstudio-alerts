@@ -11,9 +11,11 @@
  * on purpose.
  */
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { getCurrentUser, getPayments, type CurrentUser, type PaymentLedgerEntry } from '../lib/api';
+import { useState } from 'react';
+import { getPayments, type CurrentUser, type PaymentLedgerEntry } from '../lib/api';
 import { AppShell } from '../components/AppShell';
+import { useChannelBootstrap } from '../hooks/useChannelBootstrap';
+import { DataTable, type DataTableColumn } from '../components/ui/DataTable';
 
 const MAX_EXPORT_PAGES = 20;
 
@@ -28,6 +30,17 @@ function formatDate(value: string): string {
 function statusLabel(value: string): string {
   return value.replaceAll('_', ' ');
 }
+
+// Exact same columns/cells/classNames as the plain <table> this replaces —
+// DataTable (added in batch 1) was a faithful extraction of this table and
+// had never actually been wired in anywhere. See DataTable.tsx.
+const paymentColumns: DataTableColumn<PaymentLedgerEntry>[] = [
+  { header: 'Date', render: (entry) => formatDate(entry.createdAt) },
+  { header: 'Payment ID', render: (entry) => entry.providerPaymentId, className: 'payments-table-id' },
+  { header: 'Amount', render: (entry) => formatMoney(entry.grossAmountPaise) },
+  { header: 'Status', render: (entry) => statusLabel(entry.status), className: 'payments-table-status' },
+  { header: 'Refunded', render: (entry) => (entry.refundTotalPaise > 0 ? `${formatMoney(entry.refundTotalPaise)} · ${statusLabel(entry.latestRefundStatus ?? '')}` : '—') },
+];
 
 function toCsv(entries: PaymentLedgerEntry[]): string {
   const header = ['Date', 'Payment ID', 'Amount (INR)', 'Status', 'Refunded (INR)', 'Latest refund status'];
@@ -64,24 +77,22 @@ export default function PaymentsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [truncationNotice, setTruncationNotice] = useState<string | null>(null);
 
-  useEffect(() => {
-    getCurrentUser().then(async (nextUser) => {
-      setUser(nextUser);
-      const first = nextUser.channels[0];
-      if (!first) { setLoading(false); return; }
-      setChannelId(first.channelId);
-      const viewable = first.role === 'owner' || first.role === 'admin';
-      setCanView(viewable);
-      if (!viewable) { setLoading(false); return; }
-      const page = await getPayments(first.channelId);
-      setEntries(page.items);
-      setNextCursor(page.nextCursor);
-      setLoading(false);
-    }).catch((cause: unknown) => {
-      setInitialError(cause instanceof Error ? cause.message : 'Payment ledger is unavailable');
-      setLoading(false);
-    });
-  }, []);
+  useChannelBootstrap(async (nextUser) => {
+    setUser(nextUser);
+    const first = nextUser.channels[0];
+    if (!first) { setLoading(false); return; }
+    setChannelId(first.channelId);
+    const viewable = first.role === 'owner' || first.role === 'admin';
+    setCanView(viewable);
+    if (!viewable) { setLoading(false); return; }
+    const page = await getPayments(first.channelId);
+    setEntries(page.items);
+    setNextCursor(page.nextCursor);
+    setLoading(false);
+  }, (message) => {
+    setInitialError(message);
+    setLoading(false);
+  }, 'Payment ledger is unavailable');
 
   async function loadMore() {
     if (!channelId || !nextCursor || loadingMore) return;
@@ -172,24 +183,7 @@ export default function PaymentsPage() {
           {entries.length === 0 ? (
             <p className="helper-text">No payments yet.</p>
           ) : (
-            <div className="payments-table-scroll">
-              <table className="payments-table">
-                <thead>
-                  <tr><th>Date</th><th>Payment ID</th><th>Amount</th><th>Status</th><th>Refunded</th></tr>
-                </thead>
-                <tbody>
-                  {entries.map((entry) => (
-                    <tr key={entry.paymentId}>
-                      <td>{formatDate(entry.createdAt)}</td>
-                      <td className="payments-table-id">{entry.providerPaymentId}</td>
-                      <td>{formatMoney(entry.grossAmountPaise)}</td>
-                      <td className="payments-table-status">{statusLabel(entry.status)}</td>
-                      <td>{entry.refundTotalPaise > 0 ? `${formatMoney(entry.refundTotalPaise)} · ${statusLabel(entry.latestRefundStatus ?? '')}` : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable columns={paymentColumns} rows={entries} rowKey={(entry) => entry.paymentId} />
           )}
           {nextCursor && (
             <button type="button" className="secondary-button payments-load-more" onClick={() => void loadMore()} disabled={loadingMore}>

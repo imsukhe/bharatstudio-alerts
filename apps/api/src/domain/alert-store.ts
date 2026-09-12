@@ -50,6 +50,17 @@ export type CompanionState = {
   overlayConnected: boolean;
   pendingAlerts: number;
   lastUpdatedAt: string;
+  // L24 activation signals (0093). Each answers "is this action group's
+  // target actually live right now", independent of entitlement.
+  helperPaired: boolean; // a desktop helper currently holds a valid, unexpired control-session lease
+  obsConnected: boolean; // that helper's most recent OBS heartbeat is fresh (<= 45s old) and says connected; a stale or missing heartbeat reads false
+  obsStatusReportedAt: string | null; // the heartbeat timestamp itself (may be stale relative to now -- see obsConnected), null if never reported
+  paymentAccountConnected: boolean; // an active payment account exists for this channel (payment_accounts; not duplicated here)
+  // Mirror and Stream live in other repos and report no liveness signal to
+  // this API today. Modelled honestly as always false (never omitted) --
+  // see packages/db/migrations/0093's header comment.
+  mirrorReachable: boolean;
+  streamPaired: boolean;
 };
 
 export type CompanionActionSlot = {
@@ -107,4 +118,12 @@ export interface AlertStore {
   acquireCompanionControlSession(userId: string, channelId: string, clientType: CompanionControlSession['clientType'], clientInstanceId: string): Promise<CompanionControlSession>;
   revokeCompanionControlSession(userId: string, channelId: string, sessionId: string): Promise<boolean>;
   executeCompanionAction(userId: string, channelId: string, action: CompanionAction, targetId: string | null, idempotencyKey: string): Promise<CompanionActionResult>;
+  // Desktop-helper self-report of local OBS connection state (0093). No
+  // userId parameter: this is authenticated by the control session's own
+  // id, not the bearer/session-cookie auth every other method here uses --
+  // see companion.ts and migration 0093 for why. Returns false when
+  // sessionId is not a currently-valid desktop session on channelId (also
+  // true for a session that belongs to a *different* channel), so this can
+  // never report on behalf of another channel's helper.
+  reportCompanionObsConnection(channelId: string, sessionId: string, connected: boolean): Promise<boolean>;
 }

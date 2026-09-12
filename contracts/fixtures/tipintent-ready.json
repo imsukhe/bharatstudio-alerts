@@ -1,0 +1,11 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/tipintent-resolution.schema.json",
+  "schemaVersion": "v1",
+  "state": "ready",
+  "channelHandle": "synthetic_creator",
+  "channelDisplayName": "Synthetic Creator",
+  "amountPaise": 5000,
+  "currency": "INR",
+  "donorDisplayName": "Synthetic Donor",
+  "message": "Synthetic support"
+}

@@ -43,7 +43,7 @@ test('the overlay-lottie byte-serving route returns the scoped artifact bytes wi
   await app.close();
 });
 
-test('the overlay-lottie byte-serving route returns 404 for an unknown artifact and fails closed without a store', async () => {
+test('the overlay-lottie byte-serving route returns 404 for an unknown artifact and reports an unwired store as retryable 503', async () => {
   const store = fakeOverlayBranding([], null);
   const app = await buildApp(config, { overlayBranding: store });
   const notFound = await app.inject({ method: 'GET', url: `/v1/overlay-lottie/${overlayId}/${artifactId}`, headers: { authorization: 'Bearer synthetic-overlay-token' } });
@@ -52,6 +52,23 @@ test('the overlay-lottie byte-serving route returns 404 for an unknown artifact 
 
   const unavailableApp = await buildApp(config, {});
   const unavailable = await unavailableApp.inject({ method: 'GET', url: `/v1/overlay-lottie/${overlayId}/${artifactId}`, headers: { authorization: 'Bearer synthetic-overlay-token' } });
-  assert.equal(unavailable.statusCode, 401);
+  assert.equal(unavailable.statusCode, 503);
+  assert.equal(unavailable.json().errorCode, 'overlay_branding_unavailable');
   await unavailableApp.close();
+});
+
+test('every Lottie overlay store rejection is a redacted retryable 503, not 401 or a raw 500', async () => {
+  const store: OverlayBrandingStore = {
+    async listForOverlay() { throw new Error('synthetic database outage'); },
+    async getForOverlay() { throw new Error('synthetic database outage'); },
+  };
+  const app = await buildApp(config, { overlayBranding: store });
+  for (const url of [`/v1/overlay-lottie/${overlayId}`, `/v1/overlay-lottie/${overlayId}/${artifactId}`]) {
+    const response = await app.inject({ method: 'GET', url, headers: { authorization: 'Bearer synthetic-overlay-token' } });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().errorCode, 'overlay_branding_unavailable');
+    assert.equal(response.json().retryable, true);
+    assert.equal(JSON.stringify(response.json()).includes('database outage'), false);
+  }
+  await app.close();
 });

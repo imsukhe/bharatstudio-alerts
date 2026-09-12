@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-leaderboard-response.schema.json",
+  "schemaVersion": "v1",
+  "leaderboard": { "schemaVersion": "v1", "window": "weekly", "rows": [{ "rank": 1, "viewerRef": "viewer_abc123", "tierLabel": "gold" }] }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/viewer-channel-badges-response.schema.json",
+  "schemaVersion": "v1",
+  "badges": {
+    "netTipCount": "2",
+    "netLifetimeAmountPaise": "5000",
+    "firstSupportedAt": "2026-09-01T00:00:00.000Z",
+    "currentStreakDays": 2,
+    "badges": ["supporter_since_2026", "stream_streak_x2"]
+  }
+}

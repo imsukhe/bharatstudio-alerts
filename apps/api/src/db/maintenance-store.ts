@@ -1,11 +1,19 @@
 import type { Sql, TransactionSql } from 'postgres';
 import type { MaintenanceRequest, MaintenanceResult, MaintenanceStore } from '../domain/maintenance.js';
+import { retentionJobs } from '../domain/retention-policy.js';
+import {
+  runCompanionPairingRetentionMaintenance,
+  runYoutubeOauthStateRetentionMaintenance,
+  runViewerResetTokenRetentionMaintenance,
+} from './retention-store.js';
 
 type MaintenanceRunRow = {
   run_id: string;
   job: MaintenanceRequest['job'];
   status: MaintenanceResult['status'];
 };
+
+const dbOwnedMaintenanceJobs = new Set<MaintenanceRequest['job']>(['overlay-sessions', 'overlay-expiry-reminder', 'referral-lifecycle', ...retentionJobs]);
 
 // Two security-definer job-implementation functions, both following the
 // same accept_maintenance_run(job, key, window) -> run_<job>_maintenance
@@ -20,6 +28,12 @@ async function runJobImplementation(tx: TransactionSql, job: MaintenanceRequest[
       return tx<MaintenanceRunRow[]>`select run_id, job, status from app_private.run_overlay_expiry_reminder_maintenance(${runId}::uuid)`;
     case 'referral-lifecycle':
       return tx<MaintenanceRunRow[]>`select run_id, job, status from app_private.run_referral_lifecycle_maintenance(${runId}::uuid)`;
+    case 'retention-companion-pairings':
+      return runCompanionPairingRetentionMaintenance(tx, runId);
+    case 'retention-youtube-oauth-states':
+      return runYoutubeOauthStateRetentionMaintenance(tx, runId);
+    case 'retention-viewer-reset-tokens':
+      return runViewerResetTokenRetentionMaintenance(tx, runId);
     default:
       throw new Error(`Maintenance job is owned by another service: ${job}`);
   }
@@ -28,7 +42,7 @@ async function runJobImplementation(tx: TransactionSql, job: MaintenanceRequest[
 export function createSqlMaintenanceStore(sql: Sql): MaintenanceStore {
   return {
     async execute(request) {
-      if (request.job !== 'overlay-sessions' && request.job !== 'overlay-expiry-reminder' && request.job !== 'referral-lifecycle') {
+      if (!dbOwnedMaintenanceJobs.has(request.job)) {
         throw new Error(`Maintenance job is owned by another service: ${request.job}`);
       }
 

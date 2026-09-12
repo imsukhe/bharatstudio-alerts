@@ -1,0 +1,8 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/tipintent-resolution.schema.json",
+  "schemaVersion": "v1",
+  "errorCode": "not_found",
+  "state": "unknown",
+  "message": "This support link does not exist",
+  "traceId": "synthetic-trace"
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/viewer-dashboard-response.schema.json",
+  "schemaVersion": "v1",
+  "supportedChannels": [
+    {
+      "channelId": "00000000-0000-4000-8000-000000000011",
+      "channelHandle": "synthetic-creator",
+      "channelDisplayName": "Synthetic Creator",
+      "firstSupportedAt": "2026-09-01T00:00:00.000Z",
+      "lastSupportedAt": "2026-09-09T00:00:00.000Z",
+      "lifetimeAmountPaise": "5000",
+      "tipCount": "2",
+      "challengeCount": "0",
+      "memberState": "active"
+    }
+  ]
+}

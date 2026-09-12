@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-challenge-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "challenge"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "challenge": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "challengeId", "title", "kind", "targetAmountPaise", "state", "progressPaise", "targetReached"],
+          "properties": {
+            "schemaVersion": { "const": "v1" }, "challengeId": { "type": "string", "format": "uuid" },
+            "title": { "type": "string", "minLength": 1, "maxLength": 120 }, "kind": { "enum": ["stake", "bounty"] },
+            "targetAmountPaise": { "type": "integer", "minimum": 0 }, "state": { "enum": ["draft", "active", "succeeded", "failed", "cancelled"] },
+            "progressPaise": { "type": "integer", "minimum": 0 }, "targetReached": { "type": "boolean" }
+          }
+        }
+      ]
+    }
+  }
+}

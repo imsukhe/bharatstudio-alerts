@@ -121,11 +121,22 @@ export function createSqlAlertStore(sql: Sql): AlertStore {
       return row ? { schemaVersion: 'v1', channelId, tier: row.tier, source: row.source, entitlementVersion: row.version, values: row.values } : null;
     },
     async getCompanionState(userId, channelId) {
-      const rows = await inUserTransaction(sql, userId, (tx) => tx<{ overlay_connected: boolean; pending_alerts: number; last_updated_at: Date }[]>`
-        select overlay_connected, pending_alerts, last_updated_at from app_private.get_companion_state(${channelId}::uuid)
+      const rows = await inUserTransaction(sql, userId, (tx) => tx<{
+        overlay_connected: boolean; pending_alerts: number; last_updated_at: Date;
+        helper_paired: boolean; obs_connected: boolean; obs_status_reported_at: Date | null;
+        payment_account_connected: boolean; mirror_reachable: boolean; stream_paired: boolean;
+      }[]>`
+        select overlay_connected, pending_alerts, last_updated_at,
+               helper_paired, obs_connected, obs_status_reported_at,
+               payment_account_connected, mirror_reachable, stream_paired
+          from app_private.get_companion_state(${channelId}::uuid)
       `);
       const row = rows[0];
-      return row ? { schemaVersion: 'v1', channelId, overlayConnected: row.overlay_connected, pendingAlerts: row.pending_alerts, lastUpdatedAt: row.last_updated_at.toISOString() } : null;
+      return row ? {
+        schemaVersion: 'v1', channelId, overlayConnected: row.overlay_connected, pendingAlerts: row.pending_alerts, lastUpdatedAt: row.last_updated_at.toISOString(),
+        helperPaired: row.helper_paired, obsConnected: row.obs_connected, obsStatusReportedAt: row.obs_status_reported_at?.toISOString() ?? null,
+        paymentAccountConnected: row.payment_account_connected, mirrorReachable: row.mirror_reachable, streamPaired: row.stream_paired,
+      } : null;
     },
     async getCompanionLayout(userId, channelId) {
       const rows = await inUserTransaction(sql, userId, (tx) => tx<{
@@ -200,6 +211,18 @@ export function createSqlAlertStore(sql: Sql): AlertStore {
         `;
         return rows[0]?.revoked ?? false;
       });
+    },
+    async reportCompanionObsConnection(channelId, sessionId, connected) {
+      // No userId / inUserTransaction here: this is authenticated by the
+      // control session's own id (see this method's doc comment on the
+      // AlertStore interface), not by a bearer session, so there is no
+      // app.user_id to set and no RLS policy to satisfy -- the security
+      // definer function's own WHERE clause (channel_id + client_type =
+      // 'desktop' + unrevoked + unexpired) is the entire authorization.
+      const rows = await sql<{ reported: boolean | null }[]>`
+        select app_private.report_companion_obs_status(${sessionId}::uuid, ${channelId}::uuid, ${connected}) as reported
+      `;
+      return rows[0]?.reported ?? false;
     },
     async executeCompanionAction(userId, channelId, action, targetId, idempotencyKey) {
       if (!targetId) throw new Error('Companion action requires a queue target');

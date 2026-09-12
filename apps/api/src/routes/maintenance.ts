@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { maintenanceJobs, type MaintenanceJob, type MaintenanceStore, type ServiceIdentityVerifier } from '../domain/maintenance.js';
+import { retentionJobs } from '../domain/retention-policy.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 // This API process owns only overlay-session maintenance today. Payment and
@@ -8,7 +9,9 @@ import { logSafeError } from '../observability/safe-log.js';
 // until their retention/ownership contract is approved. Keeping this route
 // allowlist narrower than the shared schedule vocabulary prevents a future
 // scheduler configuration from turning an unsupported job into a false 202.
-const apiOwnedMaintenanceJobs = new Set<MaintenanceJob>(['overlay-sessions', 'overlay-expiry-reminder', 'referral-lifecycle']);
+// The three retention-sweep jobs (migration 0095) are owned here too — each
+// sweeps a table this process itself writes to.
+const apiOwnedMaintenanceJobs = new Set<MaintenanceJob>(['overlay-sessions', 'overlay-expiry-reminder', 'referral-lifecycle', ...retentionJobs]);
 
 export async function registerMaintenanceRoutes(app: FastifyInstance, store?: MaintenanceStore, identity?: ServiceIdentityVerifier): Promise<void> {
   app.post<{ Params: { job: MaintenanceJob }; Body: { idempotencyKey: string; window?: string } }>('/internal/maintenance/:job', {

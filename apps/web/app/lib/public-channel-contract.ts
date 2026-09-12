@@ -5,11 +5,17 @@ export type PublicChannelResponse = {
   acceptingTips: boolean;
   minimumTipPaise: number;
   publicConfigVersion: number;
+  // Present only when the requested handle was a released (renamed-away)
+  // handle that the API resolved to this channel's current `handle` — see
+  // apps/api/src/routes/public.ts. Carries the ORIGINAL requested handle,
+  // letting /tips/[handle] tell "this is the canonical page" apart from
+  // "you were redirected here" without a second response shape.
+  renamedFrom?: string;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HANDLE = /^[A-Za-z0-9._-]{1,64}$/;
-const PUBLIC_FIELDS = new Set(['channelId', 'handle', 'displayName', 'acceptingTips', 'minimumTipPaise', 'publicConfigVersion']);
+const PUBLIC_FIELDS = new Set(['channelId', 'handle', 'displayName', 'acceptingTips', 'minimumTipPaise', 'publicConfigVersion', 'renamedFrom']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -30,6 +36,7 @@ export function parsePublicChannel(value: unknown): PublicChannelResponse | null
   if (typeof value.displayName !== 'string' || value.displayName.trim().length === 0 || value.displayName.length > 120) return null;
   if (typeof value.acceptingTips !== 'boolean' || !isSafeInteger(value.minimumTipPaise) || value.minimumTipPaise < 1_000 || value.minimumTipPaise > 1_000_000_000) return null;
   if (!isSafeInteger(value.publicConfigVersion) || value.publicConfigVersion < 1) return null;
+  if (value.renamedFrom !== undefined && (typeof value.renamedFrom !== 'string' || !HANDLE.test(value.renamedFrom))) return null;
   return {
     channelId: value.channelId,
     handle: value.handle,
@@ -37,5 +44,6 @@ export function parsePublicChannel(value: unknown): PublicChannelResponse | null
     acceptingTips: value.acceptingTips,
     minimumTipPaise: value.minimumTipPaise,
     publicConfigVersion: value.publicConfigVersion,
+    ...(value.renamedFrom !== undefined ? { renamedFrom: value.renamedFrom } : {}),
   };
 }

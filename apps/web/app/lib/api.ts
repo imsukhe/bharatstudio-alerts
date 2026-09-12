@@ -91,10 +91,29 @@ export type Queue = { schemaVersion: 'v1'; queueId: string; channelId: string; n
 export type QueueBinding = { schemaVersion: 'v1'; bindingId: string; channelId: string; queueId: string; sourceType: 'payment' | 'manual' | 'companion'; sourceId: string; allowDuplicates: boolean; priority: number; overrideValues: Record<string, unknown> | null; active: boolean };
 export type AlertHistory = { eventId: string; sourceType: string; status: string; createdAt: string; displayName: string | null; message: string | null; grossAmountPaise: number | null; currency: string | null };
 export type CompanionState = { schemaVersion: 'v1'; channelId: string; overlayConnected: boolean; pendingAlerts: number; lastUpdatedAt: string };
-export type CompanionActionSlot = { slotIndex: number; page: number; label: string; action: CompanionAction; targetId: string };
+// `targetLabel` carries the free-text OBS target name (scene/source/input/
+// transition) for the 'obs' action group — see migration 0089's
+// target-type discriminator and apps/api's companion.ts. Present only for
+// obs-group slots; alerts-group slots must not carry it.
+export type CompanionActionSlot = { slotIndex: number; page: number; label: string; action: CompanionAction; targetId: string; targetLabel?: string };
 export type CompanionLayout = { schemaVersion: 'v1'; channelId: string; version: number; tier: 'free' | 'pro' | 'creator' | 'studio'; maxSlots: 8 | 16 | 32 | 64; pageSize: 4 | 8 | 16; slots: CompanionActionSlot[]; createdAt: string | null };
 export type OverlaySession = { schemaVersion: 'v1'; overlayId: string; expiresAt: string; streamUrl: string };
-export type CompanionAction = 'pause_queue' | 'resume_queue' | 'send_test_alert';
+// L24 Companion action catalogue (17 actions / 4 groups). This union, and
+// the `companionActions` Set below, are this repo's client-side mirror of
+// apps/api/src/routes/companion.ts's ACTION_GROUPS (itself one of five
+// mirrors — see that file's header comment and
+// bharatstudio-alerts/scripts/companion-action-catalogue-drift-check.mjs).
+// Group membership itself is NOT re-derived here: the server is
+// authoritative on entitlement/activation, so the client only needs to
+// know the full action set for schema validation. Per-action grouping for
+// the picker UI lives in app/companion/action-catalogue.ts.
+export type CompanionAction =
+  | 'pause_queue' | 'resume_queue' | 'send_test_alert'
+  | 'obs_set_scene' | 'obs_toggle_source' | 'obs_toggle_mute'
+  | 'obs_start_stream' | 'obs_stop_stream' | 'obs_start_record' | 'obs_stop_record'
+  | 'obs_save_replay_buffer' | 'obs_set_transition'
+  | 'mirror_start' | 'mirror_stop' | 'mirror_screenshot'
+  | 'stream_go_live' | 'stream_end';
 export type CompanionActionResult = {
   schemaVersion: 'v1';
   commandId: string;
@@ -131,7 +150,18 @@ export type BillingView = {
 // session, not by any mocked-store unit test).
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const companionTiers = new Set<CompanionLayout['tier']>(['free', 'pro', 'creator', 'studio']);
-const companionActions = new Set<CompanionAction>(['pause_queue', 'resume_queue', 'send_test_alert']);
+const companionActions = new Set<CompanionAction>([
+  'pause_queue', 'resume_queue', 'send_test_alert',
+  'obs_set_scene', 'obs_toggle_source', 'obs_toggle_mute',
+  'obs_start_stream', 'obs_stop_stream', 'obs_start_record', 'obs_stop_record',
+  'obs_save_replay_buffer', 'obs_set_transition',
+  'mirror_start', 'mirror_stop', 'mirror_screenshot',
+  'stream_go_live', 'stream_end',
+]);
+const companionAlertsActions = new Set<CompanionAction>(['pause_queue', 'resume_queue', 'send_test_alert']);
+function isValidTargetLabel(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 200 && /^[\x20-\x7E]+$/.test(value);
+}
 const styles = new Set<NonNullable<ChannelConfigValues['defaultStyle']>>(['small_pill', 'compact_card', 'standard_card', 'large_card', 'banner', 'celebration']);
 const overflowPolicies = new Set<ConfigBracket['ttsOverflowPolicy']>(['extend', 'truncate_speech', 'truncate_visual', 'visual_only', 'disable']);
 const queueModes = new Set<NonNullable<NonNullable<ChannelConfigValues['queue']>['mode']>>(['fifo', 'stacked', 'pills', 'aggregated', 'priority']);
@@ -443,7 +473,15 @@ export function parseCompanionLayout(value: unknown): CompanionLayout {
   const maxSlots = value.maxSlots;
   const pageSize = value.pageSize;
   if (!hasOnlyKeys(value, new Set(['schemaVersion', 'channelId', 'version', 'tier', 'maxSlots', 'pageSize', 'slots', 'createdAt'])) || !isUuid(value.channelId) || !isSafeInteger(value.version) || !isSafeInteger(maxSlots) || !isSafeInteger(pageSize) || !companionTiers.has(value.tier as CompanionLayout['tier']) || ![8, 16, 32, 64].includes(maxSlots) || ![4, 8, 16].includes(pageSize) || (value.createdAt !== null && !isIsoDate(value.createdAt)) || !Array.isArray(value.slots)) invalidResponse();
-  if (!value.slots.every((slot) => isRecord(slot) && hasOnlyKeys(slot, new Set(['slotIndex', 'page', 'label', 'action', 'targetId'])) && isSafeInteger(slot.slotIndex) && slot.slotIndex >= 1 && slot.slotIndex <= maxSlots && isSafeInteger(slot.page) && slot.page >= 1 && slot.page <= 16 && typeof slot.label === 'string' && slot.label.length >= 1 && slot.label.length <= 80 && companionActions.has(slot.action as CompanionAction) && isUuid(slot.targetId))) invalidResponse();
+  if (!value.slots.every((slot) => {
+    if (!isRecord(slot) || !hasOnlyKeys(slot, new Set(['slotIndex', 'page', 'label', 'action', 'targetId', 'targetLabel'])) || !isSafeInteger(slot.slotIndex) || slot.slotIndex < 1 || slot.slotIndex > maxSlots || !isSafeInteger(slot.page) || slot.page < 1 || slot.page > 16 || typeof slot.label !== 'string' || slot.label.length < 1 || slot.label.length > 80 || !companionActions.has(slot.action as CompanionAction) || !isUuid(slot.targetId)) return false;
+    // Target-type discriminator (mirrors migration 0089 and the desktop/
+    // mobile clients): an Alerts-group slot never carries targetLabel; any
+    // other group's slot must carry a bounded, printable-ASCII one.
+    const isAlerts = companionAlertsActions.has(slot.action as CompanionAction);
+    if (isAlerts) return slot.targetLabel === undefined;
+    return isValidTargetLabel(slot.targetLabel);
+  })) invalidResponse();
   const indexes = value.slots.map((slot) => (slot as Record<string, unknown>).slotIndex as number);
   if (new Set(indexes).size !== indexes.length) invalidResponse();
   return value as unknown as CompanionLayout;
@@ -561,7 +599,7 @@ export function createChannel(handle: string, displayName: string, referralCode?
 }
 
 export function getChannel(channelId: string): Promise<ChannelDetails> { return apiFetch(`/v1/channels/${pathSegment(channelId)}`, {}, parseChannelDetails); }
-export function updateChannel(channelId: string, input: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean }): Promise<ChannelDetails> {
+export function updateChannel(channelId: string, input: { displayName?: string; acceptingTips?: boolean; featuredConsent?: boolean; handle?: string }): Promise<ChannelDetails> {
   return apiFetch(`/v1/channels/${pathSegment(channelId)}`, { method: 'PATCH', body: JSON.stringify(input) }, parseChannelDetails);
 }
 export function getChannelConfig(channelId: string): Promise<ChannelConfig> { return apiFetch(`/v1/channels/${pathSegment(channelId)}/config`, {}, parseChannelConfig); }

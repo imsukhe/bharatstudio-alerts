@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-goal-response.schema.json",
+  "schemaVersion": "v1",
+  "goal": { "schemaVersion": "v1", "goalId": "00000000-0000-4000-8000-000000000091", "title": "Synthetic goal", "targetAmountPaise": 100000, "window": "open", "progressPaise": 25000, "reached": false }
+}

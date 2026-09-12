@@ -439,3 +439,15 @@ summary { cursor: pointer; color: var(--text); font-family: var(--font-display);
 @media (max-width: 640px) {
   .terms-modal-actions { flex-direction: column; align-items: flex-end; gap: 6px; }
 }
+
+/* Companion action-catalogue picker (JOB 1). The two gate states must read
+   as visibly different: 'locked' (entitlement) is dimmed and inert;
+   'inactive' (activation) stays full-strength and selectable, only
+   flagged with an amber marker, since it is not a permissions problem. */
+.companion-catalogue-group { margin-top: 18px; }
+.companion-catalogue-group h3 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 6px; }
+.companion-catalogue-row[data-gate="locked"] { opacity: .5; }
+.companion-catalogue-row[data-gate="inactive"] { border-left: 3px solid #d9a441; padding-left: 8px; }
+.companion-catalogue-row[data-gate="available"] { border-left: 3px solid transparent; padding-left: 8px; }
+.companion-catalogue-draft { display: flex; flex-direction: column; gap: 8px; min-width: 220px; }
+.companion-catalogue-draft label { display: flex; flex-direction: column; gap: 2px; font-size: .8rem; }

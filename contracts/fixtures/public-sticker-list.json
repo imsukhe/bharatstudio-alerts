@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-sticker-list.schema.json",
+  "schemaVersion": "v1",
+  "items": [{ "id": "00000000-0000-4000-8000-000000000221", "displayName": "Synthetic Confetti", "category": "celebration" }]
+}

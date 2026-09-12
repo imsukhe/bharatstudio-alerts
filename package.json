@@ -3,16 +3,28 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "overrides": {
+      "fast-uri@^3.0.1": "3.1.6",
+      "fast-uri@^4.0.0": "4.1.3",
+      "sharp": "0.35.4"
+    }
+  },
   "scripts": {
     "build": "pnpm --filter @bharatstudio/alerts-api build && pnpm --filter @bharatstudio/alerts-web build",
     "dev:api": "pnpm --filter @bharatstudio/alerts-api dev",
     "dev:web": "pnpm --filter @bharatstudio/alerts-web dev",
-    "test": "pnpm --filter @bharatstudio/alerts-api test",
+    "test": "pnpm --filter @bharatstudio/alerts-api test && pnpm --filter @bharatstudio/alerts-web test",
+    "verify:local": "pnpm contracts:validate && pnpm deployment:test && pnpm db:test:all && pnpm db:test:l03 && sh scripts/load/run-l09-load-self-test.sh && sh scripts/load/run-l09-fault-self-test.sh && pnpm test && pnpm build && (cd services/alert-worker-go && go test -race ./... && go vet ./...) && (cd services/payment-webhook-go && go test -race ./... && go vet ./...) && (cd services/youtube-poller-go && go test -race ./... && go vet ./...) && docker build --file apps/api/Dockerfile --tag bharatstudio-alerts-api:qa-local . && docker build --tag bharatstudio-alerts-payment:qa-local services/payment-webhook-go && docker build --tag bharatstudio-alerts-worker:qa-local services/alert-worker-go",
+    "db:test:all": "sh packages/db/tests/run-sql-suite.sh",
     "db:test:l03": "sh packages/db/tests/run-l03-application-behavior.sh",
-    "contracts:validate": "node contracts/validate-fixtures.mjs && node contracts/validate-openapi.mjs"
+    "deployment:validate": "sh deployment/validate-manifests.sh",
+    "deployment:test": "sh deployment/test-validate-manifests.sh",
+    "contracts:validate": "node contracts/validate-fixtures.mjs && node contracts/validate-openapi.mjs && node contracts/test-openapi-validator.mjs",
+    "contracts:route-inventory": "node contracts/runtime-route-inventory.mjs"
   },
   "devDependencies": {
-    "ajv": "8.17.1",
+    "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "yaml": "2.9.0"
   }

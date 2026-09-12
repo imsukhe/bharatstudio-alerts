@@ -61,6 +61,34 @@ export function createPublicChannelRepository(sql: Sql): PublicChannelRepository
         publicConfigVersion: row.public_config_version,
       };
     },
+    async resolveReleasedHandle(handle) {
+      // app_private.get_public_channel_for_released_handle does not exist
+      // yet — it requires a new security-definer function (over
+      // channel_handle_history, which 0087 revokes all app-role access
+      // to) added by a companion migration owned by the migration lane,
+      // not this one. Until that ships, the call below throws
+      // "function ... does not exist" and is caught here, so this fails
+      // closed to "no historical match" — today's 404-on-stale-link
+      // behavior is unchanged, it does not silently misbehave.
+      try {
+        const rows = await sql<PublicChannelRow[]>`
+          select channel_id, handle, display_name, accepting_tips, minimum_tip_paise, public_config_version
+            from app_private.get_public_channel_for_released_handle(${handle})
+        `;
+        const row = rows[0];
+        if (!row) return null;
+        return {
+          channelId: row.channel_id,
+          handle: row.handle,
+          displayName: row.display_name,
+          acceptingTips: row.accepting_tips,
+          minimumTipPaise: row.minimum_tip_paise,
+          publicConfigVersion: row.public_config_version,
+        };
+      } catch {
+        return null;
+      }
+    },
     async listFeatured(limit): Promise<FeaturedChannel[]> {
       const rows = await sql<FeaturedChannelRow[]>`
         select channel_id, handle, display_name, accepting_tips, locale

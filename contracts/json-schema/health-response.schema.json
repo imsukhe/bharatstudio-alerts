@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/health-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "status", "service"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "status": { "const": "ok" },
+    "service": { "const": "bharatstudio-alerts-api" }
+  }
+}

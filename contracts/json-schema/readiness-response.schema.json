@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/readiness-response.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "status"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri" },
+        "status": { "const": "ready" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "status", "reason"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri" },
+        "status": { "const": "not_ready" },
+        "reason": { "enum": ["runtime_adapters_not_configured", "runtime_dependency_unavailable"] }
+      }
+    }
+  ]
+}

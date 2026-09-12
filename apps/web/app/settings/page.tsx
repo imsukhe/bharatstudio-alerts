@@ -9,14 +9,22 @@
  *   - GET /v1/me/export, GET/POST /v1/me/privacy/requests, POST /v1/me/close
  */
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
-  clearAccessToken, closeAccount, createPrivacyRequestEntry, emailAccountExport, exportAccount, getChannel, getCurrentUser,
+  clearAccessToken, closeAccount, createPrivacyRequestEntry, emailAccountExport, exportAccount, getChannel,
   getPaymentAccounts, getPrivacyRequests, registerPaymentAccount, revokePaymentAccount, updateChannel,
-  type CurrentUser, type PaymentAccount, type PaymentAccountEnvironment, type PrivacyRequest, type PrivacyRequestType,
+  type ChannelDetails, type CurrentUser, type PaymentAccount, type PaymentAccountEnvironment, type PrivacyRequest, type PrivacyRequestType,
 } from '../lib/api';
 import { TopNav } from '../components/TopNav';
 import { AppShell } from '../components/AppShell';
+import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { Field } from '../components/ui/Field';
+import { useChannelBootstrap } from '../hooks/useChannelBootstrap';
+
+// Same format enforced server-side (routes/channels.ts POST/PATCH /v1/channels)
+// and used at creation time in onboarding/step-1/page.tsx — not a new rule.
+const HANDLE_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 
 const requestTypeLabels: Record<PrivacyRequestType, string> = {
   access: 'Access my data',
@@ -55,6 +63,15 @@ export default function SettingsPage() {
   const [featuredConsent, setFeaturedConsent] = useState(false);
   const [savingFeatured, setSavingFeatured] = useState(false);
 
+  const [channel, setChannel] = useState<ChannelDetails | null>(null);
+  const [displayNameInput, setDisplayNameInput] = useState('');
+  const [savingDisplayName, setSavingDisplayName] = useState(false);
+
+  const [handleInput, setHandleInput] = useState('');
+  const [handleConfirmed, setHandleConfirmed] = useState(false);
+  const [savingHandle, setSavingHandle] = useState(false);
+  const [handleError, setHandleError] = useState<string | null>(null);
+
   // A single click used to immediately disconnect the account tips settle
   // to, with no confirmation at all — inconsistent with "Close account"
   // below, which requires typing CLOSE. This tracks which account (if any)
@@ -63,18 +80,61 @@ export default function SettingsPage() {
   const [confirmRevokeAccountId, setConfirmRevokeAccountId] = useState<string | null>(null);
   const [revoking, setRevoking] = useState(false);
 
-  useEffect(() => {
-    getCurrentUser().then(async (nextUser) => {
-      setUser(nextUser);
-      const first = nextUser.channels[0];
-      if (!first) return;
-      setChannelId(first.channelId);
-      const [channel, accountList, requestList] = await Promise.all([getChannel(first.channelId), getPaymentAccounts(first.channelId), getPrivacyRequests()]);
-      setFeaturedConsent(channel.featuredConsent);
-      setAccounts(accountList.accounts);
-      setRequests(requestList.requests);
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
-  }, []);
+  useChannelBootstrap(async (nextUser) => {
+    setUser(nextUser);
+    const first = nextUser.channels[0];
+    if (!first) return;
+    setChannelId(first.channelId);
+    const [nextChannel, accountList, requestList] = await Promise.all([getChannel(first.channelId), getPaymentAccounts(first.channelId), getPrivacyRequests()]);
+    setFeaturedConsent(nextChannel.featuredConsent);
+    setChannel(nextChannel);
+    setDisplayNameInput(nextChannel.displayName);
+    setHandleInput(nextChannel.handle);
+    setAccounts(accountList.accounts);
+    setRequests(requestList.requests);
+  }, setError);
+
+  const canManageChannel = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
+
+  async function saveDisplayName(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!channelId || savingDisplayName) return;
+    const nextDisplayName = displayNameInput.trim();
+    if (!nextDisplayName) return;
+    setSavingDisplayName(true);
+    setMessage(null);
+    try {
+      const updated = await updateChannel(channelId, { displayName: nextDisplayName });
+      setChannel(updated);
+      setDisplayNameInput(updated.displayName);
+      setMessage('Display name updated.');
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Display name could not be saved');
+    } finally {
+      setSavingDisplayName(false);
+    }
+  }
+
+  async function saveHandle(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!channelId || savingHandle || !channel) return;
+    const nextHandle = handleInput.trim();
+    if (nextHandle === channel.handle) return;
+    setSavingHandle(true);
+    setHandleError(null);
+    setMessage(null);
+    try {
+      const updated = await updateChannel(channelId, { handle: nextHandle });
+      setChannel(updated);
+      setHandleInput(updated.handle);
+      setHandleConfirmed(false);
+      setMessage(`Handle changed to "${updated.handle}". Your old handle is retired — nobody else can ever claim it, but any link, QR code or overlay still pointing at "bharatstudio.in/tips/${channel.handle}" no longer resolves. Update anywhere you shared it.`);
+    } catch (cause) {
+      setHandleError(cause instanceof Error ? cause.message : 'Handle could not be changed');
+    } finally {
+      setSavingHandle(false);
+    }
+  }
 
   // Self-serve opt-in — no admin curation. Eligibility (accepting tips, not
   // closed) is applied automatically server-side when building the public
@@ -226,15 +286,77 @@ export default function SettingsPage() {
       {user && (
         <div className="content-grid">
           <div>
-            <article className="panel" aria-labelledby="payout-title">
-              <div className="panel-heading">
-                <div><p className="muted-label">Payout account</p><h2 id="payout-title">Where your tips settle.</h2></div>
-              </div>
-              <p className="helper-text">
+            {channel && (
+              <Card as="article" titleId="channel-title" eyebrow="Channel" title="Name and handle.">
+                <form className="dashboard-form" onSubmit={saveDisplayName}>
+                  <Field label="Display name">
+                    <input
+                      required
+                      maxLength={120}
+                      value={displayNameInput}
+                      onChange={(event) => setDisplayNameInput(event.target.value)}
+                      disabled={!canManageChannel}
+                    />
+                  </Field>
+                  {canManageChannel && (
+                    <Button variant="primary" type="submit" disabled={savingDisplayName || !displayNameInput.trim() || displayNameInput.trim() === channel.displayName}>
+                      {savingDisplayName ? 'Saving…' : 'Save display name'}
+                    </Button>
+                  )}
+                </form>
+
+                <form className="dashboard-form" onSubmit={saveHandle} style={{ marginTop: 24 }}>
+                  <Field label="Handle">
+                    <input
+                      required
+                      minLength={1}
+                      maxLength={64}
+                      pattern="[A-Za-z0-9._-]+"
+                      value={handleInput}
+                      onChange={(event) => { setHandleInput(event.target.value); setHandleConfirmed(false); setHandleError(null); }}
+                      disabled={!canManageChannel}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                    />
+                  </Field>
+                  <p className="helper-text">
+                    Your public tip page: bharatstudio.in/tips/{handleInput.trim() || channel.handle}
+                  </p>
+                  {canManageChannel && handleInput.trim() !== channel.handle && HANDLE_PATTERN.test(handleInput.trim()) && (
+                    <label className="checkbox-label terms-checkbox-row">
+                      <input type="checkbox" checked={handleConfirmed} onChange={(event) => setHandleConfirmed(event.target.checked)} />
+                      {' '}I understand every link, QR code or overlay already pointing at{' '}
+                      bharatstudio.in/tips/{channel.handle} will stop working the moment I save. My old
+                      handle is retired permanently — nobody else can ever claim it — but it does not
+                      forward visitors to my new one.
+                    </label>
+                  )}
+                  {handleError && <p className="inline-message error-text" role="alert">{handleError}</p>}
+                  {canManageChannel && (
+                    <Button
+                      variant="primary"
+                      type="submit"
+                      disabled={
+                        savingHandle
+                        || handleInput.trim() === channel.handle
+                        || !HANDLE_PATTERN.test(handleInput.trim())
+                        || !handleConfirmed
+                      }
+                    >
+                      {savingHandle ? 'Saving…' : 'Save handle'}
+                    </Button>
+                  )}
+                  {!canManageChannel && <p className="helper-text">Only the channel owner or an admin can change the handle.</p>}
+                </form>
+              </Card>
+            )}
+
+            <Card as="article" titleId="payout-title" eyebrow="Payout account" title="Where your tips settle." helper={<>
                 Register the Razorpay connected-account reference issued by Razorpay&apos;s own partner
                 onboarding. BharatStudio never holds your funds — orders route directly to this account.
                 It stays pending until Razorpay verifies it.
-              </p>
+              </>}>
               {accounts.length > 0 && (
                 <div className="channel-list">
                   {accounts.map((account) => (
@@ -245,14 +367,13 @@ export default function SettingsPage() {
                           <span>{account.environment} · {account.status}</span>
                         </div>
                         {account.status !== 'revoked' && (
-                          <button
+                          <Button
                             type="button"
-                            className="secondary-button"
                             onClick={() => setConfirmRevokeAccountId(account.accountId)}
                             disabled={confirmRevokeAccountId !== null}
                           >
                             Revoke
-                          </button>
+                          </Button>
                         )}
                       </div>
                       {confirmRevokeAccountId === account.accountId && (
@@ -261,10 +382,10 @@ export default function SettingsPage() {
                             Revoke this payout account? Tips will not be able to settle to it until you register a new one.
                           </p>
                           <div className="control-actions">
-                            <button type="button" className="primary-button" onClick={() => void revoke(account)} disabled={revoking}>
+                            <Button variant="primary" type="button" onClick={() => void revoke(account)} disabled={revoking}>
                               {revoking ? 'Revoking…' : 'Yes, revoke'}
-                            </button>
-                            <button type="button" className="secondary-button" onClick={() => setConfirmRevokeAccountId(null)} disabled={revoking}>Keep it</button>
+                            </Button>
+                            <Button type="button" onClick={() => setConfirmRevokeAccountId(null)} disabled={revoking}>Keep it</Button>
                           </div>
                         </div>
                       )}
@@ -273,61 +394,50 @@ export default function SettingsPage() {
                 </div>
               )}
               <form className="dashboard-form" onSubmit={submitPayoutAccount}>
-                <label>
-                  Environment
+                <Field label="Environment">
                   <select value={environment} onChange={(event) => setEnvironment(event.target.value as PaymentAccountEnvironment)}>
                     <option value="test">Test</option>
                     <option value="live">Live</option>
                   </select>
-                </label>
-                <label>
-                  Connected account reference
+                </Field>
+                <Field label="Connected account reference">
                   <input
                     required minLength={1} maxLength={128} pattern="[A-Za-z0-9._:-]+"
                     value={connectedAccountRef}
                     onChange={(event) => setConnectedAccountRef(event.target.value)}
                     placeholder="acc_XXXXXXXXXXXXXX"
                   />
-                </label>
-                <button type="submit" className="primary-button" disabled={registering || !channelId}>
+                </Field>
+                <Button variant="primary" type="submit" disabled={registering || !channelId}>
                   {registering ? 'Registering…' : 'Register payout account'}
-                </button>
+                </Button>
               </form>
-            </article>
+            </Card>
 
-            <article className="panel" aria-labelledby="featured-title">
-              <div className="panel-heading">
-                <div><p className="muted-label">Public listing</p><h2 id="featured-title">Featured creators.</h2></div>
-                <button type="button" className="secondary-button" onClick={() => void toggleFeatured()} disabled={savingFeatured || !channelId}>
-                  {savingFeatured ? 'Saving…' : featuredConsent ? 'Remove from listing' : 'Add to listing'}
-                </button>
-              </div>
+            <Card as="article" titleId="featured-title" eyebrow="Public listing" title="Featured creators." actions={
+              <Button type="button" onClick={() => void toggleFeatured()} disabled={savingFeatured || !channelId}>
+                {savingFeatured ? 'Saving…' : featuredConsent ? 'Remove from listing' : 'Add to listing'}
+              </Button>
+            }>
               <p className="helper-text">
                 Opt in to appear in BharatStudio&apos;s public featured-creators directory. Listing is
                 automatic once you&apos;re accepting tips — there is no review step. Currently:{' '}
                 <strong>{featuredConsent ? 'listed' : 'not listed'}</strong>.
               </p>
-            </article>
+            </Card>
 
-            <article className="panel" aria-labelledby="export-title">
-              <div className="panel-heading">
-                <div><p className="muted-label">Your data</p><h2 id="export-title">Download an export.</h2></div>
-              </div>
-              <p className="helper-text">Everything associated with your account, as a JSON file.</p>
+            <Card as="article" titleId="export-title" eyebrow="Your data" title="Download an export." helper="Everything associated with your account, as a JSON file.">
               <div className="control-actions">
-                <button type="button" className="secondary-button" onClick={() => void downloadExport()} disabled={exporting}>
+                <Button type="button" onClick={() => void downloadExport()} disabled={exporting}>
                   {exporting ? 'Preparing…' : 'Download export'}
-                </button>
-                <button type="button" className="secondary-button" onClick={() => void requestExportEmail()} disabled={emailingExport}>
+                </Button>
+                <Button type="button" onClick={() => void requestExportEmail()} disabled={emailingExport}>
                   {emailingExport ? 'Requesting…' : 'Email me a copy'}
-                </button>
+                </Button>
               </div>
-            </article>
+            </Card>
 
-            <article className="panel" aria-labelledby="privacy-title">
-              <div className="panel-heading">
-                <div><p className="muted-label">Privacy requests</p><h2 id="privacy-title">Access, correction or erasure.</h2></div>
-              </div>
+            <Card as="article" titleId="privacy-title" eyebrow="Privacy requests" title="Access, correction or erasure.">
               {requests.length > 0 && (
                 <div className="status-list">
                   {requests.map((request) => (
@@ -339,21 +449,19 @@ export default function SettingsPage() {
                 </div>
               )}
               <form className="dashboard-form" onSubmit={submitPrivacyRequest}>
-                <label>
-                  Request type
+                <Field label="Request type">
                   <select value={requestType} onChange={(event) => setRequestType(event.target.value as PrivacyRequestType)}>
                     {Object.entries(requestTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
-                </label>
-                <label>
-                  Details
+                </Field>
+                <Field label="Details">
                   <textarea required maxLength={2000} rows={3} value={requestDetails} onChange={(event) => setRequestDetails(event.target.value)} placeholder="What would you like us to do?" />
-                </label>
-                <button type="submit" className="secondary-button" disabled={submittingRequest}>
+                </Field>
+                <Button type="submit" disabled={submittingRequest}>
                   {submittingRequest ? 'Submitting…' : 'Submit request'}
-                </button>
+                </Button>
               </form>
-            </article>
+            </Card>
           </div>
 
           <aside className="panel security-panel" aria-label="Close account">
@@ -364,17 +472,15 @@ export default function SettingsPage() {
               fraud prevention, disputes, security or legal obligations — never used commercially.
             </p>
             <form className="dashboard-form" onSubmit={submitClose}>
-              <label>
-                Reason (optional)
+              <Field label="Reason (optional)">
                 <input maxLength={500} value={closeReason} onChange={(event) => setCloseReason(event.target.value)} />
-              </label>
-              <label>
-                Type CLOSE to confirm
+              </Field>
+              <Field label="Type CLOSE to confirm">
                 <input required value={closeConfirmText} onChange={(event) => setCloseConfirmText(event.target.value)} placeholder="CLOSE" />
-              </label>
-              <button type="submit" className="secondary-button" disabled={closing || closeConfirmText !== 'CLOSE'}>
+              </Field>
+              <Button type="submit" disabled={closing || closeConfirmText !== 'CLOSE'}>
                 {closing ? 'Closing…' : 'Close account'}
-              </button>
+              </Button>
             </form>
           </aside>
         </div>

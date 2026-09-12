@@ -34,7 +34,7 @@ export async function registerAccountRoutes(app: FastifyInstance, sessions?: Ses
     if (!account || !request.auth) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'account_store_unavailable', message: 'Account controls are temporarily unavailable', traceId: request.id, retryable: true });
     return reply.code(201).send({ schemaVersion: 'v1', request: await account.createPrivacyRequest(request.auth.userId, request.body.requestType, request.body.details) });
   });
-  app.post<{ Body: { reason: string } }>('/v1/me/close', { preHandler: auth, schema: { body: { type: 'object', additionalProperties: false, required: ['reason'], properties: { reason: { type: 'string', maxLength: 500 } } } } }, async (request, reply) => {
+  app.post<{ Body: { reason: string } }>('/v1/me/close', { preHandler: auth, schema: { body: { type: 'object', additionalProperties: false, required: ['reason'], properties: { reason: { type: 'string', minLength: 1, maxLength: 500, pattern: '.*\\S.*' } } } } }, async (request, reply) => {
     if (!account || !request.auth) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'account_store_unavailable', message: 'Account controls are temporarily unavailable', traceId: request.id, retryable: true });
     const closedAt = await account.closeAccount(request.auth.userId, request.body.reason);
     return reply.send({ schemaVersion: 'v1', status: 'deactivated', accessRevokedAt: closedAt, retainedData: 'limited data may remain for payments, taxes, fraud prevention, disputes, security and legal obligations' });

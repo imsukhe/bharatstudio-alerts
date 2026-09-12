@@ -1,0 +1,6 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/viewer-auth-session.schema.json",
+  "schemaVersion": "v1",
+  "accessToken": "synthetic-redacted-viewer-session-token-0001",
+  "expiresAt": "2030-01-01T00:00:00.000Z"
+}

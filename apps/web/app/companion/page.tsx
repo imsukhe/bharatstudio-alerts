@@ -3,7 +3,18 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { AppShell } from '../components/AppShell';
-import { clearAccessToken, executeCompanionAction, getBilling, getCompanionLayout, getCompanionState, getCurrentUser, getHistory, getNotificationPreferences, getQueues, getSessions, notificationPreferencesInput, revokeSession, updateCompanionLayout, updateNotificationPreferences, type AccountSession, type AlertHistory, type BillingView, type CompanionAction, type CompanionLayout, type CompanionState, type CurrentUser, type NotificationPreferences, type Queue } from '../lib/api';
+import { StatusMessage } from '../components/StatusMessage';
+import { useStatusMessage } from '../hooks/useStatusMessage';
+import { clearAccessToken, executeCompanionAction, getBilling, getCompanionLayout, getCompanionState, getCurrentUser, getEntitlements, getHistory, getNotificationPreferences, getQueues, getSessions, notificationPreferencesInput, revokeSession, updateCompanionLayout, updateNotificationPreferences, type AccountSession, type AlertHistory, type BillingView, type CompanionAction, type CompanionActionSlot, type CompanionLayout, type CompanionState, type CurrentUser, type NotificationPreferences, type Queue } from '../lib/api';
+import { CompanionActionPicker } from './CompanionActionPicker';
+import { nextFreeSlotIndex, type CatalogueEntry, type CompanionActionGroup } from './action-catalogue';
+
+// Server fallback for a channel with no entitlement row at all (a
+// Companion-only implicit signup) — mirrors apps/api's own
+// NO_ALERTS_ENTITLED_GROUPS in companion.ts: OBS/Mirror/Stream stay
+// available, Alerts is not, until a real entitlement version exists.
+const NO_ALERTS_ENTITLED_GROUPS: CompanionActionGroup[] = ['obs', 'mirror', 'stream'];
+const ALL_ENTITLED_GROUPS: CompanionActionGroup[] = ['alerts', 'obs', 'mirror', 'stream'];
 
 const operatorRoles = new Set(['owner', 'admin', 'operator']);
 const actions: Array<{ action: CompanionAction; label: string; description: string }> = [
@@ -11,6 +22,18 @@ const actions: Array<{ action: CompanionAction; label: string; description: stri
   { action: 'resume_queue', label: 'Resume queue', description: 'Allow ready deliveries to become visible again.' },
   { action: 'send_test_alert', label: 'Send test alert', description: 'Create a bounded synthetic alert for the selected channel.' },
 ];
+
+// Mirrors apps/api's own readEntitledGroups() in companion.ts: reads the
+// channel's companionActionGroups list out of its entitlement values,
+// falling back to the full catalogue if the field is absent or malformed.
+// Display-only — the server re-checks this independently on every write.
+function readEntitledGroups(values: Record<string, unknown>): CompanionActionGroup[] {
+  const raw = values.companionActionGroups;
+  if (!Array.isArray(raw)) return ALL_ENTITLED_GROUPS;
+  const valid: CompanionActionGroup[] = ['alerts', 'obs', 'mirror', 'stream'];
+  const filtered = raw.filter((entry): entry is CompanionActionGroup => typeof entry === 'string' && (valid as string[]).includes(entry));
+  return filtered.length ? filtered : ALL_ENTITLED_GROUPS;
+}
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
@@ -32,21 +55,25 @@ export default function CompanionPage() {
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null);
   const [savingNotifications, setSavingNotifications] = useState(false);
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
-  const [message, setMessage] = useState('Loading authorised Companion state…');
-  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
+  const { message, messageKind, notify } = useStatusMessage('Loading authorised Companion state…');
   const [busy, setBusy] = useState<CompanionAction | null>(null);
   const [savingLayout, setSavingLayout] = useState(false);
+  // Entitlement layer for the JOB 1 action-catalogue picker: which action
+  // groups this channel's plan includes. `null` means "not loaded yet" —
+  // the picker stays hidden rather than guessing, so nothing briefly reads
+  // as unlocked before the real answer arrives.
+  const [entitledGroups, setEntitledGroups] = useState<CompanionActionGroup[] | null>(null);
+  // A version conflict (PATCH .../companion/layout rejected 409) is a real,
+  // distinct state — not an error to recover from by retrying blindly. It
+  // holds the server's current layout so the operator can see what changed
+  // and choose to reload rather than silently losing their edit or crashing.
+  const [layoutConflict, setLayoutConflict] = useState<CompanionLayout | null>(null);
   // Distinct from every other load failure: a signed-out visitor must not
   // see a page full of populated-looking panels ("Read-only access",
   // "Your channel role can view state...") that describe a permissions
   // problem when the real condition is "no session at all." See the early
   // return in the render below.
   const [signedOut, setSignedOut] = useState(false);
-
-  function notify(text: string, kind: 'success' | 'error' = 'success') {
-    setMessage(text);
-    setMessageKind(kind);
-  }
 
   const channel = user?.channels.find(candidate => candidate.channelId === selectedChannelId);
   const selectedQueue = queues.find(queue => queue.queueId === selectedQueueId) ?? queues.find(queue => queue.active);
@@ -99,13 +126,21 @@ export default function CompanionPage() {
         setSelectedQueueId(previous => nextQueues.queues.some(queue => queue.queueId === previous && queue.active)
           ? previous
           : nextQueues.queues.find(queue => queue.active)?.queueId ?? null);
-        const optional = await Promise.allSettled([getHistory(channelId), getBilling(channelId), getSessions(), getNotificationPreferences()]);
+        const optional = await Promise.allSettled([getHistory(channelId), getBilling(channelId), getSessions(), getNotificationPreferences(), getEntitlements(channelId)]);
         if (cancelled) return;
-        const [historyResult, billingResult, sessionsResult, notificationResult] = optional;
+        const [historyResult, billingResult, sessionsResult, notificationResult, entitlementsResult] = optional;
         if (historyResult.status === 'fulfilled') setHistory(historyResult.value.items);
         if (billingResult.status === 'fulfilled') setBilling(billingResult.value);
         if (sessionsResult.status === 'fulfilled') setSessions(sessionsResult.value.sessions);
         if (notificationResult.status === 'fulfilled') setNotificationPreferences(notificationResult.value);
+        // A rejected entitlements fetch (e.g. a Companion-only implicit
+        // channel with no entitlement row) is a real, different state from
+        // "not loaded yet" — it means "no Alerts entitlement", matching
+        // apps/api's own NO_ALERTS_ENTITLED_GROUPS fallback, not "unknown".
+        setEntitledGroups(entitlementsResult.status === 'fulfilled'
+          ? readEntitledGroups(entitlementsResult.value.values)
+          : NO_ALERTS_ENTITLED_GROUPS);
+        setLayoutConflict(null);
         notify('Companion state is loaded from the server.');
       } catch (cause) {
         if (cancelled) return;
@@ -115,6 +150,7 @@ export default function CompanionPage() {
         setBilling(null);
         setSessions([]);
         setNotificationPreferences(null);
+        setEntitledGroups(null);
         setSelectedQueueId(null);
         notify(cause instanceof Error ? cause.message : 'Companion state could not be loaded.', 'error');
       }
@@ -164,11 +200,15 @@ export default function CompanionPage() {
     }
   }
 
-  function addLayoutSlot(action: CompanionAction) {
-    if (!layout || !selectedQueue || layout.slots.length >= layout.maxSlots) return;
-    const slotIndex = Array.from({ length: layout.maxSlots }, (_, index) => index + 1).find(index => !layout.slots.some(slot => slot.slotIndex === index));
+  // Respects the tier's slot ladder: never assigns past layout.maxSlots,
+  // and never overwrites an occupied slotIndex. Does not touch the
+  // server — the assignment only becomes real once "Save layout" succeeds.
+  function assignCatalogueAction(entry: CatalogueEntry, targetId: string, targetLabel: string | undefined, label: string) {
+    if (!layout || layout.slots.length >= layout.maxSlots) return;
+    const slotIndex = nextFreeSlotIndex(layout.maxSlots, layout.slots.map(slot => slot.slotIndex));
     if (!slotIndex) return;
-    setLayout({ ...layout, slots: [...layout.slots, { slotIndex, page: Math.ceil(slotIndex / layout.pageSize), label: action === 'pause_queue' ? 'Pause queue' : action === 'resume_queue' ? 'Resume queue' : 'Test alert', action, targetId: selectedQueue.queueId }] });
+    const slot: CompanionActionSlot = { slotIndex, page: Math.ceil(slotIndex / layout.pageSize), label, action: entry.action, targetId, ...(targetLabel !== undefined ? { targetLabel } : {}) };
+    setLayout({ ...layout, slots: [...layout.slots, slot] });
   }
 
   function removeLayoutSlot(slotIndex: number) {
@@ -183,12 +223,36 @@ export default function CompanionPage() {
     try {
       const saved = await updateCompanionLayout(channel?.channelId ?? layout.channelId, layout.version, layout.pageSize, layout.slots);
       setLayout(saved);
+      setLayoutConflict(null);
       notify('Companion layout saved. Limits apply only to new control configuration.');
     } catch (cause) {
-      notify(cause instanceof Error ? cause.message : 'Companion layout could not be saved.', 'error');
+      const messageText = cause instanceof Error ? cause.message : 'Companion layout could not be saved.';
+      // A version conflict is a real, distinct state, not a crash: someone
+      // else (another tab, another device) saved a newer layout first.
+      // Fetch that current server layout so the operator can see it and
+      // choose to reload, instead of the save silently failing or the
+      // local edit being discarded without explanation.
+      if (/version conflict|layout changed/i.test(messageText) && channel) {
+        try {
+          const currentServerLayout = await getCompanionLayout(channel.channelId);
+          setLayoutConflict(currentServerLayout);
+          notify('Someone else saved a newer Companion layout. Review it below and reload before editing again.', 'error');
+        } catch {
+          notify(messageText, 'error');
+        }
+      } else {
+        notify(messageText, 'error');
+      }
     } finally {
       setSavingLayout(false);
     }
+  }
+
+  function reloadLayoutFromConflict() {
+    if (!layoutConflict) return;
+    setLayout(layoutConflict);
+    setLayoutConflict(null);
+    notify('Reloaded the current Companion layout. Your previous unsaved edits were discarded.');
   }
 
   if (signedOut) {
@@ -202,7 +266,7 @@ export default function CompanionPage() {
 
   return (
     <AppShell title="Companion">
-      <p className={messageKind === 'error' ? 'helper-text error-text' : 'helper-text'} role={messageKind === 'error' ? 'alert' : 'status'}>{message}</p>
+      <StatusMessage message={message} kind={messageKind} variant="helper" />
 
       {user && user.channels.length > 1 && <section className="panel companion-selector" aria-labelledby="companion-channel-title">
         <div className="panel-heading"><div><p className="muted-label">Account channels</p><h2 id="companion-channel-title">Choose a channel</h2></div></div>
@@ -225,12 +289,25 @@ export default function CompanionPage() {
           <label>Buttons per page<select value={layout.pageSize} onChange={(event) => { const pageSize = Number(event.target.value) as 4 | 8 | 16; setLayout({ ...layout, pageSize, slots: layout.slots.map(slot => ({ ...slot, page: Math.ceil(slot.slotIndex / pageSize) })) }); }} disabled={!canOperate || savingLayout}>
             {[4, 8, 16].filter(size => size <= layout.maxSlots).map(size => <option key={size} value={size}>{size}</option>)}
           </select></label>
-          {canOperate && <div className="control-actions">
-            {actions.map(({ action, label }) => <button className="secondary-button" key={`add-${action}`} type="button" disabled={!selectedQueue || layout.slots.length >= layout.maxSlots || savingLayout} onClick={() => addLayoutSlot(action)}>Add {label}</button>)}
-            <button className="primary-button" type="button" disabled={savingLayout} onClick={() => void saveLayout()}>{savingLayout ? 'Saving…' : 'Save layout'}</button>
+          {layoutConflict && <div className="helper-text error-text" role="alert">
+            <p>Someone else saved a newer Companion layout (now at version {layoutConflict.version}, {layoutConflict.slots.length} slot(s)). Your edits above were not saved.</p>
+            <button className="secondary-button" type="button" onClick={reloadLayoutFromConflict}>Reload latest layout</button>
           </div>}
-          {layout.slots.length === 0 ? <p className="helper-text">No custom slots saved. Add an approved action to build the Companion grid.</p> : <div className="queue-list">{layout.slots.map(slot => <div className="queue-row" key={slot.slotIndex}><div><strong>#{slot.slotIndex} · {slot.label}</strong><small>Page {slot.page} · {slot.action}</small></div>{canOperate && <button className="secondary-button" type="button" onClick={() => removeLayoutSlot(slot.slotIndex)} disabled={savingLayout}>Remove</button>}</div>)}</div>}
+          {canOperate && <div className="control-actions">
+            <button className="primary-button" type="button" disabled={savingLayout || Boolean(layoutConflict)} onClick={() => void saveLayout()}>{savingLayout ? 'Saving…' : 'Save layout'}</button>
+          </div>}
+          {layout.slots.length === 0 ? <p className="helper-text">No custom slots saved. Add an approved action below to build the Companion grid.</p> : <div className="queue-list">{layout.slots.map(slot => <div className="queue-row" key={slot.slotIndex}><div><strong>#{slot.slotIndex} · {slot.label}</strong><small>Page {slot.page} · {slot.action}{slot.targetLabel ? ` · ${slot.targetLabel}` : ''}</small></div>{canOperate && <button className="secondary-button" type="button" onClick={() => removeLayoutSlot(slot.slotIndex)} disabled={savingLayout}>Remove</button>}</div>)}</div>}
         </article>}
+        {layout && entitledGroups && <CompanionActionPicker
+          maxSlots={layout.maxSlots}
+          takenSlotCount={layout.slots.length}
+          entitledGroups={new Set(entitledGroups)}
+          overlayConnected={Boolean(state?.overlayConnected)}
+          activeQueues={queues.filter(queue => queue.active)}
+          canOperate={canOperate}
+          busy={savingLayout}
+          onAssign={assignCatalogueAction}
+        />}
         <article className="panel">
           <div className="panel-heading"><div><p className="muted-label">Authorised controls</p><h2>Operate the queue</h2></div><span className="helper-text">{canOperate ? 'Operator access' : 'Read-only access'}</span></div>
           {canOperate && <label>Target queue<select value={selectedQueue?.queueId ?? ''} onChange={(event) => setSelectedQueueId(event.target.value || null)} disabled={queues.length === 0}>

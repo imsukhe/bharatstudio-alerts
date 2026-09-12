@@ -29,7 +29,11 @@ export async function registerMeRoutes(
   app.delete<{ Params: { sessionId: string } }>(
     '/v1/me/sessions/:sessionId',
     {
-      preHandler: termsAuth,
+      // Session revocation reduces the blast radius of a lost device. It
+      // must remain available while a user is being asked to accept updated
+      // legal documents; consent gating this endpoint would strand an active
+      // credential until the user agrees.
+      preHandler: auth,
       schema: {
         params: {
           type: 'object',
@@ -107,7 +111,9 @@ export async function registerMeRoutes(
   app.delete<{ Params: { deviceId: string } }>(
     '/v1/me/notifications/devices/:deviceId',
     {
-      preHandler: termsAuth,
+      // Removing a push token is a credential/privacy revocation, not a
+      // product configuration change. Keep it available before consent.
+      preHandler: auth,
       schema: {
         params: {
           type: 'object',

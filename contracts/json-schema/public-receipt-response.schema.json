@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/public-receipt-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "receipt"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channelHandle", "channelDisplayName", "grossAmountPaise", "refundedAmountPaise", "netAmountPaise", "currency", "donorDisplayName", "message", "paymentStatus", "paidAt"],
+      "properties": {
+        "channelHandle": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "channelDisplayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "grossAmountPaise": { "type": "string", "pattern": "^[0-9]+$" },
+        "refundedAmountPaise": { "type": "string", "pattern": "^[0-9]+$" },
+        "netAmountPaise": { "type": "string", "pattern": "^[0-9]+$" },
+        "currency": { "const": "INR" },
+        "donorDisplayName": { "type": ["string", "null"], "maxLength": 80 },
+        "message": { "type": ["string", "null"], "maxLength": 500 },
+        "paymentStatus": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "paidAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

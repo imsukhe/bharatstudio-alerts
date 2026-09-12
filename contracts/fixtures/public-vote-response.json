@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-vote-response.schema.json",
+  "schemaVersion": "v1",
+  "counted": false
+}

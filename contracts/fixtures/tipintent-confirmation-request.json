@@ -1,0 +1,4 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/tipintent-confirmation-request.schema.json",
+  "turnstileToken": null
+}

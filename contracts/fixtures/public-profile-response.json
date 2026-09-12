@@ -1,0 +1,8 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-profile-response.schema.json",
+  "schemaVersion": "v1",
+  "profile": {
+    "displayName": "Synthetic Viewer",
+    "profileSlug": "synthetic-viewer"
+  }
+}

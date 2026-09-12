@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-hype-response.schema.json",
+  "schemaVersion": "v1",
+  "hype": { "schemaVersion": "v1", "meterPaise": 12000, "thresholdPaise": 50000, "reached": false, "startedAt": "2026-09-09T00:00:00.000Z", "endsAt": "2026-09-09T00:05:00.000Z", "ended": false }
+}

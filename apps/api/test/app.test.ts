@@ -72,6 +72,29 @@ test('staging and production reject using the pooled app endpoint as the direct 
   }), /cannot be disabled in production/);
 });
 
+test('APP_ORIGIN is a strict credentialed-CORS origin and is normalized before startup', () => {
+  const productionBase = {
+    NODE_ENV: 'production',
+    DATABASE_URL_APP: 'postgres://app.example/db',
+    DATABASE_URL_DIRECT: 'postgres://direct.example/db',
+    GOOGLE_CLIENT_ID: 'client',
+    PAYMENT_SERVICE_ORIGIN: 'https://payment.example',
+    PAYMENT_SERVICE_AUDIENCE: 'payment',
+    INTERNAL_SERVICE_AUDIENCES: 'worker',
+    NOTIFICATION_TOKEN_ENCRYPTION_KEY: 'a'.repeat(64),
+    PUBLIC_PAYMENT_TURNSTILE_REQUIRED: 'true',
+    PUBLIC_PAYMENT_TURNSTILE_SECRET: 'turnstile-secret',
+  };
+
+  assert.throws(() => loadConfig({ ...productionBase, APP_ORIGIN: 'not a URL' }), /absolute HTTP\(S\) origin/);
+  assert.throws(() => loadConfig({ ...productionBase, APP_ORIGIN: 'https://user:password@alerts.example' }), /scheme, host, and optional port/);
+  assert.throws(() => loadConfig({ ...productionBase, APP_ORIGIN: 'https://alerts.example/creator' }), /scheme, host, and optional port/);
+  assert.throws(() => loadConfig({ ...productionBase, APP_ORIGIN: 'http://alerts.example' }), /must use HTTPS/);
+
+  const normalized = loadConfig({ ...productionBase, APP_ORIGIN: 'https://alerts.example/' });
+  assert.equal(normalized.appOrigin, 'https://alerts.example');
+});
+
 test('health endpoint is available without exposing runtime details', async () => {
   const app = await buildApp(config);
   const response = await app.inject({ method: 'GET', url: '/healthz' });
@@ -714,7 +737,11 @@ function fakeAlerts(): AlertStore {
       return { schemaVersion: 'v1', channelId, tier: 'creator', source: 'individual_plan', entitlementVersion: 4, values: { queueCount: 16, lottieEnabled: true } };
     },
     async getCompanionState(_userId, channelId) {
-      return { schemaVersion: 'v1', channelId, overlayConnected: true, pendingAlerts: 2, lastUpdatedAt: '2026-08-14T10:00:00.000Z' };
+      return {
+        schemaVersion: 'v1', channelId, overlayConnected: true, pendingAlerts: 2, lastUpdatedAt: '2026-08-14T10:00:00.000Z',
+        helperPaired: true, obsConnected: true, obsStatusReportedAt: '2026-08-14T10:00:00.000Z',
+        paymentAccountConnected: true, mirrorReachable: false, streamPaired: false,
+      };
     },
     async getCompanionLayout(_userId, channelId) {
       return { schemaVersion: 'v1', channelId, version: 0, tier: 'creator', maxSlots: 32, pageSize: 16, slots: [], createdAt: null };
@@ -729,6 +756,7 @@ function fakeAlerts(): AlertStore {
     async executeCompanionAction(_userId, channelId, action, targetId, idempotencyKey) {
       return { schemaVersion: 'v1', commandId: `command-${idempotencyKey}-${channelId}-${targetId ?? 'none'}`, status: 'accepted', acceptedAt: '2026-08-14T10:00:02.000Z' };
     },
+    async reportCompanionObsConnection() { return true; },
   };
 }
 

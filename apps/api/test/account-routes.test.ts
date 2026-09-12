@@ -44,5 +44,11 @@ test('privacy request details and account closure reason are bounded', async () 
   const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
   const response = await app.inject({ method: 'POST', url: '/v1/me/privacy/requests', headers, payload: { requestType: 'privacy_concern', details: 'x'.repeat(2001) } });
   assert.equal(response.statusCode, 400);
+  const emptyClose = await app.inject({ method: 'POST', url: '/v1/me/close', headers, payload: { reason: '' } });
+  assert.equal(emptyClose.statusCode, 400);
+  const whitespaceClose = await app.inject({ method: 'POST', url: '/v1/me/close', headers, payload: { reason: '   ' } });
+  assert.equal(whitespaceClose.statusCode, 400);
+  const overlongClose = await app.inject({ method: 'POST', url: '/v1/me/close', headers, payload: { reason: 'x'.repeat(501) } });
+  assert.equal(overlongClose.statusCode, 400);
   await app.close();
 });

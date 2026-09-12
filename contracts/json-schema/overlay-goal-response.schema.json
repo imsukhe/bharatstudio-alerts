@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-goal-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "goal"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "goal": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["schemaVersion", "goalId", "title", "targetAmountPaise", "window", "progressPaise", "reached"],
+          "properties": {
+            "schemaVersion": { "const": "v1" }, "goalId": { "type": "string", "format": "uuid" },
+            "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "targetAmountPaise": { "type": "integer", "minimum": 0 }, "window": { "enum": ["stream", "daily", "monthly", "open"] },
+            "progressPaise": { "type": "integer", "minimum": 0 }, "reached": { "type": "boolean" }
+          }
+        }
+      ]
+    }
+  }
+}

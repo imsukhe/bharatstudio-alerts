@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/tipintent-resolution.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schemaVersion", "state", "channelHandle", "channelDisplayName", "amountPaise", "currency", "donorDisplayName", "message"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri" },
+        "schemaVersion": { "const": "v1" },
+        "state": { "const": "ready" },
+        "channelHandle": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "channelDisplayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "amountPaise": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "INR" },
+        "donorDisplayName": { "type": ["string", "null"], "maxLength": 80 },
+        "message": { "type": ["string", "null"], "maxLength": 500 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schemaVersion", "state", "channelHandle", "channelDisplayName"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri" },
+        "schemaVersion": { "const": "v1" },
+        "state": { "enum": ["used", "expired"] },
+        "channelHandle": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "channelDisplayName": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["$schema", "schemaVersion", "errorCode", "state", "message", "traceId"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri" },
+        "schemaVersion": { "const": "v1" },
+        "errorCode": { "const": "not_found" },
+        "state": { "const": "unknown" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "traceId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import { createGoogleIdentityVerifier } from './auth/google.js';
 import { createSqlSessionStore } from './auth/session-store.js';
 import { createSqlChannelStore } from './db/channel-store.js';
 import { createSqlAlertStore } from './db/alert-store.js';
+import { createSqlCompanionPairingStore } from './db/companion-pairing-store.js';
 import { createSqlOverlayStore } from './db/overlay-store.js';
 import { createDirectOverlayWakeup } from './db/overlay-wakeup.js';
 import { createGooglePaymentOrderService } from './db/payment-order-client.js';
@@ -26,6 +27,25 @@ import { createSqlOverlayBrandingStore } from './db/overlay-branding-store.js';
 import { createSqlAccountStore } from './db/account-store.js';
 import { createTurnstileGuard } from './domain/public-abuse.js';
 import { createSqlTtsStore } from './db/tts-store.js';
+import { createSqlTtsQuotaMeter } from './db/tts-quota-store.js';
+import { createSqlViewerStore } from './db/viewer-store.js';
+import { createSqlYoutubeConnectionStore } from './db/youtube-connection-store.js';
+import { loadYoutubeOAuthConfig } from './domain/youtube-oauth-config.js';
+import { createYoutubeOAuthClient } from './domain/youtube-oauth-client.js';
+import { createBillingPaymentMethodService } from './db/billing-payment-method-client.js';
+import { createSqlCompanionFeatureStore } from './db/companion-feature-store.js';
+import { createSqlCompanionEntitlementStore } from './db/companion-entitlement-sql-store.js';
+import { createSqlSeatStore } from './db/seat-store.js';
+import { createSqlGoalStore } from './db/goal-store.js';
+import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
+import { createSqlChallengeStore } from './db/challenge-store.js';
+import { createSqlChallengeOverlayStore } from './db/challenge-overlay-store.js';
+import { createSqlTemplateCatalogueStore } from './db/template-catalogue-store.js';
+import { createSqlStickerCatalogueStore } from './db/sticker-catalogue-store.js';
+import { createSqlPublicStickerCatalogueStore, createSqlStickerSelectionStore } from './db/sticker-public-store.js';
+import { createSqlInteractionDefinitionStore, createSqlSupportVoteStore, createSqlPublicVoteStore, createSqlHypeModeStore, createSqlWidgetConfigStore, createSqlLeaderboardStore, createSqlInteractionOverlayStore } from './db/interaction-sql-store.js';
+import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
+import { createSqlIngestFailureStore } from './db/ingest-failure-store.js';
 import { createSqlOverlayAudioStore } from './db/overlay-audio-store.js';
 import { createSqlTtsCache } from './db/tts-cache.js';
 import { createSarvamTtsProvider, createTtsService } from './tts/provider.js';
@@ -41,12 +61,18 @@ const paymentSubscriptions = config.paymentServiceOrigin && config.paymentServic
 const serviceIdentity = config.internalServiceAudiences?.length
   ? createGoogleServiceIdentityVerifier(config.internalServiceAudiences)
   : undefined;
+const alerts = sql ? createSqlAlertStore(sql) : undefined;
+const sharedTokenProtector = config.notificationTokenEncryptionKey
+  ? createNotificationTokenProtector(config.notificationTokenEncryptionKey)
+  : undefined;
+const youtubeOAuthConfig = loadYoutubeOAuthConfig();
 const app = await buildApp(config, {
   publicChannels: sql ? createPublicChannelRepository(sql) : undefined,
   google: config.googleClientId ? createGoogleIdentityVerifier(config.googleClientId) : undefined,
   sessions: sql ? createSqlSessionStore(sql) : undefined,
   channels: sql ? createSqlChannelStore(sql) : undefined,
-  alerts: sql ? createSqlAlertStore(sql) : undefined,
+  alerts,
+  companionPairing: sql && alerts ? createSqlCompanionPairingStore(sql, alerts, `${config.appOrigin.replace(/\/+$/, '')}/companion/pair`) : undefined,
   overlays: sql ? createSqlOverlayStore(sql, config.appOrigin) : undefined,
   overlayWakeup: config.databaseUrlDirect ? createDirectOverlayWakeup(config.databaseUrlDirect) : undefined,
   paymentOrders,
@@ -56,9 +82,7 @@ const app = await buildApp(config, {
   serviceIdentity,
   readiness: sql ? createSqlReadiness(sql) : undefined,
   notifications: sql ? createSqlNotificationStore(sql) : undefined,
-  notificationTokenProtector: config.notificationTokenEncryptionKey
-    ? createNotificationTokenProtector(config.notificationTokenEncryptionKey)
-    : undefined,
+  notificationTokenProtector: sharedTokenProtector,
   paymentAccounts: sql ? createSqlPaymentAccountStore(sql) : undefined,
   paymentLedger: sql ? createSqlPaymentLedgerStore(sql) : undefined,
   admin: sql ? createSqlAdminStore(sql) : undefined,
@@ -72,6 +96,36 @@ const app = await buildApp(config, {
   overlayBranding: sql ? createSqlOverlayBrandingStore(sql) : undefined,
   publicAbuseGuard: config.publicPaymentTurnstileSecret ? createTurnstileGuard(config.publicPaymentTurnstileSecret) : undefined,
   ttsStore: sql ? createSqlTtsStore(sql) : undefined,
+  ttsQuotaMeter: sql ? createSqlTtsQuotaMeter(sql) : undefined,
+  viewer: sql ? createSqlViewerStore(sql) : undefined,
+  youtubeConnections: sql && sharedTokenProtector ? createSqlYoutubeConnectionStore(sql, sharedTokenProtector) : undefined,
+  youtubeOAuthClient: youtubeOAuthConfig ? createYoutubeOAuthClient(youtubeOAuthConfig) : undefined,
+  companionFeatures: sql ? createSqlCompanionFeatureStore(sql) : undefined,
+  companionEntitlement: sql ? createSqlCompanionEntitlementStore(sql) : undefined,
+  seats: sql ? createSqlSeatStore(sql) : undefined,
+  goals: sql ? createSqlGoalStore(sql) : undefined,
+  overlayGoals: sql ? createSqlGoalOverlayStore(sql) : undefined,
+  challenges: sql ? createSqlChallengeStore(sql) : undefined,
+  overlayChallenges: sql ? createSqlChallengeOverlayStore(sql) : undefined,
+  interactionDefinitions: sql ? createSqlInteractionDefinitionStore(sql) : undefined,
+  interactionVotes: sql ? createSqlSupportVoteStore(sql) : undefined,
+  interactionPublicVotes: sql ? createSqlPublicVoteStore(sql) : undefined,
+  interactionHype: sql ? createSqlHypeModeStore(sql) : undefined,
+  interactionWidgets: sql ? createSqlWidgetConfigStore(sql) : undefined,
+  interactionLeaderboard: sql ? createSqlLeaderboardStore(sql) : undefined,
+  interactionOverlay: sql ? createSqlInteractionOverlayStore(sql) : undefined,
+  votePaymentTags: sql ? createSqlVotePaymentTagStore(sql) : undefined,
+  paidVotes: sql ? createSqlPaidSupportVoteStore(sql) : undefined,
+  paidVoteOverlay: sql ? createSqlPaidVoteOverlayStore(sql) : undefined,
+  templates: sql ? createSqlTemplateCatalogueStore(sql) : undefined,
+  stickers: sql ? createSqlStickerCatalogueStore(sql) : undefined,
+  publicStickers: sql ? createSqlPublicStickerCatalogueStore(sql) : undefined,
+  stickerSelections: sql ? createSqlStickerSelectionStore(sql) : undefined,
+  ingestFailures: sql ? createSqlIngestFailureStore(sql) : undefined,
+  sql,
+  paymentMethodUpdates: sql && config.paymentServiceOrigin && config.paymentServiceAudience
+    ? createBillingPaymentMethodService(sql, config.paymentServiceOrigin, config.paymentServiceAudience, config.nodeEnv)
+    : undefined,
   overlayAudio: sql ? createSqlOverlayAudioStore(sql) : undefined,
   tts: config.sarvamApiKey
     ? createTtsService(createSarvamTtsProvider(config.sarvamApiKey, config.sarvamTtsEndpoint), sql ? createSqlTtsCache(sql) : undefined)

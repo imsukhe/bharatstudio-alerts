@@ -15,6 +15,8 @@ import { registerChannelRoutes } from './routes/channels.js';
 import type { AlertStore } from './domain/alert-store.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerCompanionRoutes } from './routes/companion.js';
+import type { CompanionPairingStore } from './domain/companion-pairing.js';
+import { registerCompanionPairingRoutes } from './routes/companion-pairing.js';
 import type { OverlayStore } from './domain/overlay-store.js';
 import { registerOverlayRoutes } from './routes/overlay.js';
 import type { OverlayWakeup } from './domain/overlay-wakeup.js';
@@ -41,6 +43,31 @@ import { channelConfigSchema } from './domain/channel-config-schema.js';
 import type { PublicAbuseGuard } from './domain/public-abuse.js';
 import type { TtsService } from './tts/provider.js';
 import type { TtsStore } from './domain/tts-store.js';
+import type { TtsQuotaMeter } from './domain/tts-quota.js';
+import type { ViewerStore } from './domain/viewer-store.js';
+import type { ViewerPlatformIdentityVerifier } from './domain/viewer-platform-identity-verifier.js';
+import { registerViewerRoutes } from './routes/viewer.js';
+import type { YoutubeConnectionStore } from './domain/youtube-connection.js';
+import type { YoutubeOAuthClient } from './domain/youtube-oauth-client.js';
+import type { PaymentMethodUpdateService } from './domain/billing-payment-method.js';
+import type { CompanionFeatureStore } from './domain/companion-feature-store.js';
+import type { CompanionEntitlementStore } from './domain/companion-entitlement-policy.js';
+import type { GoalStore, OverlayGoalStore } from './domain/goal-store.js';
+import type { SeatStore } from './domain/seat-store.js';
+import type { HypeModeStore, InteractionDefinitionStore, InteractionOverlayStore, LeaderboardStore, PublicVoteStore, SupportVoteStore, WidgetConfigStore } from './domain/interaction-types.js';
+import { registerInteractionRoutes } from './routes/interactions.js';
+import type { PaidSupportVoteStore, PaidVoteOverlayStore, VotePaymentTagStore } from './domain/vote-payment-types.js';
+import type { TemplateCatalogueStore } from './domain/template-catalogue.js';
+import { registerTemplateRoutes } from './routes/templates.js';
+import type { StickerCatalogueStore, PublicStickerCatalogueStore, StickerSelectionStore } from './domain/sticker-catalogue.js';
+import { registerStickerRoutes } from './routes/stickers.js';
+import type { ChallengeStore, OverlayChallengeStore } from './domain/challenge-store.js';
+import { registerChallengeRoutes } from './routes/challenges.js';
+import { registerGoalRoutes } from './routes/goals.js';
+import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
+import type { Sql } from 'postgres';
+import { registerMetricsRoutes } from './routes/metrics.js';
+import { registerYoutubeRoutes } from './routes/youtube.js';
 import type { OverlayAudioStore } from './domain/overlay-audio-store.js';
 import { registerTtsRoutes } from './routes/tts.js';
 import { registerOverlayAudioRoutes } from './routes/overlay-audio.js';
@@ -76,10 +103,42 @@ export type AppDependencies = {
   publicAbuseGuard?: PublicAbuseGuard;
   tts?: TtsService;
   ttsStore?: TtsStore;
+  ttsQuotaMeter?: TtsQuotaMeter;
+  viewer?: ViewerStore;
+  platformIdentityVerifier?: ViewerPlatformIdentityVerifier;
+  youtubeConnections?: YoutubeConnectionStore;
+  youtubeOAuthClient?: YoutubeOAuthClient;
+  paymentMethodUpdates?: PaymentMethodUpdateService;
+  companionFeatures?: CompanionFeatureStore;
+  companionEntitlement?: CompanionEntitlementStore;
+  seats?: SeatStore;
+  goals?: GoalStore;
+  overlayGoals?: OverlayGoalStore;
+  challenges?: ChallengeStore;
+  overlayChallenges?: OverlayChallengeStore;
+  interactionDefinitions?: InteractionDefinitionStore;
+  interactionVotes?: SupportVoteStore;
+  interactionPublicVotes?: PublicVoteStore;
+  interactionHype?: HypeModeStore;
+  interactionWidgets?: WidgetConfigStore;
+  interactionLeaderboard?: LeaderboardStore;
+  interactionOverlay?: InteractionOverlayStore;
+  votePaymentTags?: VotePaymentTagStore;
+  paidVotes?: PaidSupportVoteStore;
+  paidVoteOverlay?: PaidVoteOverlayStore;
+  templates?: TemplateCatalogueStore;
+  stickers?: StickerCatalogueStore;
+  publicStickers?: PublicStickerCatalogueStore;
+  stickerSelections?: StickerSelectionStore;
+  ingestFailures?: IngestFailureAdminStore;
+  // L09 reconciliation queries read across payments/refunds/outbox, so the
+  // metrics route needs the raw client rather than a narrow store.
+  sql?: Sql;
   overlayAudio?: OverlayAudioStore;
   referrals?: ReferralStore;
   branding?: BrandingStore;
   overlayBranding?: OverlayBrandingStore;
+  companionPairing?: CompanionPairingStore;
 };
 
 export async function buildApp(
@@ -183,20 +242,32 @@ export async function buildApp(
     dependencies.publicPaymentStatus,
     dependencies.publicAbuseGuard,
     config.publicPaymentTurnstileRequired === true,
+    undefined,
+    undefined,
+    config.appOrigin,
+    dependencies.votePaymentTags,
   );
   await registerAuthRoutes(app, dependencies);
   await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
   await registerAccountRoutes(app, dependencies.sessions, dependencies.account, dependencies.emailOutbox);
-  await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account, dependencies.referrals);
+  await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account, dependencies.referrals, dependencies.seats);
   await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
   await registerReferralRoutes(app, dependencies.sessions, dependencies.referrals);
   await registerBrandingRoutes(app, dependencies.sessions, dependencies.branding, dependencies.account);
-  await registerAdminRoutes(app, dependencies.sessions, dependencies.admin);
-  await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account);
-  await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account);
+  await registerAdminRoutes(app, dependencies.sessions, dependencies.admin, dependencies.ingestFailures);
+  await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account, dependencies.paymentMethodUpdates);
+  await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account, dependencies.companionFeatures, dependencies.companionEntitlement);
+  await registerCompanionPairingRoutes(app, dependencies.sessions, dependencies.companionPairing);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);
-  await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts);
+  await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
+  await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
+  await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
+  await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
+  await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);
+  await registerStickerRoutes(app, dependencies.sessions, dependencies.stickers, dependencies.account, dependencies.publicStickers, dependencies.stickerSelections);
+  await registerInteractionRoutes(app, dependencies.sessions, dependencies.account, dependencies.interactionDefinitions, dependencies.interactionVotes, dependencies.interactionPublicVotes, dependencies.interactionHype, dependencies.interactionWidgets, dependencies.interactionLeaderboard, dependencies.interactionOverlay, dependencies.paidVotes, dependencies.paidVoteOverlay, dependencies.sql);
+  await registerYoutubeRoutes(app, dependencies.sessions, dependencies.youtubeConnections, dependencies.account, dependencies.youtubeOAuthClient);
   await registerOverlayAudioRoutes(app, dependencies.overlayAudio);
   await registerOverlayLottieRoutes(app, dependencies.overlayBranding);
   await registerOverlayRoutes(
@@ -210,6 +281,7 @@ export async function buildApp(
     },
     dependencies.account,
     config.appOrigin,
+    metrics,
   );
 
   app.addHook('onClose', async () => {
@@ -232,24 +304,14 @@ export async function buildApp(
     }
   });
 
-  app.get('/internal/metrics', async (request, reply) => {
-    if (!dependencies.serviceIdentity || !await dependencies.serviceIdentity.verify(request.headers.authorization)) {
-      return reply.code(401).type('text/plain; version=0.0.4').send('unauthorized\n');
-    }
-    let output = metrics.renderPrometheus();
-    const wakeupHealth = dependencies.overlayWakeup?.health?.();
-    if (wakeupHealth) {
-      output += '# HELP bsa_overlay_listener_connected Whether the direct overlay listener is connected.\n';
-      output += '# TYPE bsa_overlay_listener_connected gauge\n';
-      output += `bsa_overlay_listener_connected ${wakeupHealth.connected ? 1 : 0}\n`;
-      output += '# HELP bsa_overlay_listener_reconnects_total Overlay listener reconnect attempts.\n';
-      output += '# TYPE bsa_overlay_listener_reconnects_total counter\n';
-      output += `bsa_overlay_listener_reconnects_total ${wakeupHealth.reconnects}\n`;
-      output += '# HELP bsa_overlay_listener_failures_total Overlay listener connection failures.\n';
-      output += '# TYPE bsa_overlay_listener_failures_total counter\n';
-      output += `bsa_overlay_listener_failures_total ${wakeupHealth.failures}\n`;
-    }
-    return reply.type('text/plain; version=0.0.4').send(output);
+  // Metrics + reliability reconciliation now live in routes/metrics.ts (L09).
+  // The previous inline handler is replaced wholesale rather than kept
+  // alongside — two handlers on the same path would be a duplicate route.
+  await registerMetricsRoutes(app, {
+    metrics,
+    serviceIdentity: dependencies.serviceIdentity,
+    sql: dependencies.sql,
+    overlayWakeupHealth: () => dependencies.overlayWakeup?.health?.(),
   });
 
   // Internal drain for the email outbox (invoice/subscription events, DPDP

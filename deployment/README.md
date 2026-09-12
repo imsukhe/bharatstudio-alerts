@@ -20,6 +20,16 @@ non-pooled Neon endpoint. A pooled endpoint must never be used for `LISTEN`.
 Payment and worker services have separate bounded pools and do not share a
 module-level client.
 
+## Image build inputs
+
+Build the API from the repository root with `apps/api/Dockerfile`; it compiles
+the TypeScript package and deploys only its production dependency closure.
+Build `services/alert-worker-go` and `services/payment-webhook-go` from their
+respective directories using their checked-in Dockerfiles. The API Cloud Run
+manifest binds every production-required API configuration value; the manifest
+validator rejects a missing binding or a missing compiled API entrypoint before
+release substitution occurs.
+
 ## Required identity contract
 
 `ALERT_WORKER_PUMP_AUDIENCE` and `ALERT_WORKER_PRIVATE_AUDIENCE` must be the

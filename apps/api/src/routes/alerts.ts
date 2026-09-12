@@ -4,6 +4,7 @@ import type { SessionStore } from '../auth/session-store.js';
 import type { AlertStore } from '../domain/alert-store.js';
 import type { AccountStore } from '../domain/account-store.js';
 import type { PaymentSubscriptionService } from '../domain/payment-subscription.js';
+import { PaymentMethodUpdateForbiddenError, type PaymentMethodUpdateService } from '../domain/billing-payment-method.js';
 import { parseHistoryCursor } from '../db/history-cursor.js';
 import { logSafeError } from '../observability/safe-log.js';
 
@@ -15,7 +16,7 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'alert_store_unavailable', message: 'Alert data is temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerAlertRoutes(app: FastifyInstance, sessions?: SessionStore, store?: AlertStore, paymentSubscriptions?: PaymentSubscriptionService, paymentEnvironment: 'test' | 'live' = 'test', account?: AccountStore): Promise<void> {
+export async function registerAlertRoutes(app: FastifyInstance, sessions?: SessionStore, store?: AlertStore, paymentSubscriptions?: PaymentSubscriptionService, paymentEnvironment: 'test' | 'live' = 'test', account?: AccountStore, paymentMethodUpdates?: PaymentMethodUpdateService): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
 
@@ -226,6 +227,39 @@ export async function registerAlertRoutes(app: FastifyInstance, sessions?: Sessi
       return reply.code(200).send(result);
     } catch (error) {
       logSafeError(request, 'subscription_reactivate_failed', error);
+      return subscriptionLifecycleUnavailable(reply, request.id);
+    }
+  });
+
+  // No instrument data ever reaches this route: no `body` schema is
+  // declared (declaring one would run AJV validation ahead of auth, on an
+  // absent body, and reject before request.auth is even checked), so this
+  // handler checks for and rejects ANY request body itself — a card/UPI
+  // field included — before doing anything else. The only thing this
+  // endpoint can return is a short-lived, opaque link into Razorpay's own
+  // hosted flow — see domain/billing-payment-method.ts and
+  // db/billing-payment-method-client.ts for the non-negotiable boundary
+  // this enforces (docs/BharatStudio-MASTER-PLAN.md#1.4).
+  app.post<{ Params: { channelId: string } }>('/v1/channels/:channelId/billing/payment-method', {
+    preHandler: termsAuth,
+    schema: { params: channelParams },
+  }, async (request, reply) => {
+    if (!paymentMethodUpdates || !request.auth) return subscriptionLifecycleUnavailable(reply, request.id);
+    if (request.body !== undefined && request.body !== null && (typeof request.body !== 'object' || Object.keys(request.body as Record<string, unknown>).length > 0)) {
+      return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'unexpected_request_body', message: 'This endpoint accepts no request body', traceId: request.id, retryable: false });
+    }
+    const idempotencyKey = requireIdempotencyKey(request, reply, request.id);
+    if (!idempotencyKey) return;
+    try {
+      const result = await paymentMethodUpdates.requestUpdateLink({
+        userId: request.auth.userId, channelId: request.params.channelId, environment: paymentEnvironment, idempotencyKey,
+      }, request.id);
+      return reply.code(201).send(result);
+    } catch (error) {
+      if (error instanceof PaymentMethodUpdateForbiddenError) {
+        return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'channel_role_required', message: 'Owner or admin role is required to update the payment method', traceId: request.id, retryable: false });
+      }
+      logSafeError(request, 'payment_method_update_failed', error);
       return subscriptionLifecycleUnavailable(reply, request.id);
     }
   });

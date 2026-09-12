@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/health-response.schema.json",
+  "status": "ok",
+  "service": "bharatstudio-alerts-api"
+}

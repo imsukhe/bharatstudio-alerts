@@ -11,12 +11,14 @@ values
   ('00000000-0000-4000-8000-000000000003', 'google-admin', 'Synthetic Admin', current_timestamp, current_timestamp),
   ('00000000-0000-4000-8000-000000000004', 'google-operator', 'Synthetic Operator', current_timestamp, current_timestamp),
   ('00000000-0000-4000-8000-000000000005', 'google-moderator', 'Synthetic Moderator', current_timestamp, current_timestamp),
-  ('00000000-0000-4000-8000-000000000006', 'google-viewer', 'Synthetic Viewer', current_timestamp, current_timestamp);
+  ('00000000-0000-4000-8000-000000000006', 'google-viewer', 'Synthetic Viewer', current_timestamp, current_timestamp)
+on conflict (id) do nothing;
 
 insert into channels (id, owner_user_id, handle, display_name, accepting_tips, public_config_version, created_at, updated_at)
 values
   ('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000001', 'synthetic_a', 'Synthetic A Channel', true, 1, current_timestamp, current_timestamp),
-  ('00000000-0000-4000-8000-000000000012', '00000000-0000-4000-8000-000000000002', 'synthetic_b', 'Synthetic B Channel', true, 1, current_timestamp, current_timestamp);
+  ('00000000-0000-4000-8000-000000000012', '00000000-0000-4000-8000-000000000002', 'synthetic_b', 'Synthetic B Channel', true, 1, current_timestamp, current_timestamp)
+on conflict (id) do nothing;
 
 insert into channel_memberships (channel_id, user_id, role, created_at)
 values
@@ -25,7 +27,8 @@ values
   ('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000003', 'admin', current_timestamp),
   ('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000004', 'operator', current_timestamp),
   ('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000005', 'moderator', current_timestamp),
-  ('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000006', 'viewer', current_timestamp);
+  ('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000006', 'viewer', current_timestamp)
+on conflict (channel_id, user_id) do nothing;
 
 insert into channel_configs (channel_id, version, values, effective_at, created_at)
 values

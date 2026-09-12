@@ -2,6 +2,22 @@
 -- the durable dispatch boundary. Accepted rows remain durable while blocked.
 \set ON_ERROR_STOP on
 
+-- Self-contained fixture (ids block 00000000-...-0000000015xx, see the
+-- allocation note in fixtures/00_base_world.sql): this test used to depend on
+-- alert queue '...0021' and binding '...0031', which only
+-- l03_application_behavior.sql created (asserting on the default-payment-
+-- binding trigger and the queue_binding identity guard as a side effect of
+-- those exact inserts). Pre-seeding those exact ids elsewhere made l03 fail
+-- instead, so this file creates its own queue/binding pair under a fresh id
+-- block that nothing else claims. The alert_queue insert still fires
+-- ensure_default_payment_binding() (0036), which is harmless here since
+-- nothing in this file asserts on that side effect.
+insert into alert_queues (id, channel_id, name, created_at, updated_at)
+values ('00000000-0000-4000-8000-000000001501', '00000000-0000-4000-8000-000000000011', 'L05 fixture queue', current_timestamp, current_timestamp);
+
+insert into queue_bindings (id, channel_id, queue_id, source_type, source_id, allow_duplicates, priority, override_values, created_at)
+values ('00000000-0000-4000-8000-000000001502', '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000001501', 'manual', 'l05-fixture-source', true, 20, '{}', current_timestamp);
+
 insert into channel_configs (channel_id, version, values, effective_at, created_at)
 values
   ('00000000-0000-4000-8000-000000000011', 1000,
@@ -31,12 +47,12 @@ insert into event_outbox_deliveries (id, event_id, outbox_id, queue_id, binding_
   created_at, updated_at)
 values
   ('00000000-0000-4000-8000-0000000002e5', '00000000-0000-4000-8000-0000000002e1',
-   '00000000-0000-4000-8000-0000000002e2', '00000000-0000-4000-8000-000000000021',
-   '00000000-0000-4000-8000-000000000031', 'policy-approval', 1000, 1, 'pending', 0,
+   '00000000-0000-4000-8000-0000000002e2', '00000000-0000-4000-8000-000000001501',
+   '00000000-0000-4000-8000-000000001502', 'policy-approval', 1000, 1, 'pending', 0,
    current_timestamp, current_timestamp),
   ('00000000-0000-4000-8000-0000000002e6', '00000000-0000-4000-8000-0000000002e3',
-   '00000000-0000-4000-8000-0000000002e4', '00000000-0000-4000-8000-000000000021',
-   '00000000-0000-4000-8000-000000000031', 'policy-quiet', 1001, 1, 'pending', 0,
+   '00000000-0000-4000-8000-0000000002e4', '00000000-0000-4000-8000-000000001501',
+   '00000000-0000-4000-8000-000000001502', 'policy-quiet', 1001, 1, 'pending', 0,
    current_timestamp, current_timestamp);
 
 begin;
@@ -131,13 +147,13 @@ insert into event_outbox_deliveries (id, event_id, outbox_id, queue_id, binding_
   source_id, config_snapshot_version, delivery_sequence, status, attempt_count, created_at, updated_at)
 values
   -- rank = source_priority + floor(age_seconds / 30): 1 + 0 = 1
-  ('00000000-0000-4000-8000-0000000002f9', '00000000-0000-4000-8000-0000000002f1', '00000000-0000-4000-8000-0000000002f5', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000031', 1, 'policy-priority-low', 1002, 1, 'pending', 0, current_timestamp - interval '10 seconds', current_timestamp),
+  ('00000000-0000-4000-8000-0000000002f9', '00000000-0000-4000-8000-0000000002f1', '00000000-0000-4000-8000-0000000002f5', '00000000-0000-4000-8000-000000001501', '00000000-0000-4000-8000-000000001502', 1, 'policy-priority-low', 1002, 1, 'pending', 0, current_timestamp - interval '10 seconds', current_timestamp),
   -- rank = 10 + 0 = 10 (must rank first)
-  ('00000000-0000-4000-8000-0000000002fa', '00000000-0000-4000-8000-0000000002f2', '00000000-0000-4000-8000-0000000002f6', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000031', 10, 'policy-priority-high', 1002, 1, 'pending', 0, current_timestamp - interval '10 seconds', current_timestamp),
+  ('00000000-0000-4000-8000-0000000002fa', '00000000-0000-4000-8000-0000000002f2', '00000000-0000-4000-8000-0000000002f6', '00000000-0000-4000-8000-000000001501', '00000000-0000-4000-8000-000000001502', 10, 'policy-priority-high', 1002, 1, 'pending', 0, current_timestamp - interval '10 seconds', current_timestamp),
   -- rank = 0 + floor(90/30) = 3 (must rank between low and high)
-  ('00000000-0000-4000-8000-0000000002fb', '00000000-0000-4000-8000-0000000002f3', '00000000-0000-4000-8000-0000000002f7', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000031', 0, 'policy-priority-aged', 1002, 1, 'pending', 0, current_timestamp - interval '90 seconds', current_timestamp),
+  ('00000000-0000-4000-8000-0000000002fb', '00000000-0000-4000-8000-0000000002f3', '00000000-0000-4000-8000-0000000002f7', '00000000-0000-4000-8000-000000001501', '00000000-0000-4000-8000-000000001502', 0, 'policy-priority-aged', 1002, 1, 'pending', 0, current_timestamp - interval '90 seconds', current_timestamp),
   -- stacked mode: source_priority=99 must NOT jump ahead of the priority-mode rows above despite being numerically huge
-  ('00000000-0000-4000-8000-0000000002fc', '00000000-0000-4000-8000-0000000002f4', '00000000-0000-4000-8000-0000000002f8', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000031', 99, 'policy-stacked-highprio', 1003, 1, 'pending', 0, current_timestamp - interval '5 seconds', current_timestamp);
+  ('00000000-0000-4000-8000-0000000002fc', '00000000-0000-4000-8000-0000000002f4', '00000000-0000-4000-8000-0000000002f8', '00000000-0000-4000-8000-000000001501', '00000000-0000-4000-8000-000000001502', 99, 'policy-stacked-highprio', 1003, 1, 'pending', 0, current_timestamp - interval '5 seconds', current_timestamp);
 
 set local role bsa_alert_worker;
 do $$

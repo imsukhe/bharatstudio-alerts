@@ -11,6 +11,16 @@
 -- destroyed at the end of the run.
 \set ON_ERROR_STOP on
 
+-- Self-contained fixture: user_terms_acceptances.user_id references
+-- app_users(id), so this file must not depend on another test file (e.g.
+-- l03_application_behavior.sql) having inserted this synthetic user first.
+-- `on conflict (id) do nothing` keeps this safe whether run standalone,
+-- first, or after another test already seeded the same id.
+insert into app_users (id, external_subject, display_name, created_at, updated_at)
+values
+  ('00000000-0000-4000-8000-000000000001', 'google-a', 'Synthetic A', current_timestamp, current_timestamp)
+on conflict (id) do nothing;
+
 update terms_documents set active = false where document_key in ('terms_of_service', 'privacy_notice') and active;
 
 do $$

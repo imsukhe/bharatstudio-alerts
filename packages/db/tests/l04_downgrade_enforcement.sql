@@ -10,10 +10,12 @@ do $$
 declare
   free_queue_count text;
 begin
+  -- Retiered 2026-09-06 by migration 0080_v1_l03_entitlement_retier_and_dimensions.sql
+  -- (master plan v3.0 §3.2, decision 1). Previous approved values were 1/3/5/10.
   if app_private.tier_queue_count('free') <> 1
-     or app_private.tier_queue_count('pro') <> 3
-     or app_private.tier_queue_count('creator') <> 5
-     or app_private.tier_queue_count('studio') <> 10 then
+     or app_private.tier_queue_count('pro') <> 2
+     or app_private.tier_queue_count('creator') <> 3
+     or app_private.tier_queue_count('studio') <> 5 then
     raise exception 'tier_queue_count does not match the approved entitlement values addendum';
   end if;
   begin
@@ -79,7 +81,8 @@ declare
   open_active_count integer;
   found_reason text;
 begin
-  -- Upgrading to creator (queueCount=5) must publish the value and run
+  -- Upgrading to creator (queueCount=3 after the 2026-09-06 retier) must publish
+  -- the value and run
   -- enforcement as a no-op: 2 active queues (the manually-paused one is
   -- excluded from the active pool) is well under the limit.
   set role bsa_payment;
@@ -100,8 +103,8 @@ begin
    where channel_id = '00000000-0000-4000-8000-000000000014'
    order by version desc
    limit 1;
-  if published_queue_count <> '5' then
-    raise exception 'creator-tier entitlement did not publish queueCount=5: %', published_queue_count;
+  if published_queue_count <> '3' then
+    raise exception 'creator-tier entitlement did not publish queueCount=3: %', published_queue_count;
   end if;
 
   select count(*) into open_active_count

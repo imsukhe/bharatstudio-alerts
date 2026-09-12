@@ -1,0 +1,45 @@
+#!/usr/bin/env sh
+# Boots a disposable PostgreSQL 16 container, applies every migration, then
+# runs the fixture harness self-test against it. Follows the same disposable
+# -container convention as packages/db/tests/run-l03-application-behavior.sh.
+# Nothing here touches a shared or production database.
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+CONTAINER="bharatstudio-fixtures-pg-$$"
+PORT="${FIXTURES_PG_PORT:-55440}"
+
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+docker run --rm --detach --name "$CONTAINER" \
+  -e POSTGRES_PASSWORD=test \
+  -p "127.0.0.1:${PORT}:5432" \
+  postgres:16-alpine >/dev/null
+
+ready=0
+for _attempt in $(seq 1 60); do
+  if docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$ready" -eq 1 ] || { echo 'PostgreSQL 16 did not become ready' >&2; exit 1; }
+
+psql() {
+  docker exec -i "$CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres "$@"
+}
+
+psql < "$ROOT/packages/db/roles/0001_v1_service_roles.sql" >/dev/null
+for migration in "$ROOT"/packages/db/migrations/*.sql; do
+  psql < "$migration" >/dev/null
+done
+
+# Reuses apps/api's own tsx + postgres.js install rather than adding a new
+# workspace package; NODE_PATH lets this script (outside apps/api) resolve them.
+DATABASE_URL_DIRECT="postgres://postgres:test@127.0.0.1:${PORT}/postgres" \
+  NODE_PATH="$ROOT/apps/api/node_modules" \
+  "$ROOT/apps/api/node_modules/.bin/tsx" "$ROOT/scripts/fixtures/self-test.ts"

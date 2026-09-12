@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "v1",
+  "entries": [
+    {
+      "externalKey": "BSA-TEST-001",
+      "displayName": "Synthetic Minimal Tip",
+      "category": "Minimal Clean",
+      "minTier": "free",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "circle" }] }
+    },
+    {
+      "externalKey": "BSA-TEST-002",
+      "displayName": "Synthetic Glass Follow",
+      "category": "Glassmorphism",
+      "minTier": "pro",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "panel" }] }
+    },
+    {
+      "externalKey": "BSA-TEST-003",
+      "displayName": "Synthetic Neon Sub",
+      "category": "Neon Gaming",
+      "minTier": "creator",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "glow" }] }
+    },
+    {
+      "externalKey": "BSA-TEST-004",
+      "displayName": "Synthetic Studio Cinematic Raid",
+      "category": "Cinematic",
+      "minTier": "studio",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "letterbox" }] }
+    }
+  ]
+}

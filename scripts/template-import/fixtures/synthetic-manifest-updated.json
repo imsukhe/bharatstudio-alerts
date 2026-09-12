@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "v1",
+  "entries": [
+    {
+      "externalKey": "BSA-TEST-001",
+      "displayName": "Synthetic Minimal Tip (v2 art pass)",
+      "category": "Minimal Clean",
+      "minTier": "free",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "circle-v2" }] }
+    }
+  ]
+}

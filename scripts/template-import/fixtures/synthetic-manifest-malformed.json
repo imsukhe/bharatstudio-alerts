@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "v1",
+  "entries": [
+    {
+      "externalKey": "BSA-TEST-005",
+      "displayName": "Synthetic Valid Entry",
+      "category": "Minimal Clean",
+      "minTier": "free",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "circle" }] }
+    },
+    {
+      "externalKey": "BSA-TEST-006",
+      "displayName": "Synthetic HTML Runtime Package (rejected)",
+      "category": "Neon Gaming",
+      "minTier": "free",
+      "renderDocument": { "v": "1.0", "layers": [{ "ty": 4, "nm": "<script>alert(1)</script>" }] }
+    }
+  ]
+}

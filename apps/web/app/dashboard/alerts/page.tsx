@@ -1,10 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AppShell } from '../../components/AppShell';
 import { authGateStates } from '../../components/AuthGateStates';
+import { StatusMessage } from '../../components/StatusMessage';
+import { Button } from '../../components/ui/Button';
+import { Card } from '../../components/ui/Card';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { Field } from '../../components/ui/Field';
+import { useChannelBootstrap } from '../../hooks/useChannelBootstrap';
+import { useStatusMessage } from '../../hooks/useStatusMessage';
 import {
-  createBinding, createQueue, getBindings, getChannel, getChannelConfig, getCurrentUser, getQueues, sendTestAlert, updateBinding,
+  createBinding, createQueue, getBindings, getChannel, getChannelConfig, getQueues, sendTestAlert, updateBinding,
   updateChannelConfig, updateQueue, type ChannelConfig, type ChannelConfigValues, type ChannelDetails, type CurrentUser, type Queue, type QueueBinding,
 } from '../../lib/api';
 import { ChannelConfigEditor } from '../ChannelConfigEditor';
@@ -42,34 +49,19 @@ export default function AlertsPage() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [queueName, setQueueName] = useState('Main alerts');
   const [testMessage, setTestMessage] = useState('Welcome to the stream!');
-  // Every mutation on this page used to funnel success and failure through
-  // the same `message` string and the same gold inline-message/role="status"
-  // styling — no color distinction for a sighted user, and the same
-  // "polite" (non-interrupting) announcement for a screen reader regardless
-  // of whether the action actually failed. `notify` below is the one place
-  // that sets both message and its kind together, so no call site can
-  // regress back to that.
-  const [message, setMessage] = useState<string | null>(null);
-  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
+  const { message, messageKind, notify, setMessage } = useStatusMessage();
   const [error, setError] = useState<string | null>(null);
 
-  function notify(text: string, kind: 'success' | 'error') {
-    setMessage(text);
-    setMessageKind(kind);
-  }
-
-  useEffect(() => {
-    getCurrentUser().then(async (nextUser) => {
-      setUser(nextUser);
-      const first = nextUser.channels[0];
-      if (!first) { window.location.assign('/onboarding'); return; }
-      const [nextChannel, nextQueues, nextConfig, nextBindings] = await Promise.all([
-        getChannel(first.channelId), getQueues(first.channelId), getChannelConfig(first.channelId),
-        bindingsUiEnabled ? getBindings(first.channelId) : Promise.resolve({ schemaVersion: 'v1' as const, bindings: [] }),
-      ]);
-      setChannel(nextChannel); setQueues(nextQueues.queues); setConfig(nextConfig); setConfigDraft(mergeConfig(nextConfig.values)); setBindings(nextBindings.bindings);
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
-  }, []);
+  useChannelBootstrap(async (nextUser) => {
+    setUser(nextUser);
+    const first = nextUser.channels[0];
+    if (!first) { window.location.assign('/onboarding'); return; }
+    const [nextChannel, nextQueues, nextConfig, nextBindings] = await Promise.all([
+      getChannel(first.channelId), getQueues(first.channelId), getChannelConfig(first.channelId),
+      bindingsUiEnabled ? getBindings(first.channelId) : Promise.resolve({ schemaVersion: 'v1' as const, bindings: [] }),
+    ]);
+    setChannel(nextChannel); setQueues(nextQueues.queues); setConfig(nextConfig); setConfigDraft(mergeConfig(nextConfig.values)); setBindings(nextBindings.bindings);
+  }, setError);
 
   const canOperateQueues = channel ? ['owner', 'admin', 'operator'].includes(channel.role ?? '') : false;
 
@@ -151,34 +143,28 @@ export default function AlertsPage() {
 
   return (
     <AppShell title="Alerts">
-      {message && (messageKind === 'error'
-        ? <p className="inline-message error-text" role="alert">{message}</p>
-        : <p className="inline-message" role="status">{message}</p>)}
+      <StatusMessage message={message} kind={messageKind} />
       <ChannelConfigEditor version={config.version} draft={configDraft} saving={savingConfig} onChange={setConfigDraft} onSubmit={submitConfig} />
       <section className="content-grid dashboard-controls">
-        <article className="panel">
-          <p className="muted-label">Queues</p>
-          <h2>Keep every alert accounted for.</h2>
+        <Card as="article" heading="bare" eyebrow="Queues" title="Keep every alert accounted for.">
           <div className="queue-list">
-            {queues.length === 0 ? <p>No queues yet.</p> : queues.map((queue) => (
+            {queues.length === 0 ? <EmptyState>No queues yet.</EmptyState> : queues.map((queue) => (
               <div className="queue-row" key={queue.queueId}>
                 <div><span>{queue.name}</span><small>{queue.paused ? 'Paused' : queue.active ? 'Ready' : 'Closed'}</small></div>
-                {canOperateQueues && <button className="secondary-button" type="button" onClick={() => toggleQueue(queue)}>{queue.paused ? 'Resume' : 'Pause'}</button>}
+                {canOperateQueues && <Button type="button" onClick={() => toggleQueue(queue)}>{queue.paused ? 'Resume' : 'Pause'}</Button>}
               </div>
             ))}
           </div>
-          {canOperateQueues && <form className="inline-form" onSubmit={submitQueue}><input required maxLength={80} value={queueName} onChange={(event) => setQueueName(event.target.value)} placeholder="New queue name" /><button className="secondary-button" type="submit">Add queue</button></form>}
-        </article>
-        <article className="panel">
-          <p className="muted-label">Test alert</p>
-          <h2>Preview the delivery path</h2>
+          {canOperateQueues && <form className="inline-form" onSubmit={submitQueue}><input required maxLength={80} value={queueName} onChange={(event) => setQueueName(event.target.value)} placeholder="New queue name" /><Button type="submit">Add queue</Button></form>}
+        </Card>
+        <Card as="article" heading="bare" eyebrow="Test alert" title="Preview the delivery path">
           {canOperateQueues ? (
             <form className="dashboard-form" onSubmit={submitTestAlert}>
-              <label>Message<textarea required maxLength={500} rows={3} value={testMessage} onChange={(event) => setTestMessage(event.target.value)} /></label>
-              <button className="primary-button" type="submit">Send test alert</button>
+              <Field label="Message"><textarea required maxLength={500} rows={3} value={testMessage} onChange={(event) => setTestMessage(event.target.value)} /></Field>
+              <Button variant="primary" type="submit">Send test alert</Button>
             </form>
-          ) : <p className="helper-text">Your channel role can view the queue state but cannot send test alerts.</p>}
-        </article>
+          ) : <EmptyState helper>Your channel role can view the queue state but cannot send test alerts.</EmptyState>}
+        </Card>
       </section>
       {bindingsUiEnabled && canOperateQueues && (
         <BindingControls bindings={bindings} queues={queues} onCreate={addBinding} onSave={saveBinding} onToggle={toggleBinding} onClose={closeBinding} onReopen={reopenBinding} />

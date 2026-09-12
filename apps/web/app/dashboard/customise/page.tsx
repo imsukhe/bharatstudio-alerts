@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AppShell } from '../../components/AppShell';
 import { authGateStates } from '../../components/AuthGateStates';
-import { getBilling, getChannel, getCurrentUser, type BillingView, type ChannelDetails } from '../../lib/api';
+import { useChannelBootstrap } from '../../hooks/useChannelBootstrap';
+import { getBilling, getChannel, type BillingView, type ChannelDetails } from '../../lib/api';
 import { BrandingPanel } from '../BrandingPanel';
 
 export default function CustomisePage() {
@@ -11,14 +12,12 @@ export default function CustomisePage() {
   const [billing, setBilling] = useState<BillingView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getCurrentUser().then(async (user) => {
-      const first = user.channels[0];
-      if (!first) { window.location.assign('/onboarding'); return; }
-      const [nextChannel, nextBilling] = await Promise.all([getChannel(first.channelId), getBilling(first.channelId)]);
-      setChannel(nextChannel); setBilling(nextBilling);
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
-  }, []);
+  useChannelBootstrap(async (user) => {
+    const first = user.channels[0];
+    if (!first) { window.location.assign('/onboarding'); return; }
+    const [nextChannel, nextBilling] = await Promise.all([getChannel(first.channelId), getBilling(first.channelId)]);
+    setChannel(nextChannel); setBilling(nextBilling);
+  }, setError);
 
   const canManageBilling = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
 

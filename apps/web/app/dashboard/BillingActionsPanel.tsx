@@ -15,9 +15,45 @@
  */
 import { useState } from 'react';
 import {
-  cancelSubscription, createSubscription, downgradeSubscription, getBilling, isApprovedCheckoutUrl,
+  cancelSubscription, createSubscription, downgradeSubscription, getAccessToken, getBilling, isApprovedCheckoutUrl,
   reactivateSubscription, upgradeSubscription, type BillingView, type PaidTier,
 } from '../lib/api';
+import { getApiOrigin } from '../lib/api-origin';
+
+/*
+ * There is no field in this app that accepts a card/UPI credential, and
+ * there never will be — see routes/alerts.ts's payment-method route
+ * (apps/api/src/routes/alerts.ts): it accepts no request body and returns
+ * only an opaque, short-lived link into Razorpay's own hosted flow. This
+ * client-side call mirrors the existing lib/api.ts request conventions
+ * (getApiOrigin + Bearer token + JSON) rather than adding to lib/api.ts,
+ * which belongs to a different ownership lane than this file.
+ */
+type PaymentMethodUpdateLink = { schemaVersion: 'v1'; provider: 'razorpay'; updateUrl: string; expiresAt: string };
+
+async function requestPaymentMethodUpdateLink(channelId: string): Promise<PaymentMethodUpdateLink> {
+  const token = getAccessToken();
+  if (!token) throw new Error('Authentication required');
+  if (!globalThis.crypto?.randomUUID) throw new Error('secure_random_unavailable');
+  const response = await fetch(`${getApiOrigin()}/v1/channels/${encodeURIComponent(channelId)}/billing/payment-method`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'idempotency-key': globalThis.crypto.randomUUID() },
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    let message = 'Could not start the payment method update. Please try again.';
+    try {
+      const body = await response.json() as { message?: unknown };
+      if (typeof body.message === 'string' && body.message.length > 0 && body.message.length <= 180) message = body.message;
+    } catch { /* keep bounded fallback */ }
+    throw new Error(message);
+  }
+  const value = (await response.json()) as Record<string, unknown>;
+  if (value.schemaVersion !== 'v1' || value.provider !== 'razorpay' || typeof value.updateUrl !== 'string' || typeof value.expiresAt !== 'string') {
+    throw new Error('Server response was invalid');
+  }
+  return { schemaVersion: 'v1', provider: 'razorpay', updateUrl: value.updateUrl, expiresAt: value.expiresAt };
+}
 
 type Props = {
   channelId: string;
@@ -57,6 +93,7 @@ export function BillingActionsPanel({ channelId, billing, onUpdated }: Props) {
 
   const anyLoading = loading !== null;
   const isCancelled = billing.renewalState === 'cancelled';
+  const isPastDue = billing.renewalState === 'past_due';
   const currentOrder = TIER_ORDER[billing.tier];
   const upgradableTiers = PAID_TIERS.filter((tier) => TIER_ORDER[tier] > currentOrder);
   const downgradablePaidTiers = PAID_TIERS.filter((tier) => TIER_ORDER[tier] < currentOrder && TIER_ORDER[tier] > 0);
@@ -167,12 +204,17 @@ export function BillingActionsPanel({ channelId, billing, onUpdated }: Props) {
     }
   }
 
+  // Reused for both recovery paths: for a cancelled subscription this
+  // resumes auto-renew before the plan lapses; for past_due it asks the
+  // provider to retry the charge on the instrument already on file. It
+  // does not by itself change the instrument — see handleUpdatePaymentMethod
+  // below for that path (POST /v1/channels/:id/billing/payment-method).
   async function handleReactivate() {
     clearFeedback();
     setLoading('reactivate');
     try {
       await reactivateSubscription(channelId);
-      setNotice('Reactivating — your plan continues as normal.');
+      setNotice(isPastDue ? 'Retrying your payment…' : 'Reactivating — your plan continues as normal.');
       setLoading(null);
       await refreshBillingSoon();
     } catch (cause) {
@@ -181,8 +223,46 @@ export function BillingActionsPanel({ channelId, billing, onUpdated }: Props) {
     }
   }
 
+  // Redirects into Razorpay's own hosted flow to re-authorise the
+  // instrument on the existing subscription. BharatStudio never sees or
+  // handles the card/UPI details themselves — same SEC-BILLING-001
+  // allowlist as the subscribe checkout redirect guards this one too.
+  async function handleUpdatePaymentMethod() {
+    clearFeedback();
+    setLoading('update-payment-method');
+    try {
+      const link = await requestPaymentMethodUpdateLink(channelId);
+      if (!isApprovedCheckoutUrl(link.updateUrl)) {
+        setError('Invalid payment update link. Please contact support.');
+        setLoading(null);
+        return;
+      }
+      window.location.href = link.updateUrl;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not start the payment method update. Please try again.');
+      setLoading(null);
+    }
+  }
+
   return (
     <div className="billing-actions">
+      {isPastDue && (
+        <div className="channel-row billing-cancelled-row">
+          <div>
+            <strong>Payment failed</strong>
+            <span>Retry now, or update your payment method if your card/UPI account changed or expired.</span>
+          </div>
+          <div className="control-actions">
+            <button type="button" className="secondary-button" onClick={() => void handleUpdatePaymentMethod()} disabled={anyLoading}>
+              {loading === 'update-payment-method' ? 'Opening…' : 'Update payment method'}
+            </button>
+            <button type="button" className="primary-button" onClick={() => void handleReactivate()} disabled={anyLoading}>
+              {loading === 'reactivate' ? 'Retrying…' : 'Retry payment'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {isCancelled && (
         <div className="channel-row billing-cancelled-row">
           <div>

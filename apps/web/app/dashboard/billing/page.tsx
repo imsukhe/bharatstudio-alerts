@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AppShell } from '../../components/AppShell';
 import { authGateStates } from '../../components/AuthGateStates';
-import { getBilling, getChannel, getCurrentUser, type BillingView, type ChannelDetails } from '../../lib/api';
+import { useChannelBootstrap } from '../../hooks/useChannelBootstrap';
+import { getBilling, getChannel, type BillingView, type ChannelDetails } from '../../lib/api';
 import { BillingActionsPanel } from '../BillingActionsPanel';
 
 function formatPlanPrice(monthlyPricePaise: number): string {
@@ -15,14 +16,12 @@ export default function BillingPage() {
   const [billing, setBilling] = useState<BillingView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getCurrentUser().then(async (user) => {
-      const first = user.channels[0];
-      if (!first) { window.location.assign('/onboarding'); return; }
-      const [nextChannel, nextBilling] = await Promise.all([getChannel(first.channelId), getBilling(first.channelId)]);
-      setChannel(nextChannel); setBilling(nextBilling);
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
-  }, []);
+  useChannelBootstrap(async (user) => {
+    const first = user.channels[0];
+    if (!first) { window.location.assign('/onboarding'); return; }
+    const [nextChannel, nextBilling] = await Promise.all([getChannel(first.channelId), getBilling(first.channelId)]);
+    setChannel(nextChannel); setBilling(nextBilling);
+  }, setError);
 
   const canManageBilling = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
 
@@ -48,8 +47,7 @@ export default function BillingPage() {
         {billing.renewalState === 'past_due' && billing.currentPeriodEndsAt && (
           <p className="helper-text">
             Payment attention required. Access follows the approved grace and dunning policy through {new Date(billing.currentPeriodEndsAt).toLocaleDateString('en-IN')}.
-            {' '}There is no self-serve way to update your payment method yet — email{' '}
-            <a href="mailto:support@bharatstudio.in">support@bharatstudio.in</a> if the next automatic retry doesn&apos;t go through.
+            {' '}Retry the payment below, or update your payment method if your card/UPI account changed or expired.
           </p>
         )}
         {canManageBilling ? (

@@ -1,22 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AppShell } from '../../components/AppShell';
 import { authGateStates } from '../../components/AuthGateStates';
-import { getChannel, getCurrentUser, type ChannelDetails } from '../../lib/api';
+import { useChannelBootstrap } from '../../hooks/useChannelBootstrap';
+import { getChannel, type ChannelDetails } from '../../lib/api';
 import { ReferralPanel } from '../ReferralPanel';
 
 export default function ReferralsPage() {
   const [channel, setChannel] = useState<ChannelDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getCurrentUser().then(async (user) => {
-      const first = user.channels[0];
-      if (!first) { window.location.assign('/onboarding'); return; }
-      setChannel(await getChannel(first.channelId));
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
-  }, []);
+  useChannelBootstrap(async (user) => {
+    const first = user.channels[0];
+    if (!first) { window.location.assign('/onboarding'); return; }
+    setChannel(await getChannel(first.channelId));
+  }, setError);
 
   const canViewReferrals = channel ? ['owner', 'admin'].includes(channel.role ?? '') : false;
 

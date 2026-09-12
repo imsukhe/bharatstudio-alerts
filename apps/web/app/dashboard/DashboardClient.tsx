@@ -17,7 +17,10 @@
  */
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { executeCompanionAction, getBilling, getChannel, getCompanionState, getCurrentUser, getQueues, getTermsStatus, type BillingView, type ChannelDetails, type CompanionAction, type CompanionState, type CurrentUser, type Queue } from '../lib/api';
+import { StatusMessage } from '../components/StatusMessage';
+import { bootstrapChannelUser } from '../hooks/useChannelBootstrap';
+import { useStatusMessage } from '../hooks/useStatusMessage';
+import { executeCompanionAction, getBilling, getChannel, getCompanionState, getQueues, getTermsStatus, type BillingView, type ChannelDetails, type CompanionAction, type CompanionState, type CurrentUser, type Queue } from '../lib/api';
 
 function formatPlanPrice(monthlyPricePaise: number): string {
   return monthlyPricePaise === 0 ? 'Free' : `₹${Math.round(monthlyPricePaise / 100).toLocaleString('en-IN')}/month`;
@@ -30,13 +33,7 @@ export default function DashboardClient() {
   const [companion, setCompanion] = useState<CompanionState | null>(null);
   const [queues, setQueues] = useState<Queue[]>([]);
   const [selectedCompanionQueueId, setSelectedCompanionQueueId] = useState<string | null>(null);
-  // Success and failure used to share one `message` string rendered through
-  // the same gold `inline-message`/role="status" treatment — a screen
-  // reader got the same "polite" announcement for both, and a sighted user
-  // got no color distinction. `messageKind` lets the render pick between
-  // that and the app's existing error-text/role="alert" treatment.
-  const [message, setMessage] = useState<string | null>(null);
-  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
+  const { message, messageKind, notify } = useStatusMessage();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -51,7 +48,7 @@ export default function DashboardClient() {
     });
 
     function loadDashboard() {
-      getCurrentUser().then(async (nextUser) => {
+      void bootstrapChannelUser(async (nextUser) => {
         setUser(nextUser);
         const first = nextUser.channels[0];
         // No channel yet — onboarding hasn't been completed. Redirect there
@@ -62,7 +59,7 @@ export default function DashboardClient() {
         const [nextChannel, billingView, companionState, nextQueues] = await Promise.all([getChannel(first.channelId), getBilling(first.channelId), getCompanionState(first.channelId), getQueues(first.channelId)]);
         setChannel(nextChannel); setBilling(billingView); setCompanion(companionState); setQueues(nextQueues.queues);
         setSelectedCompanionQueueId(nextQueues.queues.find((queue) => queue.active)?.queueId ?? null);
-      }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
+      }, setError);
     }
   }, []);
 
@@ -71,9 +68,9 @@ export default function DashboardClient() {
   async function sendCompanionAction(action: CompanionAction) {
     if (!channel) return;
     const target = queues.find((queue) => queue.queueId === selectedCompanionQueueId && queue.active) ?? queues.find((queue) => queue.active);
-    if (!target) { setMessage('Companion controls are unavailable until an active queue is loaded.'); setMessageKind('error'); return; }
-    try { await executeCompanionAction(channel.channelId, action, target.queueId); setMessage('Companion command accepted.'); setMessageKind('success'); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Companion command could not be accepted'); setMessageKind('error'); }
+    if (!target) { notify('Companion controls are unavailable until an active queue is loaded.', 'error'); return; }
+    try { await executeCompanionAction(channel.channelId, action, target.queueId); notify('Companion command accepted.', 'success'); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'Companion command could not be accepted', 'error'); }
   }
 
   if (error) {
@@ -89,9 +86,7 @@ export default function DashboardClient() {
         <p>Your account is connected through the reviewed authentication flow.</p>
       </section>
 
-      {message && (messageKind === 'error'
-        ? <p className="inline-message error-text" role="alert">{message}</p>
-        : <p className="inline-message" role="status">{message}</p>)}
+      <StatusMessage message={message} kind={messageKind} />
 
       {!channel ? (
         <section className="panel" role="status">Loading your channel…</section>

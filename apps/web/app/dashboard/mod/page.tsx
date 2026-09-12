@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AppShell } from '../../components/AppShell';
 import { authGateStates } from '../../components/AuthGateStates';
-import { getChannel, getCurrentUser, getHistory, moderateAlert, type AlertHistory, type ChannelDetails } from '../../lib/api';
+import { StatusMessage } from '../../components/StatusMessage';
+import { useChannelBootstrap } from '../../hooks/useChannelBootstrap';
+import { useStatusMessage } from '../../hooks/useStatusMessage';
+import { getChannel, getHistory, moderateAlert, type AlertHistory, type ChannelDetails } from '../../lib/api';
 
 // Alerts' queue rows already map their raw states to friendly capitalized
 // words (Paused/Ready/Closed) instead of showing the backend enum verbatim
@@ -16,8 +19,7 @@ function historyStatusLabel(status: string): string {
 export default function ModConsolePage() {
   const [channel, setChannel] = useState<ChannelDetails | null>(null);
   const [history, setHistory] = useState<AlertHistory[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [messageKind, setMessageKind] = useState<'success' | 'error'>('success');
+  const { message, messageKind, notify } = useStatusMessage();
   const [error, setError] = useState<string | null>(null);
   // Replaces window.prompt() for the moderation-reason capture — a native
   // browser dialog broke the app's entire dark visual system for this one
@@ -27,14 +29,12 @@ export default function ModConsolePage() {
   const [reasonText, setReasonText] = useState('');
   const [moderating, setModerating] = useState(false);
 
-  useEffect(() => {
-    getCurrentUser().then(async (user) => {
-      const first = user.channels[0];
-      if (!first) { window.location.assign('/onboarding'); return; }
-      const [nextChannel, nextHistory] = await Promise.all([getChannel(first.channelId), getHistory(first.channelId)]);
-      setChannel(nextChannel); setHistory(nextHistory.items);
-    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Account data is unavailable'));
-  }, []);
+  useChannelBootstrap(async (user) => {
+    const first = user.channels[0];
+    if (!first) { window.location.assign('/onboarding'); return; }
+    const [nextChannel, nextHistory] = await Promise.all([getChannel(first.channelId), getHistory(first.channelId)]);
+    setChannel(nextChannel); setHistory(nextHistory.items);
+  }, setError);
 
   const canModerateAlerts = channel ? ['owner', 'admin', 'operator', 'moderator'].includes(channel.role ?? '') : false;
 
@@ -43,11 +43,9 @@ export default function ModConsolePage() {
     setModerating(true);
     try {
       await moderateAlert(channel.channelId, eventId, action, reason);
-      setMessage(`Alert ${action} action recorded.`);
-      setMessageKind('success');
+      notify(`Alert ${action} action recorded.`, 'success');
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Moderation action could not be recorded');
-      setMessageKind('error');
+      notify(cause instanceof Error ? cause.message : 'Moderation action could not be recorded', 'error');
     } finally {
       setModerating(false);
       setPendingModeration(null);
@@ -70,9 +68,7 @@ export default function ModConsolePage() {
 
   return (
     <AppShell title="Mod console">
-      {message && (messageKind === 'error'
-        ? <p className="inline-message error-text" role="alert">{message}</p>
-        : <p className="inline-message" role="status">{message}</p>)}
+      <StatusMessage message={message} kind={messageKind} />
       {!canModerateAlerts ? (
         <section className="panel"><p className="helper-text">Your channel role can view alert activity but cannot moderate it.</p></section>
       ) : null}

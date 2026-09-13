@@ -26,10 +26,20 @@ import type {
 // lane's ownership boundary is new files prefixed vote-payment- only), so
 // every existing consumer of the types above is untouched.
 import type { PaidSupportVoteStore, PaidVoteOverlayStore, PaidVoteTally } from '../domain/vote-payment-types.js';
+import type { ContributionSourceStore, ContributionSourceType } from '../domain/contribution-source-types.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
 const interactionTypes: readonly InteractionType[] = ['tip', 'tts_tip', 'sticker', 'mega_alert', 'priority_question', 'support_vote', 'community_goal', 'hype_mode'];
+const contributionSourceTypes: readonly ContributionSourceType[] = ['payment', 'youtube_superchat'];
+
+const sourceInclusionBody = {
+  type: 'object', additionalProperties: false, required: ['sourceType', 'included'],
+  properties: {
+    sourceType: { type: 'string', enum: [...contributionSourceTypes] },
+    included: { type: 'boolean' },
+  },
+} as const;
 const moderationRules: readonly ModerationRule[] = ['none', 'review', 'block_list'];
 const widgetTypes: readonly WidgetType[] = ['main_alert', 'support_goal', 'recent_tips', 'top_supporters', 'supporter_ticker', 'public_leaderboard', 'mega_tip_banner'];
 const leaderboardWindows: readonly LeaderboardWindow[] = ['weekly', 'monthly', 'all'];
@@ -207,6 +217,11 @@ export async function registerInteractionRoutes(
   // rather than adding a same-shape *Store file outside this lane's
   // vote-payment- file-naming boundary.
   widgetOverlaySql?: Sql,
+  // L16c (0117): per-hype-mode-definition external-contribution source
+  // inclusion. New file (domain/contribution-source-types.ts, this lane's
+  // own "contribution-" naming boundary), trailing/optional so no existing
+  // positional caller of this function is disturbed.
+  contributionSources?: ContributionSourceStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -379,6 +394,44 @@ export async function registerInteractionRoutes(
     } catch (error) {
       logSafeError(request, 'hype_mode_read_failed', error);
       return unavailable(reply, request.id);
+    }
+  });
+
+  // L16c (0117): which sources count toward this definition's hype meter.
+  // Include/exclude ONLY — see domain/contribution-source-types.ts. Scoped
+  // to interaction_definition targets (meaningful today for hype_mode; a
+  // row on any other definition type is accepted but simply never read by
+  // any progress function, same "harmless no-op" posture the rest of this
+  // schema takes for a dangling widget data_source reference).
+  app.get<{ Params: { channelId: string; definitionId: string } }>('/v1/channels/:channelId/interactions/:definitionId/sources', { preHandler: auth, schema: { params: definitionParams } }, async (request, reply) => {
+    if (!contributionSources || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await contributionSources.list(request.auth.userId, request.params.channelId, 'interaction_definition', request.params.definitionId);
+      return result.outcome === 'ok'
+        ? reply.code(200).send({ schemaVersion: 'v1', sources: result.sources })
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Interaction definition not found', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'interaction_source_list_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  app.put<{ Params: { channelId: string; definitionId: string }; Body: { sourceType: ContributionSourceType; included: boolean } }>('/v1/channels/:channelId/interactions/:definitionId/sources', { preHandler: termsAuth, schema: { params: definitionParams, body: sourceInclusionBody } }, async (request, reply) => {
+    if (!contributionSources || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await contributionSources.set(
+        request.auth.userId, request.params.channelId, 'interaction_definition', request.params.definitionId,
+        request.body.sourceType, request.body.included,
+      );
+      switch (result.outcome) {
+        case 'ok': return reply.code(200).send({ schemaVersion: 'v1', sources: result.sources });
+        case 'forbidden': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Interaction definition not found', traceId: request.id });
+        case 'not_found': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Interaction definition not found', traceId: request.id });
+        case 'invalid': return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_source_inclusion', message: 'That contribution source could not be updated', traceId: request.id });
+      }
+    } catch (error) {
+      logSafeError(request, 'interaction_source_update_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'interaction_store_unavailable', message: 'The contribution source could not be updated', traceId: request.id, retryable: true });
     }
   });
 

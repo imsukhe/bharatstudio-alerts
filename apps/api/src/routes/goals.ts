@@ -2,11 +2,21 @@ import type { FastifyInstance } from 'fastify';
 import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { AccountStore } from '../domain/account-store.js';
+import type { ContributionSourceStore, ContributionSourceType } from '../domain/contribution-source-types.js';
 import type { GoalStore, GoalWindow, OverlayGoalStore } from '../domain/goal-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
 const goalWindows: readonly GoalWindow[] = ['stream', 'daily', 'monthly', 'open'];
+const contributionSourceTypes: readonly ContributionSourceType[] = ['payment', 'youtube_superchat'];
+
+const sourceInclusionBody = {
+  type: 'object', additionalProperties: false, required: ['sourceType', 'included'],
+  properties: {
+    sourceType: { type: 'string', enum: [...contributionSourceTypes] },
+    included: { type: 'boolean' },
+  },
+} as const;
 
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: uuid } } as const;
 const goalParams = { type: 'object', additionalProperties: false, required: ['channelId', 'goalId'], properties: { channelId: uuid, goalId: uuid } } as const;
@@ -40,7 +50,7 @@ function bearerToken(value: string | undefined): string | undefined {
   return match?.[1];
 }
 
-export async function registerGoalRoutes(app: FastifyInstance, sessions?: SessionStore, store?: GoalStore, account?: AccountStore, overlayGoals?: OverlayGoalStore): Promise<void> {
+export async function registerGoalRoutes(app: FastifyInstance, sessions?: SessionStore, store?: GoalStore, account?: AccountStore, overlayGoals?: OverlayGoalStore, contributionSources?: ContributionSourceStore): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
 
@@ -116,6 +126,49 @@ export async function registerGoalRoutes(app: FastifyInstance, sessions?: Sessio
     } catch (error) {
       logSafeError(request, 'goal_end_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'goal_store_unavailable', message: 'The support goal could not be ended', traceId: request.id, retryable: true });
+    }
+  });
+
+  // L16c (0117): which sources (BharatStudio tips vs Super Chats etc.)
+  // count toward this goal's progress. Include/exclude ONLY — see
+  // domain/contribution-source-types.ts for why there is no percentage
+  // field. Missing rows read back as included=true (aggregate everything
+  // by default).
+  app.get<{ Params: { channelId: string; goalId: string } }>('/v1/channels/:channelId/goals/:goalId/sources', {
+    preHandler: auth,
+    schema: { params: goalParams },
+  }, async (request, reply) => {
+    if (!contributionSources || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await contributionSources.list(request.auth.userId, request.params.channelId, 'goal', request.params.goalId);
+      return result.outcome === 'ok'
+        ? reply.code(200).send({ schemaVersion: 'v1', sources: result.sources })
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Support goal not found', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'goal_source_list_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  app.put<{ Params: { channelId: string; goalId: string }; Body: { sourceType: ContributionSourceType; included: boolean } }>('/v1/channels/:channelId/goals/:goalId/sources', {
+    preHandler: termsAuth,
+    schema: { params: goalParams, body: sourceInclusionBody },
+  }, async (request, reply) => {
+    if (!contributionSources || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await contributionSources.set(
+        request.auth.userId, request.params.channelId, 'goal', request.params.goalId,
+        request.body.sourceType, request.body.included,
+      );
+      switch (result.outcome) {
+        case 'ok': return reply.code(200).send({ schemaVersion: 'v1', sources: result.sources });
+        case 'forbidden': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Support goal not found', traceId: request.id });
+        case 'not_found': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Support goal not found', traceId: request.id });
+        case 'invalid': return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_source_inclusion', message: 'That contribution source could not be updated', traceId: request.id });
+      }
+    } catch (error) {
+      logSafeError(request, 'goal_source_update_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'goal_store_unavailable', message: 'The contribution source could not be updated', traceId: request.id, retryable: true });
     }
   });
 

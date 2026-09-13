@@ -4,11 +4,21 @@ import type { SessionStore } from '../auth/session-store.js';
 import type { AccountStore } from '../domain/account-store.js';
 import { CHALLENGE_FAILURE_COPY } from '../domain/challenge-store.js';
 import type { ChallengeKind, ChallengeStore, OverlayChallengeStore } from '../domain/challenge-store.js';
+import type { ContributionSourceStore, ContributionSourceType } from '../domain/contribution-source-types.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
 const challengeKinds: readonly ChallengeKind[] = ['stake', 'bounty'];
 const transitionTargets = ['active', 'succeeded', 'failed', 'cancelled'] as const;
+const contributionSourceTypes: readonly ContributionSourceType[] = ['payment', 'youtube_superchat'];
+
+const sourceInclusionBody = {
+  type: 'object', additionalProperties: false, required: ['sourceType', 'included'],
+  properties: {
+    sourceType: { type: 'string', enum: [...contributionSourceTypes] },
+    included: { type: 'boolean' },
+  },
+} as const;
 
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: uuid } } as const;
 const challengeParams = { type: 'object', additionalProperties: false, required: ['channelId', 'challengeId'], properties: { channelId: uuid, challengeId: uuid } } as const;
@@ -52,7 +62,7 @@ function bearerToken(value: string | undefined): string | undefined {
  *
  * Registered by buildApp with SQL-backed stores from the production entrypoint.
  */
-export async function registerChallengeRoutes(app: FastifyInstance, sessions?: SessionStore, store?: ChallengeStore, account?: AccountStore, overlayChallenges?: OverlayChallengeStore): Promise<void> {
+export async function registerChallengeRoutes(app: FastifyInstance, sessions?: SessionStore, store?: ChallengeStore, account?: AccountStore, overlayChallenges?: OverlayChallengeStore, contributionSources?: ContributionSourceStore): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
 
@@ -116,6 +126,46 @@ export async function registerChallengeRoutes(app: FastifyInstance, sessions?: S
     } catch (error) {
       logSafeError(request, 'challenge_transition_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'challenge_store_unavailable', message: 'The challenge could not be transitioned', traceId: request.id, retryable: true });
+    }
+  });
+
+  // L16c (0117): which sources count toward this challenge's target.
+  // Include/exclude ONLY — see domain/contribution-source-types.ts.
+  app.get<{ Params: { channelId: string; challengeId: string } }>('/v1/channels/:channelId/challenges/:challengeId/sources', {
+    preHandler: auth,
+    schema: { params: challengeParams },
+  }, async (request, reply) => {
+    if (!contributionSources || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await contributionSources.list(request.auth.userId, request.params.channelId, 'challenge', request.params.challengeId);
+      return result.outcome === 'ok'
+        ? reply.code(200).send({ schemaVersion: 'v1', sources: result.sources })
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Challenge not found', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'challenge_source_list_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  app.put<{ Params: { channelId: string; challengeId: string }; Body: { sourceType: ContributionSourceType; included: boolean } }>('/v1/channels/:channelId/challenges/:challengeId/sources', {
+    preHandler: termsAuth,
+    schema: { params: challengeParams, body: sourceInclusionBody },
+  }, async (request, reply) => {
+    if (!contributionSources || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await contributionSources.set(
+        request.auth.userId, request.params.channelId, 'challenge', request.params.challengeId,
+        request.body.sourceType, request.body.included,
+      );
+      switch (result.outcome) {
+        case 'ok': return reply.code(200).send({ schemaVersion: 'v1', sources: result.sources });
+        case 'forbidden': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Challenge not found', traceId: request.id });
+        case 'not_found': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Challenge not found', traceId: request.id });
+        case 'invalid': return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_source_inclusion', message: 'That contribution source could not be updated', traceId: request.id });
+      }
+    } catch (error) {
+      logSafeError(request, 'challenge_source_update_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'challenge_store_unavailable', message: 'The contribution source could not be updated', traceId: request.id, retryable: true });
     }
   });
 

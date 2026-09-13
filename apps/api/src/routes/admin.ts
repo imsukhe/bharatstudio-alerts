@@ -3,6 +3,7 @@ import { requirePlatformAdmin } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { AdminStore, DlqStatusFilter } from '../domain/admin.js';
 import type { IngestFailureAdminStore } from '../domain/ingest-failure-admin.js';
+import type { StaffCreatorPackReviewStore } from '../domain/staff-creator-pack-review.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const dlqStatuses: DlqStatusFilter[] = ['held', 'suppressed', 'quarantined_outbox', 'all'];
@@ -19,6 +20,13 @@ export async function registerAdminRoutes(
   sessions?: SessionStore,
   store?: AdminStore,
   ingestFailureStore?: IngestFailureAdminStore,
+  // L22c: the Studio creator-pack sticker review surface (see
+  // packages/db/migrations/0122_v1_l22c_staff_creator_pack_review.sql).
+  // Not yet threaded into app.ts's `dependencies` bag — production
+  // wiring is one line in buildApp, out of this pass's file ownership
+  // (app.ts). Until wired, these routes fail closed with 503, same as
+  // ingestFailureStore above when unconfigured — never a silent bypass.
+  staffCreatorPackReviewStore?: StaffCreatorPackReviewStore,
 ): Promise<void> {
   // Same role gate as every other admin route on this file — reuses
   // `store.isPlatformAdmin`, the existing AdminStore's own method, rather
@@ -181,6 +189,81 @@ export async function registerAdminRoutes(
         : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_acknowledgeable', message: 'Ingest failure was not found or is already acknowledged', traceId: request.id });
     } catch (error) {
       logSafeError(request, 'admin_ingest_failure_acknowledge_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  // L22c: platform-staff review of pending Studio creator-pack stickers
+  // (migration 0119's app_private.review_creator_pack_sticker, gated for
+  // the first time — see 0122_v1_l22c_staff_creator_pack_review.sql).
+  // Same `adminAuth` gate, same response idiom, same
+  // unconfigured-store-fails-closed-503 shape as every route above — no
+  // parallel admin surface. `reason` is optional on approval, required
+  // (checked here, before the store/SQL layer, so it is a clean 400 and
+  // not a 22023 swallowed into 404) on rejection.
+  const packStickerIdParams = {
+    type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', format: 'uuid' } },
+  } as const;
+
+  app.get<{ Querystring: { limit?: number } }>('/v1/admin/creator-packs/pending', {
+    preHandler: adminAuth,
+    schema: { querystring: { type: 'object', additionalProperties: false, properties: { limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 } } } },
+  }, async (request, reply) => {
+    if (!staffCreatorPackReviewStore || !request.auth) return unavailable(reply, request.id);
+    try {
+      const entries = await staffCreatorPackReviewStore.listPendingCreatorPacks(request.auth.userId, request.query.limit ?? 50);
+      return reply.code(200).send({ schemaVersion: 'v1', entries });
+    } catch (error) {
+      logSafeError(request, 'admin_creator_pack_pending_list_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/v1/admin/creator-packs/:id', { preHandler: adminAuth, schema: { params: packStickerIdParams } }, async (request, reply) => {
+    if (!staffCreatorPackReviewStore || !request.auth) return unavailable(reply, request.id);
+    try {
+      const entry = await staffCreatorPackReviewStore.getCreatorPackForReview(request.auth.userId, request.params.id);
+      return entry
+        ? reply.code(200).send({ schemaVersion: 'v1', ...entry })
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Creator-pack sticker not found', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'admin_creator_pack_get_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { approved: boolean; reason?: string } }>('/v1/admin/creator-packs/:id/review', {
+    preHandler: adminAuth,
+    schema: {
+      params: packStickerIdParams,
+      body: {
+        type: 'object', additionalProperties: false, required: ['approved'],
+        properties: { approved: { type: 'boolean' }, reason: { type: 'string', minLength: 1, maxLength: 1000 } },
+      },
+    },
+  }, async (request, reply) => {
+    if (!staffCreatorPackReviewStore || !request.auth) return unavailable(reply, request.id);
+    if (!request.body.approved && !request.body.reason?.trim()) {
+      return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'reason_required', message: 'A reason is required to reject a creator-pack sticker', traceId: request.id });
+    }
+    try {
+      const result = await staffCreatorPackReviewStore.reviewCreatorPack(request.auth.userId, request.params.id, request.body.approved, request.body.reason ?? null);
+      return result
+        ? reply.code(200).send({ schemaVersion: 'v1', ...result })
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_reviewable', message: 'Creator-pack sticker was not found or is not pending review', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'admin_creator_pack_review_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  app.get<{ Params: { id: string } }>('/v1/admin/creator-packs/:id/audit', { preHandler: adminAuth, schema: { params: packStickerIdParams } }, async (request, reply) => {
+    if (!staffCreatorPackReviewStore || !request.auth) return unavailable(reply, request.id);
+    try {
+      const entries = await staffCreatorPackReviewStore.listReviewAudit(request.auth.userId, request.params.id);
+      return reply.code(200).send({ schemaVersion: 'v1', entries });
+    } catch (error) {
+      logSafeError(request, 'admin_creator_pack_audit_failed', error);
       return unavailable(reply, request.id);
     }
   });

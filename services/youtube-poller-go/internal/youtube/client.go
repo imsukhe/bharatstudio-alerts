@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -173,6 +174,158 @@ func (c *Client) PollLiveChat(ctx context.Context, accessToken, liveChatID, page
 		NextPageToken:     parsed.NextPageToken,
 		PollingIntervalMs: parsed.PollingIntervalMillis,
 	}, nil
+}
+
+// --- live chat streaming (liveChatMessages.streamList) ---------------------
+//
+// Google documents streamList, on the liveChatMessages.list page itself, as
+// the preferred alternative to polling: it "pushes new messages to the
+// client as they become available, which reduces the need for constant
+// polling and helps to avoid exceeding your quota." The streamList method
+// page describes a server-streaming connection with low latency, and warns
+// that "[w]hen you first connect, the API sends a series of messages
+// containing recent chat history" before continuing to push new ones on the
+// same open connection.
+//
+// That history-on-connect behaviour means every (re)connect can replay
+// messages already processed. This client draws no conclusion about
+// duplicate-safety on its own — see poller.streamOne, which routes every
+// streamed message through the exact same InsertLiveEvent idempotency path
+// (alert_events_external_source_unique, 0091) as the polling path, making
+// replay a no-op by construction rather than by hoping the stream never
+// repeats itself.
+
+// ErrStreamEnded signals a streamList connection ending — cleanly (server
+// closed it, e.g. broadcast ended) or otherwise (network drop, idle
+// timeout). This client cannot tell those apart from the wire alone; the
+// poller resolves the ambiguity by re-running discovery (the same
+// ActiveBroadcastForChannel call already used to find the channel live in
+// the first place) before deciding to reconnect.
+var ErrStreamEnded = errors.New("youtube data api: live chat stream ended")
+
+// ChatStream is a live, open liveChatMessages.streamList connection.
+type ChatStream interface {
+	// Recv blocks until the next streamed chunk arrives, ctx is done, or
+	// the stream ends. Exactly one of (page, error) is non-nil.
+	Recv(ctx context.Context) (*LiveChatPage, error)
+	// Close releases the underlying connection. Safe to call more than
+	// once and safe to call concurrently with Recv.
+	Close() error
+}
+
+type streamChunk struct {
+	page *LiveChatPage
+	err  error
+}
+
+type liveChatStream struct {
+	body    io.ReadCloser
+	chunks  chan streamChunk
+	closeCh chan struct{}
+	closeMu sync.Once
+}
+
+// StreamLiveChat opens a liveChatMessages.streamList connection.
+//
+// Wire format note (honesty over guessing): this repo has no live,
+// quota-approved Google Cloud project to observe streamList's real framing
+// against (governance/AGENTS.md:28 — no conclusion drawn here about
+// verification/approval status, this is just why the byte-level format is
+// unverified). This client assumes Google's common REST server-streaming
+// convention used elsewhere in its APIs: a chunked HTTP response body
+// carrying back-to-back JSON values, each shaped like one
+// liveChatMessages.list response page, decoded with repeated
+// json.Decoder.Decode calls. If the real wire format differs, the very
+// first Decode fails immediately and the poller's fallback-to-list path
+// (poller.streamOne / Config.StreamFailureThreshold) engages within a few
+// failed reconnects rather than silently losing chat.
+func (c *Client) StreamLiveChat(ctx context.Context, accessToken, liveChatID string) (ChatStream, error) {
+	values := url.Values{}
+	values.Set("part", "snippet,authorDetails")
+	values.Set("liveChatId", liveChatID)
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/liveChat/messages:streamList?"+values.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Accept", "application/json")
+
+	response, err := c.HTTPClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("youtube data api stream request: %w", err)
+	}
+	if response.StatusCode == http.StatusUnauthorized {
+		response.Body.Close()
+		return nil, ErrTokenExpired
+	}
+	if response.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+		response.Body.Close()
+		var envelope apiErrorEnvelope
+		_ = json.Unmarshal(body, &envelope)
+		for _, e := range envelope.Error.Errors {
+			if e.Reason == "quotaExceeded" || e.Reason == "dailyLimitExceeded" || e.Reason == "userRateLimitExceeded" {
+				return nil, ErrQuotaExceeded
+			}
+		}
+		return nil, fmt.Errorf("youtube data api stream forbidden: %s", strings.TrimSpace(string(body)))
+	}
+	if response.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+		response.Body.Close()
+		return nil, fmt.Errorf("youtube data api stream status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	stream := &liveChatStream{
+		body:    response.Body,
+		chunks:  make(chan streamChunk, 8),
+		closeCh: make(chan struct{}),
+	}
+	go stream.pump()
+	return stream, nil
+}
+
+// pump continuously drains the connection into a buffered channel so a
+// slow or momentarily-idle consumer (the poller only calls Recv during its
+// bounded per-cycle read window) never stalls the underlying TCP socket.
+func (s *liveChatStream) pump() {
+	defer close(s.chunks)
+	defer s.body.Close()
+	decoder := json.NewDecoder(s.body)
+	for {
+		var parsed liveChatMessagesResponse
+		if err := decoder.Decode(&parsed); err != nil {
+			select {
+			case s.chunks <- streamChunk{err: fmt.Errorf("%w: %v", ErrStreamEnded, err)}:
+			case <-s.closeCh:
+			}
+			return
+		}
+		page := &LiveChatPage{Messages: parsed.Items, NextPageToken: parsed.NextPageToken, PollingIntervalMs: parsed.PollingIntervalMillis}
+		select {
+		case s.chunks <- streamChunk{page: page}:
+		case <-s.closeCh:
+			return
+		}
+	}
+}
+
+func (s *liveChatStream) Recv(ctx context.Context) (*LiveChatPage, error) {
+	select {
+	case chunk, ok := <-s.chunks:
+		if !ok {
+			return nil, ErrStreamEnded
+		}
+		return chunk.page, chunk.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *liveChatStream) Close() error {
+	s.closeMu.Do(func() { close(s.closeCh) })
+	return s.body.Close()
 }
 
 // TextMessage returns the plain chat text and true when this message is a

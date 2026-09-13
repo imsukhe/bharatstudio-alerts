@@ -378,26 +378,29 @@ func TestRunCycleTransientTipIntentFailureHoldsPageCursor(t *testing.T) {
 		ConfigSnapshotVersion: func(context.Context, string) (int64, error) { return 1, nil },
 		MinChatPollDelay:      time.Second,
 		PollCycleInterval:     time.Minute,
+		StreamReadWindow:      5 * time.Millisecond,
 		TipIntents:            creator,
 		TipIntentDedup:        dedup,
 	})
 
-	// Discovery and the first chat poll attempt happen inside this single
-	// RunCycle (nextPollAt starts at the zero value, so a poll is
+	// Discovery and the first chat stream connect happen inside this
+	// single RunCycle (nextPollAt starts at the zero value, so it is
 	// immediately due). RunCycle itself never surfaces a single channel's
-	// pollOne error (it `continue`s to the next channel and always returns
-	// nil — see TestTransientInsertFailureHoldsPageCursorForRetry, which
-	// asserts the very same "no error" shape for a structured event); the
-	// held cursor is what proves the failure was not silently dropped.
+	// streamOne error (it `continue`s to the next channel and always
+	// returns nil — see TestTransientInsertFailureForcesStreamReconnectForRetry,
+	// which asserts the same "no error" shape for a structured event); the
+	// forced reconnect (streamOne has no pageToken to hold for a streamed
+	// message — see that test's own doc comment) is what proves the
+	// failure was not silently dropped.
 	if err := p.RunCycle(context.Background()); err != nil {
 		t.Fatalf("RunCycle() error = %v", err)
 	}
 
 	p.mu.Lock()
-	pageToken := p.states["conn-1"].pageToken
+	stillOpen := p.states["conn-1"].stream != nil
 	p.mu.Unlock()
-	if pageToken != "" {
-		t.Fatalf("page cursor advanced to %q despite a transient TipIntent failure; want it held", pageToken)
+	if stillOpen {
+		t.Fatal("stream still open after a transient TipIntent failure, want it closed so the next cycle reconnects and retries")
 	}
 	if dedup.releaseCalls != 1 {
 		t.Fatalf("Release called %d times, want 1", dedup.releaseCalls)
@@ -426,6 +429,7 @@ func TestRunCyclePermanentTipIntentFailureAdvancesPageCursor(t *testing.T) {
 		ConfigSnapshotVersion: func(context.Context, string) (int64, error) { return 1, nil },
 		MinChatPollDelay:      time.Second,
 		PollCycleInterval:     time.Minute,
+		StreamReadWindow:      5 * time.Millisecond,
 		TipIntents:            creator,
 		TipIntentDedup:        dedup,
 	})
@@ -434,17 +438,20 @@ func TestRunCyclePermanentTipIntentFailureAdvancesPageCursor(t *testing.T) {
 		t.Fatalf("RunCycle() [discovery] error = %v", err)
 	}
 	// A permanent failure (this task's own scenario: a failed TipIntent
-	// creation must not wedge the poller's page cursor) must let the
-	// cycle succeed and the cursor advance past the offending message.
+	// creation must not wedge the poller) must let the cycle succeed and
+	// the stream stay open — a confirmed-permanent rejection is final for
+	// this message and safe to move past on the SAME connection, unlike a
+	// transient one (see TestRunCycleTransientTipIntentFailureHoldsPageCursor,
+	// which forces a reconnect instead).
 	if err := p.RunCycle(context.Background()); err != nil {
 		t.Fatalf("RunCycle() unexpectedly failed on a permanent TipIntent failure: %v", err)
 	}
 
 	p.mu.Lock()
-	pageToken := p.states["conn-1"].pageToken
+	stillOpen := p.states["conn-1"].stream != nil
 	p.mu.Unlock()
-	if pageToken != "page-2" {
-		t.Fatalf("page cursor = %q, want it to advance to page-2 despite the permanent TipIntent failure", pageToken)
+	if !stillOpen {
+		t.Fatal("stream closed after a permanent TipIntent failure, want it left open (final, not retryable, must not wedge the channel)")
 	}
 	if dedup.failCalls != 1 {
 		t.Fatalf("MarkFailed called %d times, want 1", dedup.failCalls)
@@ -476,6 +483,7 @@ func TestRunCycleTipCommandsDoNotInterfereWithStructuredEvents(t *testing.T) {
 		ConfigSnapshotVersion: func(context.Context, string) (int64, error) { return 1, nil },
 		MinChatPollDelay:      time.Second,
 		PollCycleInterval:     time.Minute,
+		StreamReadWindow:      5 * time.Millisecond,
 		TipIntents:            creator,
 		TipIntentDedup:        dedup,
 	})

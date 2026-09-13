@@ -28,6 +28,75 @@ type fakeClient struct {
 	pollErr              error
 	refreshedAccessToken string
 	refreshCalls         int
+
+	// streamConnectErr, when set, is returned by every StreamLiveChat call
+	// instead of opening a stream (simulates streamList being unavailable,
+	// for fallback-engagement tests).
+	streamConnectErr error
+	streamConnects   int
+	// streams tracks every fakeChatStream this client has ever handed out,
+	// keyed by liveChatID, so a test can reach in and simulate a mid-stream
+	// drop (streams[id].dropWith(err)) independently of connect-time
+	// failures.
+	streams map[string]*fakeChatStream
+}
+
+// fakeChatStream serves the same client.pages/pageCalls queue a
+// PollLiveChat fake page-list would, but as streamed chunks: each queued
+// youtube.LiveChatPage becomes one Recv() chunk. Once the queue is
+// exhausted it blocks like a real idle connection until the caller's ctx
+// (streamOne's bounded StreamReadWindow) ends — never returning a
+// synthetic "no data" error, so tests exercise the exact same
+// context.DeadlineExceeded path production hits.
+type fakeChatStream struct {
+	client     *fakeClient
+	liveChatID string
+
+	mu       sync.Mutex
+	dropErr  error // set by dropWith to simulate a mid-stream drop/error
+	closed   bool
+}
+
+func (s *fakeChatStream) dropWith(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dropErr = err
+}
+
+func (s *fakeChatStream) Recv(ctx context.Context) (*youtube.LiveChatPage, error) {
+	s.mu.Lock()
+	if s.dropErr != nil {
+		err := s.dropErr
+		s.dropErr = nil
+		s.mu.Unlock()
+		return nil, err
+	}
+	s.mu.Unlock()
+
+	s.client.mu.Lock()
+	if s.client.pollErr != nil {
+		err := s.client.pollErr
+		s.client.mu.Unlock()
+		return nil, err
+	}
+	queue := s.client.pages[s.liveChatID]
+	idx := s.client.pageCalls[s.liveChatID]
+	if idx >= len(queue) {
+		s.client.mu.Unlock()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.client.pageCalls[s.liveChatID] = idx + 1
+	page := queue[idx]
+	s.client.mu.Unlock()
+	return &page, nil
+}
+
+func (s *fakeChatStream) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
 }
 
 func newFakeClient() *fakeClient {
@@ -35,7 +104,20 @@ func newFakeClient() *fakeClient {
 		broadcasts: make(map[string]*youtube.LiveBroadcast),
 		pages:      make(map[string][]youtube.LiveChatPage),
 		pageCalls:  make(map[string]int),
+		streams:    make(map[string]*fakeChatStream),
 	}
+}
+
+func (f *fakeClient) StreamLiveChat(_ context.Context, _ string, liveChatID string) (youtube.ChatStream, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.streamConnects++
+	if f.streamConnectErr != nil {
+		return nil, f.streamConnectErr
+	}
+	s := &fakeChatStream{client: f, liveChatID: liveChatID}
+	f.streams[liveChatID] = s
+	return s, nil
 }
 
 func (f *fakeClient) ActiveBroadcastForChannel(_ context.Context, accessToken string) (*youtube.LiveBroadcast, error) {
@@ -163,6 +245,11 @@ func newTestPoller(t *testing.T, client *fakeClient, connections *fakeConnection
 		ConfigSnapshotVersion: func(context.Context, string) (int64, error) { return 1, nil },
 		MinChatPollDelay:      time.Second,
 		PollCycleInterval:     time.Minute,
+		// Kept tiny so a test that drains an exhausted fake stream queue
+		// (which blocks on ctx.Done() until the window elapses — see
+		// fakeChatStream.Recv) does not actually sleep for wall-clock
+		// seconds.
+		StreamReadWindow: 5 * time.Millisecond,
 	})
 }
 
@@ -307,6 +394,7 @@ func TestFairShareCapsAPollForOneBusyChannelSoOthersAreNotStarved(t *testing.T) 
 		ConfigSnapshotVersion: func(context.Context, string) (int64, error) { return 1, nil },
 		MinChatPollDelay:      0,
 		PollCycleInterval:     time.Minute,
+		StreamReadWindow:      5 * time.Millisecond,
 	})
 
 	// Discovery cycle.
@@ -324,15 +412,28 @@ func TestFairShareCapsAPollForOneBusyChannelSoOthersAreNotStarved(t *testing.T) 
 	calls1 := client.pageCalls["chat-1"]
 	calls2 := client.pageCalls["chat-2"]
 	if calls1 == 0 {
-		t.Fatal("chat-1 was never polled")
+		t.Fatal("chat-1 was never streamed")
 	}
 	if calls2 == 0 {
-		t.Fatal("chat-2 (the less busy channel) was starved: never polled while chat-1 kept its own share")
+		t.Fatal("chat-2 (the less busy channel) was starved: never streamed while chat-1 kept its connection open")
 	}
-	// Each channel's share of (2*5=10 units after 2*1 discovery spend) is
-	// 5 units = exactly one liveChatMessages.list call per fairness epoch.
-	if calls1 > 1 {
-		t.Fatalf("chat-1 exceeded its fair share: polled %d times in one epoch, want at most 1", calls1)
+	// Fair share now gates CONNECTS, not messages: streamList is charged
+	// once per connect (CostLiveChatMessagesStreamList), not per message,
+	// so a channel's fair share of (2*5=10 units after 2*1 discovery
+	// spend, 5 units each) buys it exactly one connect — after that,
+	// draining however many messages arrive on that already-open
+	// connection is free, which is why chat-1 (the "busy" channel) can
+	// legitimately drain all 100 of its queued messages once connected.
+	// The invariant this test actually protects is that chat-1 being busy
+	// never prevents chat-2 from getting ITS one connect too.
+	if client.streamConnects != 2 {
+		t.Fatalf("total stream connects = %d, want exactly 2 (one per channel's fair share)", client.streamConnects)
+	}
+	if calls1 != 100 {
+		t.Fatalf("chat-1 drained %d of its 100 queued messages, want all 100 once connected (no per-message quota cost)", calls1)
+	}
+	if calls2 != 1 {
+		t.Fatalf("chat-2 drained %d of its 1 queued message, want 1", calls2)
 	}
 }
 
@@ -382,47 +483,126 @@ func TestBackoffMarksBudgetExhaustedOnQuotaErrorDuringChatPoll(t *testing.T) {
 	}
 }
 
-func TestTransientInsertFailureHoldsPageCursorForRetry(t *testing.T) {
+func TestTransientInsertFailureForcesStreamReconnectForRetry(t *testing.T) {
+	// A polling channel holds its pageToken in place on a transient
+	// failure so the same page is re-fetched next cycle (see
+	// TestPermanentInsertFailureIsRecordedAndCursorAdvances's polling
+	// sibling in git history / the fallback path exercised by
+	// TestFallbackToListEngagesAfterPersistentStreamFailures). A streamed
+	// message has no pageToken to hold — once delivered on the wire it
+	// cannot be re-requested from the same connection — so streamOne's
+	// retry mechanism is instead to force a reconnect: see
+	// poller.go:streamOne's forced-Close comment. Google's own documented
+	// "recent chat history" replay on connect is what makes the retry
+	// actually happen.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	client := newFakeClient()
 	client.broadcasts["access-token-1"] = &youtube.LiveBroadcast{ID: "b1", ActiveLiveChatID: "chat-1"}
 	client.pages["chat-1"] = []youtube.LiveChatPage{
-		{Messages: []youtube.RawMessage{rawSuperChat(t, "msg-transient", "UC_channel-1", "1000000")}, NextPageToken: "p2", PollingIntervalMs: 4000},
+		{Messages: []youtube.RawMessage{rawSuperChat(t, "msg-transient", "UC_channel-1", "1000000")}, PollingIntervalMs: 4000},
 	}
 	connections := &fakeConnectionsStore{connections: []store.Connection{liveConnection("conn-1", "channel-1", "access-token-1")}}
 	events := newFakeEventStore()
 	events.failSourceIDs["msg-transient"] = "transient"
 	p := newTestPoller(t, client, connections, events, now)
 
-	// Discovery and the first chat poll attempt happen inside this single
-	// RunCycle: the channel is discovered live and its cursor is fresh
-	// (nextPollAt starts at the zero value, so a poll is immediately due).
 	if err := p.RunCycle(context.Background()); err != nil {
 		t.Fatalf("RunCycle() error = %v", err)
-	}
-
-	state := p.stateFor("conn-1")
-	if state.pageToken != "" {
-		t.Fatalf("pageToken = %q after a transient insert failure, want held at %q (never advanced) so the same page is retried", state.pageToken, "")
 	}
 	if len(events.inserted) != 0 {
 		t.Fatalf("inserted %d events, want 0: a transient failure must not be silently treated as delivered", len(events.inserted))
 	}
+	state := p.stateFor("conn-1")
+	p.mu.Lock()
+	stillOpen := state.stream != nil
+	p.mu.Unlock()
+	if stillOpen {
+		t.Fatal("stream still open after a transient insert failure, want it closed so the next cycle reconnects")
+	}
+	if client.streamConnects != 1 {
+		t.Fatalf("streamConnects = %d, want 1 (only the original connect so far)", client.streamConnects)
+	}
 
-	// Next cycle re-fetches and re-attempts the SAME page (page token still
-	// ""), and this time the message goes through: nothing was lost.
+	// Next cycle reconnects. Google's documented reconnect-history replay
+	// means the SAME message id is expected to arrive again on the fresh
+	// connection — simulate that (the earlier one was already consumed
+	// off the fake's queue by the first, failed, delivery) and resolve
+	// the underlying condition, as a real retry would.
 	client.pages["chat-1"] = append(client.pages["chat-1"], youtube.LiveChatPage{
-		Messages: []youtube.RawMessage{rawSuperChat(t, "msg-transient", "UC_channel-1", "1000000")}, NextPageToken: "p3", PollingIntervalMs: 4000,
+		Messages: []youtube.RawMessage{rawSuperChat(t, "msg-transient", "UC_channel-1", "1000000")},
 	})
 	delete(events.failSourceIDs, "msg-transient")
 	if err := p.RunCycle(context.Background()); err != nil {
-		t.Fatalf("RunCycle() [retry] error = %v", err)
+		t.Fatalf("RunCycle() [reconnect] error = %v", err)
+	}
+	if client.streamConnects != 2 {
+		t.Fatalf("streamConnects = %d, want 2 (one forced reconnect after the transient failure)", client.streamConnects)
+	}
+	if len(events.inserted) != 1 || events.inserted[0].SourceID != "msg-transient" {
+		t.Fatalf("inserted = %+v, want exactly [msg-transient] (message recovered via reconnect, not lost)", events.inserted)
+	}
+}
+
+// TestStreamReconnectReplayIsNotDuplicated is this task's core safety
+// requirement: a streamList reconnect replays "recent chat history" per
+// Google's own docs, and that replay must be a no-op against
+// alert_events, never a second alert_events row / second financial event.
+func TestStreamReconnectReplayIsNotDuplicated(t *testing.T) {
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	client := newFakeClient()
+	client.broadcasts["access-token-1"] = &youtube.LiveBroadcast{ID: "b1", ActiveLiveChatID: "chat-1"}
+	client.pages["chat-1"] = []youtube.LiveChatPage{
+		{Messages: []youtube.RawMessage{rawSuperChat(t, "msg-1", "UC_channel-1", "1000000")}},
+	}
+	connections := &fakeConnectionsStore{connections: []store.Connection{liveConnection("conn-1", "channel-1", "access-token-1")}}
+	events := newFakeEventStore()
+	p := New(Config{
+		Client:                client,
+		Connections:           connections,
+		Events:                events,
+		Protector:             fakeProtector{},
+		Budget:                quota.NewBudget(1_000_000, func() time.Time { return clock }),
+		Now:                   func() time.Time { return clock },
+		ConfigSnapshotVersion: func(context.Context, string) (int64, error) { return 1, nil },
+		MinChatPollDelay:      time.Second,
+		PollCycleInterval:     time.Minute,
+		StreamReadWindow:      5 * time.Millisecond,
+	})
+
+	if err := p.RunCycle(context.Background()); err != nil {
+		t.Fatalf("RunCycle() error = %v", err)
 	}
 	if len(events.inserted) != 1 {
-		t.Fatalf("inserted %d events after the retried page succeeded, want 1 (message recovered, not lost)", len(events.inserted))
+		t.Fatalf("inserted %d events after first delivery, want 1", len(events.inserted))
 	}
-	if state.pageToken != "p3" {
-		t.Fatalf("pageToken = %q after a successful retry, want %q", state.pageToken, "p3")
+
+	// Simulate a drop and reconnect: force the live stream's next Recv to
+	// fail (a network drop looks the same from streamOne's side as any
+	// other stream-ended error) and re-queue the SAME message id, exactly
+	// as Google's documented "recent chat history" replay would on a real
+	// reconnect.
+	client.mu.Lock()
+	client.streams["chat-1"].dropWith(youtube.ErrStreamEnded)
+	client.pages["chat-1"] = append(client.pages["chat-1"], youtube.LiveChatPage{
+		Messages: []youtube.RawMessage{rawSuperChat(t, "msg-1", "UC_channel-1", "1000000")},
+	})
+	client.mu.Unlock()
+
+	// Cycle 1: observes the drop, closes the stream, schedules a backoff
+	// reconnect. Advance the fake clock past every possible backoff
+	// (max 30s) between cycles so the reconnect is never held back by
+	// nextPollAt — this test is about replay safety, not backoff timing
+	// (see TestDroppedConnectionReconnectsWithBackoff for that).
+	for i := 0; i < 3; i++ {
+		_ = p.RunCycle(context.Background())
+		clock = clock.Add(31 * time.Second)
+	}
+
+	if len(events.inserted) != 1 {
+		t.Fatalf("inserted %d events after a reconnect replayed msg-1, want 1 (still exactly the first insert — replay must be a no-op)", len(events.inserted))
+	}
+	if client.streamConnects < 2 {
+		t.Fatalf("streamConnects = %d, want at least 2 (the drop must have caused a reconnect)", client.streamConnects)
 	}
 }
 
@@ -441,17 +621,23 @@ func TestPermanentInsertFailureIsRecordedAndCursorAdvances(t *testing.T) {
 	events.failSourceIDs["msg-bad"] = "permanent"
 	p := newTestPoller(t, client, connections, events, now)
 
-	// Discovery and the first chat poll attempt happen inside this single
-	// RunCycle (see TestTransientInsertFailureHoldsPageCursorForRetry).
+	// Discovery and the first chat stream connect happen inside this
+	// single RunCycle.
 	if err := p.RunCycle(context.Background()); err != nil {
 		t.Fatalf("RunCycle() error = %v", err)
 	}
 
 	state := p.stateFor("conn-1")
-	if state.pageToken != "p2" {
-		t.Fatalf("pageToken = %q, want %q: a confirmed-permanent (already recorded) failure must not wedge the channel", state.pageToken, "p2")
+	p.mu.Lock()
+	stillOpen := state.stream != nil
+	p.mu.Unlock()
+	if !stillOpen {
+		t.Fatal("stream closed after a permanent (already-recorded) failure, want it left open: a confirmed-permanent rejection must not wedge the channel or force a reconnect")
+	}
+	if client.streamConnects != 1 {
+		t.Fatalf("streamConnects = %d, want 1: a permanent failure must not trigger a reconnect", client.streamConnects)
 	}
 	if len(events.inserted) != 1 || events.inserted[0].SourceID != "msg-good" {
-		t.Fatalf("inserted = %+v, want exactly [msg-good]: the permanently-rejected message must not be inserted, and must not block its neighbour", events.inserted)
+		t.Fatalf("inserted = %+v, want exactly [msg-good]: the permanently-rejected message must not be inserted, and must not block its neighbour on the same connection", events.inserted)
 	}
 }

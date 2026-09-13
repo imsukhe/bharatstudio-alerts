@@ -35,6 +35,19 @@ const (
 	CostLiveChatMessagesList = 5
 	CostLiveBroadcastsList   = 1
 	CostVideosList           = 1
+
+	// CostLiveChatMessagesStreamList is a placeholder, not a published
+	// figure: Google does not document a per-call/per-connect unit cost
+	// for streamList anywhere this task could find (checked the method
+	// page, the liveChatMessages.list page, and the quota calculator).
+	// Charged once per successful connect (see poller.streamOne) at the
+	// same rate as one list call until real spend is observed against a
+	// live, quota-metered project — see StreamUsage, which records
+	// connects/messages per channel so that real number can be
+	// back-computed from Google Cloud Console's quota graph after an
+	// actual stream runs. Treat any budget math involving this constant
+	// as an assumption, not a verified cost.
+	CostLiveChatMessagesStreamList = CostLiveChatMessagesList
 )
 
 // Budget tracks units spent against a fixed daily allocation. DailyUnits

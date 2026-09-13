@@ -32,6 +32,11 @@ import (
 type ytClient interface {
 	ActiveBroadcastForChannel(ctx context.Context, accessToken string) (*youtube.LiveBroadcast, error)
 	PollLiveChat(ctx context.Context, accessToken, liveChatID, pageToken string) (*youtube.LiveChatPage, error)
+	// StreamLiveChat opens a liveChatMessages.streamList connection — the
+	// primary chat ingestion path (see poller.streamOne). PollLiveChat
+	// above remains the fallback for when streamList is unavailable or
+	// fails persistently (Config.StreamFailureThreshold).
+	StreamLiveChat(ctx context.Context, accessToken, liveChatID string) (youtube.ChatStream, error)
 	RefreshAccessToken(ctx context.Context, clientID, clientSecret, refreshToken string) (*youtube.RefreshedToken, error)
 }
 
@@ -95,6 +100,34 @@ type channelState struct {
 	nextPollAt      time.Time
 	lastDiscoveryAt time.Time
 	epochSpent      int64 // quota units spent by this channel in the current fairness epoch
+
+	// stream is the open streamList connection for this channel, held
+	// across RunCycle invocations (never recreated every cycle — that
+	// would throw away the "recent chat history on connect" replay window
+	// on every single poll tick). nil when no connection is currently
+	// open (never streamed yet, dropped and awaiting reconnect backoff,
+	// or the channel is in its list fallback window).
+	stream                    youtube.ChatStream
+	streamConsecutiveFailures int
+	// forceTokenRefresh bypasses the locally-recorded TokenExpiresAt on
+	// the next accessTokenFor call — set when a stream ended with
+	// ErrTokenExpired (see handleStreamFailure), since the server saying
+	// the token is already invalid is more trustworthy than our own
+	// stale expiry estimate.
+	forceTokenRefresh bool
+	// fallbackUntil is non-zero while this channel is temporarily using
+	// PollLiveChat instead of the stream, after streamList failed
+	// StreamFailureThreshold times in a row (Config.FallbackCooldown).
+	fallbackUntil time.Time
+}
+
+// closeStream closes and clears any open stream for this channel. Called
+// with p.mu held.
+func (s *channelState) closeStreamLocked() {
+	if s.stream != nil {
+		_ = s.stream.Close()
+		s.stream = nil
+	}
 }
 
 // Config is the by-value construction argument for New — kept separate
@@ -111,6 +144,24 @@ type Config struct {
 
 	PollCycleInterval time.Duration
 	MinChatPollDelay  time.Duration
+
+	// StreamReadWindow bounds how long one channel's streamOne call spends
+	// draining an already-open stream before returning control to
+	// RunCycle's loop over every other live channel. Defaults to 2s
+	// (independent of PollCycleInterval — see New's default comment).
+	StreamReadWindow time.Duration
+	// StreamFailureThreshold is how many consecutive streamList
+	// connect/read failures for one channel trigger a temporary fallback
+	// to PollLiveChat. Defaults to 3.
+	StreamFailureThreshold int
+	// FallbackCooldown is how long a channel stays on PollLiveChat after
+	// tripping StreamFailureThreshold before streamList is retried.
+	// Defaults to 5 minutes.
+	FallbackCooldown time.Duration
+	// StreamUsage optionally records connect/message counts per channel
+	// for post-hoc quota-cost correlation (see internal/quota.StreamUsage).
+	// nil is safe — every method on it is a no-op on a nil receiver.
+	StreamUsage *quota.StreamUsage
 
 	Now func() time.Time
 
@@ -170,6 +221,21 @@ func New(cfg Config) *Poller {
 	}
 	if cfg.PollCycleInterval <= 0 {
 		cfg.PollCycleInterval = 20 * time.Second
+	}
+	if cfg.StreamReadWindow <= 0 {
+		// Deliberately independent of PollCycleInterval: RunCycle visits
+		// every live channel in one sequential pass (see RunCycle), so a
+		// stream read bounded by the full cycle interval would let one
+		// channel's drain starve every other channel's turn within the
+		// same pass. A short, fixed window drains what has already
+		// arrived and yields back quickly either way.
+		cfg.StreamReadWindow = 2 * time.Second
+	}
+	if cfg.StreamFailureThreshold <= 0 {
+		cfg.StreamFailureThreshold = 3
+	}
+	if cfg.FallbackCooldown <= 0 {
+		cfg.FallbackCooldown = 5 * time.Minute
 	}
 	if cfg.ConfigSnapshotVersion == nil {
 		database := cfg.DB
@@ -265,16 +331,32 @@ func (p *Poller) RunCycle(ctx context.Context) error {
 
 	for _, c := range live {
 		state := p.stateFor(c.ID)
-		if state.epochSpent >= share {
+		p.mu.Lock()
+		hasOpenStream := state.stream != nil
+		p.mu.Unlock()
+		// Fair share gates spending quota, not reading: an already-open
+		// streamList connection is drained regardless of epochSpent
+		// because Recv-ing more of it costs nothing further (see
+		// quota.CostLiveChatMessagesStreamList — charged once, at
+		// connect). The gate below therefore only ever blocks a NEW
+		// connect (or, on the fallback path, every PollLiveChat call,
+		// which does cost per call exactly as before).
+		if !hasOpenStream && state.epochSpent >= share {
 			continue // this channel already used its share of the current epoch
 		}
 		if now.Before(state.nextPollAt) {
-			continue // server-directed pacing: not yet time to poll this channel again
+			continue // server-directed pacing / reconnect backoff: not yet due
 		}
 		if p.Budget.Exhausted() || p.Budget.Remaining() <= 0 {
 			continue
 		}
-		if err := p.pollOne(ctx, c, state, now); err != nil {
+		var pollErr error
+		if !state.fallbackUntil.IsZero() && now.Before(state.fallbackUntil) {
+			pollErr = p.pollOne(ctx, c, state, now)
+		} else {
+			pollErr = p.streamOne(ctx, c, state, now)
+		}
+		if pollErr != nil {
 			continue
 		}
 	}
@@ -312,15 +394,28 @@ func (p *Poller) liveConnections(connections []store.Connection) []store.Connect
 // refresh call instead of each independently hitting the token endpoint.
 func (p *Poller) accessTokenFor(ctx context.Context, c store.Connection) (string, error) {
 	now := p.Now()
+	state := p.stateFor(c.ID)
 
 	p.mu.Lock()
-	if cached, ok := p.tokenCache[c.ID]; ok && now.Before(cached.expiresAt) {
-		p.mu.Unlock()
-		return cached.value, nil
+	forceRefresh := state.forceTokenRefresh
+	if !forceRefresh {
+		if cached, ok := p.tokenCache[c.ID]; ok && now.Before(cached.expiresAt) {
+			p.mu.Unlock()
+			return cached.value, nil
+		}
 	}
 	p.mu.Unlock()
 
-	needsRefresh := !c.AccessTokenCiphertext.Valid ||
+	// forceRefresh is set when a streamList connection ended with
+	// ErrTokenExpired mid-stream (see handleStreamFailure): the server
+	// said the token was already invalid, which our own locally-recorded
+	// TokenExpiresAt may not yet reflect (clock skew, external revocation,
+	// or simply a token whose real lifetime ran shorter than advertised).
+	// Trusting that local expiry in this case would just retry the same
+	// dead token forever, so it is bypassed here in favour of an actual
+	// refresh call.
+	needsRefresh := forceRefresh ||
+		!c.AccessTokenCiphertext.Valid ||
 		!c.TokenExpiresAt.Valid ||
 		now.After(c.TokenExpiresAt.Time.Add(-1*time.Minute))
 
@@ -353,6 +448,9 @@ func (p *Poller) accessTokenFor(ctx context.Context, c store.Connection) (string
 	if err := p.Connections.UpdateAccessToken(ctx, c.ID, ciphertext, fingerprint, expiresAt); err != nil {
 		return "", fmt.Errorf("persist refreshed access token: %w", err)
 	}
+	p.mu.Lock()
+	state.forceTokenRefresh = false
+	p.mu.Unlock()
 	p.cacheToken(c.ID, refreshed.AccessToken, expiresAt.Add(-1*time.Minute))
 	return refreshed.AccessToken, nil
 }
@@ -384,17 +482,27 @@ func (p *Poller) discoverOne(ctx context.Context, c store.Connection, now time.T
 		// Channel is not live: clear any prior chat cursor so a later
 		// stream by the same channel starts its own fresh chat, never
 		// resuming a stale page token from an earlier, unrelated stream.
+		// This is also how a streamList connection's end gets resolved:
+		// closing it here (rather than guessing from a read error alone)
+		// distinguishes "broadcast actually ended" from "connection merely
+		// dropped".
 		state.liveChatID = ""
 		state.pageToken = ""
 		state.epochSpent = 0
+		state.closeStreamLocked()
+		state.fallbackUntil = time.Time{}
+		state.streamConsecutiveFailures = 0
 		return nil
 	}
 	if state.liveChatID != broadcast.ActiveLiveChatID {
 		// Newly live, or a different broadcast than before: reset cursor
-		// and the fairness epoch.
+		// and the fairness epoch. Any stream open against the old
+		// liveChatId is now talking about a broadcast that no longer
+		// matches state.liveChatID, so it is closed rather than reused.
 		state.liveChatID = broadcast.ActiveLiveChatID
 		state.pageToken = ""
 		state.epochSpent = 0
+		state.closeStreamLocked()
 	}
 	return nil
 }
@@ -429,18 +537,33 @@ func (p *Poller) pollOne(ctx context.Context, c store.Connection, state *channel
 		return err
 	}
 
-	// heldByTransientFailure becomes true when a message on this page could
-	// not be durably recorded and the failure was NOT one InsertLiveEvent
-	// already recorded on our behalf (duplicate, or a confirmed-permanent
-	// rejection). A tip alert is a lost payment notification, so the page
-	// cursor is held in place rather than advanced whenever that happens:
-	// the same page is re-fetched and re-attempted next cycle. Because
-	// InsertLiveEvent is idempotent (alert_events_external_source_unique,
-	// 0091), re-processing the messages on this page that already
-	// succeeded is a safe no-op, not a second alert.
-	heldByTransientFailure := false
+	if p.processChatPage(ctx, c, accessToken, liveChatID, configVersion, page.Messages) {
+		return fmt.Errorf("channel %s: transient failure persisting a youtube live event or tip intent; page cursor held for retry", c.ChannelID)
+	}
 
-	for _, raw := range page.Messages {
+	interval := time.Duration(page.PollingIntervalMs) * time.Millisecond
+	if interval < p.MinChatPollDelay {
+		interval = p.MinChatPollDelay
+	}
+
+	p.mu.Lock()
+	state.pageToken = page.NextPageToken
+	state.nextPollAt = now.Add(interval)
+	p.mu.Unlock()
+
+	return nil
+}
+
+// processChatPage runs one page/chunk of raw messages (from either
+// PollLiveChat or a streamList chunk) through the exact same
+// normalise-then-InsertLiveEvent taxonomy: duplicate is a no-op, permanent
+// is already durably recorded, everything else holds the caller's cursor
+// for retry. Sharing this one function between pollOne and streamOne is
+// what guarantees a streamed reconnect's replayed history is handled
+// identically to a polled page replay — see this task's Reconnect replay
+// safety.
+func (p *Poller) processChatPage(ctx context.Context, c store.Connection, accessToken, liveChatID string, configVersion int64, messages []youtube.RawMessage) (heldByTransientFailure bool) {
+	for _, raw := range messages {
 		// Plain chat text (textMessageEvent) is never alert_events-shaped —
 		// domain.NormalizeLiveChatMessage would just reject it as
 		// UnsupportedLiveEventError below. This is where `!tip` actually
@@ -468,7 +591,12 @@ func (p *Poller) pollOne(ctx context.Context, c store.Connection, state *channel
 		case insertErr == nil:
 			// delivered
 		case errors.Is(insertErr, store.ErrDuplicateEvent):
-			// already recorded (and already routed) — a no-op, not a failure.
+			// Already recorded — this is exactly the case a streamList
+			// reconnect's "recent chat history" replay hits every time:
+			// alert_events_external_source_unique (0091) rejects the
+			// second insert of the same (channel_id, source_type,
+			// source_id), so replaying an already-processed message here
+			// is a no-op, not a second alert.
 		case errors.Is(insertErr, store.ErrPermanentFailure):
 			// InsertLiveEvent already retried what was retryable, decided
 			// this message can never succeed, and durably recorded the
@@ -485,22 +613,126 @@ func (p *Poller) pollOne(ctx context.Context, c store.Connection, state *channel
 			heldByTransientFailure = true
 		}
 	}
+	return heldByTransientFailure
+}
 
-	if heldByTransientFailure {
-		return fmt.Errorf("channel %s: transient failure persisting a youtube live event or tip intent; page cursor held for retry", c.ChannelID)
-	}
-
-	interval := time.Duration(page.PollingIntervalMs) * time.Millisecond
-	if interval < p.MinChatPollDelay {
-		interval = p.MinChatPollDelay
+// streamOne is the primary chat ingestion path: it holds a streamList
+// connection open across RunCycle invocations (in channelState.stream) and,
+// each cycle, drains whatever has arrived within Config.StreamReadWindow —
+// see this task's "Loop shape change". A connection is opened lazily on
+// first use and reused thereafter; it is only closed by discoverOne
+// (broadcast ended / changed) or by a Recv failure here.
+func (p *Poller) streamOne(ctx context.Context, c store.Connection, state *channelState, now time.Time) error {
+	accessToken, err := p.accessTokenFor(ctx, c)
+	if err != nil {
+		return err
 	}
 
 	p.mu.Lock()
-	state.pageToken = page.NextPageToken
-	state.nextPollAt = now.Add(interval)
+	stream := state.stream
+	liveChatID := state.liveChatID
 	p.mu.Unlock()
 
-	return nil
+	if stream == nil {
+		newStream, connectErr := p.Client.StreamLiveChat(ctx, accessToken, liveChatID)
+		if connectErr != nil {
+			return p.handleStreamFailure(c, state, connectErr)
+		}
+		p.Budget.Spend(quota.CostLiveChatMessagesStreamList)
+		p.StreamUsage.RecordConnect(c.ChannelID)
+		p.mu.Lock()
+		state.stream = newStream
+		state.streamConsecutiveFailures = 0
+		state.nextPollAt = time.Time{}
+		state.epochSpent += quota.CostLiveChatMessagesStreamList
+		p.mu.Unlock()
+		stream = newStream
+	}
+
+	configVersion, err := p.ConfigSnapshotVersion(ctx, c.ChannelID)
+	if err != nil {
+		return err
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, p.StreamReadWindow)
+	defer cancel()
+
+	for {
+		page, recvErr := stream.Recv(readCtx)
+		if recvErr != nil {
+			if errors.Is(recvErr, context.DeadlineExceeded) || errors.Is(recvErr, context.Canceled) {
+				// Bounded read window elapsed with nothing further
+				// pending; the connection itself is still open and stays
+				// held in state.stream for the next cycle.
+				return nil
+			}
+			// Any other error (ErrStreamEnded from a drop/idle-close, or
+			// mid-stream token invalidation) ends this connection: never
+			// reuse a dead stream reference.
+			_ = stream.Close()
+			p.mu.Lock()
+			state.stream = nil
+			p.mu.Unlock()
+			return p.handleStreamFailure(c, state, recvErr)
+		}
+		p.StreamUsage.RecordMessages(c.ChannelID, len(page.Messages))
+		if p.processChatPage(ctx, c, accessToken, liveChatID, configVersion, page.Messages) {
+			// Unlike PollLiveChat's pageToken, a streamList connection has
+			// no "unread" position to hold — a message already delivered
+			// on this connection cannot be re-requested from it. Instead,
+			// force a reconnect: Google's own documented behaviour is that
+			// "[w]hen you first connect, the API sends a series of
+			// messages containing recent chat history", so the reconnect
+			// itself becomes the retry mechanism, and every message that
+			// already succeeded simply lands on store.ErrDuplicateEvent a
+			// second time (see processChatPage) rather than duplicating.
+			_ = stream.Close()
+			p.mu.Lock()
+			state.stream = nil
+			p.mu.Unlock()
+			return fmt.Errorf("channel %s: transient failure persisting a youtube live event or tip intent; forcing stream reconnect to retry via history replay", c.ChannelID)
+		}
+	}
+}
+
+// handleStreamFailure records a streamList connect/read failure and decides
+// the retry posture: exponential backoff before reconnecting, or — once
+// StreamFailureThreshold consecutive failures pile up — a temporary
+// fallback to PollLiveChat (see channelState.fallbackUntil) so a creator is
+// never left with no chat ingestion because streamList itself is degraded.
+// Quota exhaustion is handled exactly like the polling path: it stops all
+// spend for the day, no fallback attempted.
+func (p *Poller) handleStreamFailure(c store.Connection, state *channelState, err error) error {
+	if errors.Is(err, youtube.ErrQuotaExceeded) {
+		p.Budget.MarkExhausted()
+		return err
+	}
+	if errors.Is(err, youtube.ErrTokenExpired) {
+		// Evict the cached token AND force a real refresh on the next
+		// accessTokenFor call, bypassing the locally-recorded
+		// TokenExpiresAt (see channelState.forceTokenRefresh's own doc
+		// comment for why that local estimate cannot be trusted here).
+		p.mu.Lock()
+		delete(p.tokenCache, c.ID)
+		state.forceTokenRefresh = true
+		p.mu.Unlock()
+	}
+
+	p.mu.Lock()
+	state.streamConsecutiveFailures++
+	failures := state.streamConsecutiveFailures
+	if failures >= p.StreamFailureThreshold {
+		state.fallbackUntil = p.Now().Add(p.FallbackCooldown)
+		state.streamConsecutiveFailures = 0
+	} else {
+		backoff := time.Duration(1<<uint(failures)) * time.Second
+		if backoff > 30*time.Second {
+			backoff = 30 * time.Second
+		}
+		state.nextPollAt = p.Now().Add(backoff)
+	}
+	p.mu.Unlock()
+	return err
 }
 
 // handleTipCommand implements L15 gap 2: a valid `!tip` becomes exactly one

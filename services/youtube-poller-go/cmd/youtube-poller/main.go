@@ -63,6 +63,11 @@ func run() error {
 		ClientSecret:      cfg.GoogleClientSecret,
 		PollCycleInterval: cfg.PollCycleInterval,
 		MinChatPollDelay:  cfg.MinChatPollDelay,
+		// StreamUsage records streamList connect/message counts per
+		// channel purely for post-hoc quota-cost correlation against
+		// Google Cloud Console once this runs against a live, metered
+		// project — see internal/quota.CostLiveChatMessagesStreamList.
+		StreamUsage: quota.NewStreamUsage(),
 		// ChatPoster is always wired (it is the same YouTube client used
 		// for discovery/polling); TipBotAckEnabled is what actually gates
 		// whether it is ever called — see config.Config.TipBotAckEnabled's

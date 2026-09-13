@@ -6,6 +6,7 @@ import { controllable } from '../../test-support/controllable';
 import { baseBillingView, baseChannelDetails } from '../../test-support/fixtures';
 import type * as api from '../../lib/api';
 import type * as stickerApi from './sticker-api';
+import type * as creatorPackApi from './creator-pack-api';
 
 const baseUser: api.CurrentUser = {
   schemaVersion: 'v1', userId: 'u1', displayName: 'Test Creator',
@@ -35,6 +36,22 @@ mock.module(stickerApiPath, {
   namedExports: { listStickers: listStickers.fn, setStickerEnabled: setStickerEnabled.fn },
 });
 
+// L22 gap-fill: the page also mounts CreatorPackPanel, which calls
+// creator-pack-api.ts — mocked here too so this file's real fetches never
+// leave jsdom, same rationale as sticker-api.ts above. This file's own
+// coverage is l22b-creator-pack-panel.test.tsx.
+const creatorPackApiPath = new URL('./creator-pack-api.ts', import.meta.url).pathname;
+const listCreatorPack = controllable<Parameters<typeof creatorPackApi.listCreatorPack>, Awaited<ReturnType<typeof creatorPackApi.listCreatorPack>>>(
+  async () => ({ schemaVersion: 'v1', items: [] }),
+);
+mock.module(creatorPackApiPath, {
+  namedExports: {
+    listCreatorPack: listCreatorPack.fn,
+    uploadCreatorPackSticker: async () => { throw new Error('uploadCreatorPackSticker not stubbed for this test'); },
+    setCreatorPackStickerEnabled: async () => { throw new Error('setCreatorPackStickerEnabled not stubbed for this test'); },
+  },
+});
+
 async function renderFreshPage() {
   const { default: StickersPage } = await import(`./page?t=${Math.random()}`);
   render(<StickersPage />);
@@ -50,8 +67,11 @@ test('an owner sees the on/off control and no upload field anywhere', async () =
   await renderFreshPage();
   await waitFor(() => screen.getByText('Confetti'));
   assert.ok(screen.getByRole('button', { name: 'Turn off' }));
-  // No file/upload input exists on this page — a creator can only toggle
-  // an id that already exists in the catalogue, never supply an asset.
+  // No file input exists anywhere on this page — the platform catalogue
+  // section only ever toggles an id that already exists in the catalogue
+  // (never supplies an asset). Creator-pack uploads (a separate, explicit
+  // JSON-textarea form, not a binary file picker) are covered by
+  // l22b-creator-pack-panel.test.tsx.
   assert.equal(document.querySelector('input[type="file"]'), null);
 });
 

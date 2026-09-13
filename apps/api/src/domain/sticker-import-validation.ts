@@ -19,7 +19,8 @@
 // asset — a viewer only ever selects an id from an already-imported,
 // already-validated catalogue entry.
 
-import { validateTemplateManifestEntry, type TemplateManifestEntry } from './template-import-validation.js';
+import type { TemplateManifestEntry } from './template-import-validation.js';
+import { runAssetScan } from './asset-scan-pipeline.js';
 import { templateTiers as stickerTiers, type TemplateTier as StickerTier } from './template-catalogue.js';
 
 export type { StickerTier };
@@ -40,7 +41,7 @@ export type StickerEntryValidationResult =
  * implementation that could drift from it.
  */
 export function validateStickerManifestEntry(entry: unknown): StickerEntryValidationResult {
-  const result = validateTemplateManifestEntry(entry);
+  const result = runAssetScan(entry);
   if (!result.ok) return result;
-  return { ok: true, assetBytes: result.renderBytes };
+  return { ok: true, assetBytes: result.assetBytes };
 }

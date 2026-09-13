@@ -6,6 +6,7 @@ import { authGateStates } from '../../components/AuthGateStates';
 import { useChannelBootstrap } from '../../hooks/useChannelBootstrap';
 import { getChannel, type ChannelDetails } from '../../lib/api';
 import { StickerPanel } from './StickerPanel';
+import { CreatorPackPanel } from './CreatorPackPanel';
 
 export default function StickersPage() {
   const [channel, setChannel] = useState<ChannelDetails | null>(null);
@@ -33,6 +34,16 @@ export default function StickersPage() {
         </div>
         <p className="helper-text">Every sticker here is BharatStudio-approved and available at your tier. Turn any of them off to remove it from your stream immediately — viewers can never upload their own.</p>
         <StickerPanel channelId={channel.channelId} canManage={canManage} />
+      </section>
+      <section className="panel" aria-labelledby="creator-pack-title">
+        <div className="panel-heading">
+          <div>
+            <p className="muted-label">Creator pack</p>
+            <h2 id="creator-pack-title">Your own approved stickers</h2>
+          </div>
+        </div>
+        <p className="helper-text">These are your own uploaded stickers, bounded by your tier and validated the same way the platform catalogue is. Viewers can never upload their own.</p>
+        <CreatorPackPanel channelId={channel.channelId} canManage={canManage} />
       </section>
     </AppShell>
   );

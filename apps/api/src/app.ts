@@ -69,6 +69,7 @@ import type { ProviderCapabilitySnapshotStore } from './domain/payment-provider-
 import { registerReputationRoutes } from './routes/reputation.js';
 import { registerGoalRoutes } from './routes/goals.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
+import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
 import { registerMetricsRoutes } from './routes/metrics.js';
 import { registerYoutubeRoutes } from './routes/youtube.js';
@@ -80,6 +81,8 @@ import { registerReferralRoutes } from './routes/referrals.js';
 import type { BrandingStore, OverlayBrandingStore } from './domain/branding.js';
 import { registerBrandingRoutes } from './routes/branding.js';
 import { registerOverlayLottieRoutes } from './routes/overlay-lottie.js';
+import type { AssistStore } from './domain/assist-types.js';
+import { registerAssistRoutes } from './routes/assist.js';
 
 export type AppDependencies = {
   publicChannels?: PublicChannelRepository;
@@ -140,6 +143,7 @@ export type AppDependencies = {
   publicCreatorPack?: PublicCreatorPackStore;
   creatorPackSelections?: CreatorPackSelectionStore;
   ingestFailures?: IngestFailureAdminStore;
+  staffCreatorPackReview?: StaffCreatorPackReviewStore;
   // L09 reconciliation queries read across payments/refunds/outbox, so the
   // metrics route needs the raw client rather than a narrow store.
   sql?: Sql;
@@ -148,6 +152,7 @@ export type AppDependencies = {
   branding?: BrandingStore;
   overlayBranding?: OverlayBrandingStore;
   companionPairing?: CompanionPairingStore;
+  assist?: AssistStore;
 };
 
 export async function buildApp(
@@ -264,10 +269,11 @@ export async function buildApp(
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
   await registerReferralRoutes(app, dependencies.sessions, dependencies.referrals);
   await registerBrandingRoutes(app, dependencies.sessions, dependencies.branding, dependencies.account);
-  await registerAdminRoutes(app, dependencies.sessions, dependencies.admin, dependencies.ingestFailures);
+  await registerAdminRoutes(app, dependencies.sessions, dependencies.admin, dependencies.ingestFailures, dependencies.staffCreatorPackReview);
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account, dependencies.paymentMethodUpdates);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account, dependencies.companionFeatures, dependencies.companionEntitlement);
   await registerCompanionPairingRoutes(app, dependencies.sessions, dependencies.companionPairing);
+  await registerAssistRoutes(app, dependencies.sessions, dependencies.assist, dependencies.account);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });

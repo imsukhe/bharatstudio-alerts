@@ -49,6 +49,8 @@ import { createSqlCreatorPackStore, createSqlPublicCreatorPackStore, createSqlCr
 import { createSqlInteractionDefinitionStore, createSqlSupportVoteStore, createSqlPublicVoteStore, createSqlHypeModeStore, createSqlWidgetConfigStore, createSqlLeaderboardStore, createSqlInteractionOverlayStore } from './db/interaction-sql-store.js';
 import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
 import { createSqlIngestFailureStore } from './db/ingest-failure-store.js';
+import { createSqlStaffCreatorPackReviewStore } from './db/staff-creator-pack-review-store.js';
+import { createSqlAssistStore } from './db/assist-sql-store.js';
 import { createSqlOverlayAudioStore } from './db/overlay-audio-store.js';
 import { createSqlTtsCache } from './db/tts-cache.js';
 import { createSarvamTtsProvider, createTtsService } from './tts/provider.js';
@@ -130,6 +132,8 @@ const app = await buildApp(config, {
   publicCreatorPack: sql ? createSqlPublicCreatorPackStore(sql) : undefined,
   creatorPackSelections: sql ? createSqlCreatorPackSelectionStore(sql) : undefined,
   ingestFailures: sql ? createSqlIngestFailureStore(sql) : undefined,
+  staffCreatorPackReview: sql ? createSqlStaffCreatorPackReviewStore(sql) : undefined,
+  assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,
   paymentMethodUpdates: sql && config.paymentServiceOrigin && config.paymentServiceAudience
     ? createBillingPaymentMethodService(sql, config.paymentServiceOrigin, config.paymentServiceAudience, config.nodeEnv)

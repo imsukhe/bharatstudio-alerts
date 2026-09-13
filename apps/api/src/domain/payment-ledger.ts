@@ -20,6 +20,13 @@ export type PaymentLedgerPage = {
   nextCursor: string | null;
 };
 
+export class PaymentLedgerInvalidCursorError extends Error {
+  constructor() {
+    super('Payment ledger cursor is invalid');
+    this.name = 'PaymentLedgerInvalidCursorError';
+  }
+}
+
 export interface PaymentLedgerStore {
   listPayments(userId: string, channelId: string, cursor: string | undefined, pageSize: number): Promise<PaymentLedgerPage>;
 }

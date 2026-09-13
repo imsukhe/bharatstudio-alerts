@@ -61,6 +61,12 @@ test('overlay audio requires the overlay bearer token and returns the scoped art
   const app = await buildApp(config, { overlayAudio });
   const unauthorized = await app.inject({ method: 'GET', url: '/v1/overlay-audio/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000099' });
   assert.equal(unauthorized.statusCode, 401);
+  const malformed = await app.inject({
+    method: 'GET',
+    url: '/v1/overlay-audio/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000099',
+    headers: { authorization: 'Bearer' },
+  });
+  assert.equal(malformed.statusCode, 401);
   const response = await app.inject({
     method: 'GET',
     url: '/v1/overlay-audio/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000099',
@@ -68,6 +74,7 @@ test('overlay audio requires the overlay bearer token and returns the scoped art
   });
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers['content-type'], 'audio/wav');
+  assert.equal(response.headers['cache-control'], 'private, no-store');
   assert.equal(response.rawPayload.toString(), 'RIFF');
   await app.close();
 });

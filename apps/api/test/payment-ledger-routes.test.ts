@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildApp } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';
-import type { PaymentLedgerEntry, PaymentLedgerStore } from '../src/domain/payment-ledger.js';
+import { PaymentLedgerInvalidCursorError, type PaymentLedgerEntry, type PaymentLedgerStore } from '../src/domain/payment-ledger.js';
 
 const config: RuntimeConfig = { nodeEnv: 'test', host: '127.0.0.1', port: 4100, appOrigin: 'http://localhost:3100', paymentEnvironment: 'test' };
 const userId = '00000000-0000-4000-8000-000000000001';
@@ -55,7 +55,7 @@ test('a non-owner/admin caller sees an empty ledger, not a 403 — enforcement s
 
 test('the payment ledger route rejects an invalid cursor and unauthenticated callers, and fails closed without a store', async () => {
   const store: PaymentLedgerStore = {
-    async listPayments() { throw new Error('invalid payments cursor'); },
+    async listPayments() { throw new PaymentLedgerInvalidCursorError(); },
   };
   const app = await buildApp(config, { sessions, paymentLedger: store });
   const badCursor = await app.inject({ method: 'GET', url: `/v1/channels/${channelId}/payments?cursor=not-a-cursor`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
@@ -71,4 +71,17 @@ test('the payment ledger route rejects an invalid cursor and unauthenticated cal
   assert.equal(unavailable.statusCode, 503);
   assert.equal(unavailable.json().errorCode, 'payment_ledger_unavailable');
   await unavailableApp.close();
+});
+
+test('a payment ledger outage is retryable and cannot be misreported as a bad cursor', async () => {
+  const store: PaymentLedgerStore = {
+    async listPayments() { throw new Error('postgres://user:secret@host unavailable'); },
+  };
+  const app = await buildApp(config, { sessions, paymentLedger: store });
+  const response = await app.inject({ method: 'GET', url: `/v1/channels/${channelId}/payments`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().errorCode, 'payment_ledger_unavailable');
+  assert.equal(response.json().retryable, true);
+  assert.equal(JSON.stringify(response.json()).includes('secret'), false);
+  await app.close();
 });

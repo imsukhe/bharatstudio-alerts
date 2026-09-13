@@ -60,9 +60,13 @@ import type { PaidSupportVoteStore, PaidVoteOverlayStore, VotePaymentTagStore } 
 import type { TemplateCatalogueStore } from './domain/template-catalogue.js';
 import { registerTemplateRoutes } from './routes/templates.js';
 import type { StickerCatalogueStore, PublicStickerCatalogueStore, StickerSelectionStore } from './domain/sticker-catalogue.js';
+import type { CreatorPackStore, PublicCreatorPackStore, CreatorPackSelectionStore } from './domain/sticker-creator-pack.js';
 import { registerStickerRoutes } from './routes/stickers.js';
 import type { ChallengeStore, OverlayChallengeStore } from './domain/challenge-store.js';
 import { registerChallengeRoutes } from './routes/challenges.js';
+import type { ReputationStore } from './domain/reputation-store.js';
+import type { ProviderCapabilitySnapshotStore } from './domain/payment-provider-creator.js';
+import { registerReputationRoutes } from './routes/reputation.js';
 import { registerGoalRoutes } from './routes/goals.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { Sql } from 'postgres';
@@ -114,6 +118,8 @@ export type AppDependencies = {
   seats?: SeatStore;
   goals?: GoalStore;
   overlayGoals?: OverlayGoalStore;
+  reputation?: ReputationStore;
+  capabilitySnapshots?: ProviderCapabilitySnapshotStore;
   challenges?: ChallengeStore;
   overlayChallenges?: OverlayChallengeStore;
   interactionDefinitions?: InteractionDefinitionStore;
@@ -130,6 +136,9 @@ export type AppDependencies = {
   stickers?: StickerCatalogueStore;
   publicStickers?: PublicStickerCatalogueStore;
   stickerSelections?: StickerSelectionStore;
+  creatorPack?: CreatorPackStore;
+  publicCreatorPack?: PublicCreatorPackStore;
+  creatorPackSelections?: CreatorPackSelectionStore;
   ingestFailures?: IngestFailureAdminStore;
   // L09 reconciliation queries read across payments/refunds/outbox, so the
   // metrics route needs the raw client rather than a narrow store.
@@ -251,7 +260,7 @@ export async function buildApp(
   await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
   await registerAccountRoutes(app, dependencies.sessions, dependencies.account, dependencies.emailOutbox);
   await registerChannelRoutes(app, dependencies.sessions, dependencies.channels, dependencies.account, dependencies.referrals, dependencies.seats);
-  await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account);
+  await registerPaymentAccountRoutes(app, dependencies.sessions, dependencies.paymentAccounts, dependencies.account, undefined, dependencies.capabilitySnapshots);
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
   await registerReferralRoutes(app, dependencies.sessions, dependencies.referrals);
   await registerBrandingRoutes(app, dependencies.sessions, dependencies.branding, dependencies.account);
@@ -263,9 +272,10 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
+  await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);
-  await registerStickerRoutes(app, dependencies.sessions, dependencies.stickers, dependencies.account, dependencies.publicStickers, dependencies.stickerSelections);
+  await registerStickerRoutes(app, dependencies.sessions, dependencies.stickers, dependencies.account, dependencies.publicStickers, dependencies.stickerSelections, dependencies.creatorPack, dependencies.publicCreatorPack, dependencies.creatorPackSelections);
   await registerInteractionRoutes(app, dependencies.sessions, dependencies.account, dependencies.interactionDefinitions, dependencies.interactionVotes, dependencies.interactionPublicVotes, dependencies.interactionHype, dependencies.interactionWidgets, dependencies.interactionLeaderboard, dependencies.interactionOverlay, dependencies.paidVotes, dependencies.paidVoteOverlay, dependencies.sql);
   await registerYoutubeRoutes(app, dependencies.sessions, dependencies.youtubeConnections, dependencies.account, dependencies.youtubeOAuthClient);
   await registerOverlayAudioRoutes(app, dependencies.overlayAudio);

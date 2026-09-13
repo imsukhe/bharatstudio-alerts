@@ -1,0 +1,10 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-lottie-list-response.schema.json",
+  "schemaVersion": "v1",
+  "items": [
+    {
+      "displayStyle": "celebration",
+      "artifactId": "00000000-0000-4000-8000-000000000091"
+    }
+  ]
+}

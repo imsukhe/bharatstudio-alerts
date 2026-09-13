@@ -128,3 +128,24 @@ test('all branding routes reject unauthenticated callers and fail closed without
   assert.equal(unavailable.json().errorCode, 'branding_store_unavailable');
   await app.close();
 });
+
+test('branding list and delete store failures are redacted retryable 503 responses', async () => {
+  const failedStore: BrandingStore = {
+    async listAssets() { throw new Error('postgres://user:secret@host rejected list'); },
+    async storeAsset() { return { outcome: 'invalid' }; },
+    async deleteAsset() { throw new Error('postgres://user:secret@host rejected delete'); },
+  };
+  const app = await buildApp(config, { sessions, branding: failedStore });
+  const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
+  for (const request of [
+    { method: 'GET' as const, url: `/v1/channels/${channelId}/branding/lottie` },
+    { method: 'DELETE' as const, url: `/v1/channels/${channelId}/branding/lottie/celebration` },
+  ]) {
+    const response = await app.inject({ ...request, headers });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().errorCode, 'branding_store_unavailable');
+    assert.equal(response.json().retryable, true);
+    assert.equal(JSON.stringify(response.json()).includes('secret'), false);
+  }
+  await app.close();
+});

@@ -23,6 +23,8 @@ test('the overlay-lottie list route requires a bearer token and returns the scop
   const app = await buildApp(config, { overlayBranding: store });
   const unauthorized = await app.inject({ method: 'GET', url: `/v1/overlay-lottie/${overlayId}` });
   assert.equal(unauthorized.statusCode, 401);
+  const malformed = await app.inject({ method: 'GET', url: `/v1/overlay-lottie/${overlayId}`, headers: { authorization: 'Bearer' } });
+  assert.equal(malformed.statusCode, 401);
 
   const response = await app.inject({ method: 'GET', url: `/v1/overlay-lottie/${overlayId}`, headers: { authorization: 'Bearer synthetic-overlay-token' } });
   assert.equal(response.statusCode, 200);

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireAuth } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { ReferralStore } from '../domain/referrals.js';
+import { logSafeError } from '../observability/safe-log.js';
 
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: { type: 'string', format: 'uuid' } } } as const;
 
@@ -21,7 +22,12 @@ export async function registerReferralRoutes(app: FastifyInstance, sessions?: Se
     schema: { params: channelParams },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
-    return reply.code(200).send(await store.getOverview(request.auth.userId, request.params.channelId));
+    try {
+      return reply.code(200).send(await store.getOverview(request.auth.userId, request.params.channelId));
+    } catch (error) {
+      logSafeError(request, 'referral_overview_read_failed', error);
+      return unavailable(reply, request.id);
+    }
   });
 
   app.get<{ Params: { channelId: string } }>('/v1/channels/:channelId/referrals', {
@@ -29,6 +35,11 @@ export async function registerReferralRoutes(app: FastifyInstance, sessions?: Se
     schema: { params: channelParams },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
-    return reply.code(200).send(await store.listHistory(request.auth.userId, request.params.channelId));
+    try {
+      return reply.code(200).send(await store.listHistory(request.auth.userId, request.params.channelId));
+    } catch (error) {
+      logSafeError(request, 'referral_history_read_failed', error);
+      return unavailable(reply, request.id);
+    }
   });
 }

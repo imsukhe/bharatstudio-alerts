@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-lottie-list-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "items"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "items": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["displayStyle", "artifactId"],
+        "properties": {
+          "displayStyle": { "enum": ["small_pill", "compact_card", "standard_card", "large_card", "banner", "celebration"] },
+          "artifactId": { "type": "string", "format": "uuid" }
+        }
+      }
+    }
+  }
+}

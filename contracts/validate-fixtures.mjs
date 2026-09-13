@@ -22,6 +22,7 @@ const fixtureToSchema = {
   'overlay-reconnect.json': 'overlay-reconnect-case.schema.json',
   'overlay-goal-response.json': 'overlay-goal-response.schema.json',
   'overlay-challenge-response.json': 'overlay-challenge-response.schema.json',
+  'overlay-lottie-list-response.json': 'overlay-lottie-list-response.schema.json',
   'overlay-vote-tally-response.json': 'overlay-vote-tally-response.schema.json',
   'overlay-hype-response.json': 'overlay-hype-response.schema.json',
   'overlay-leaderboard-response.json': 'overlay-leaderboard-response.schema.json',
@@ -177,6 +178,19 @@ const challengeWithRefundData = JSON.parse(await fs.readFile(path.join(fixtureDi
 challengeWithRefundData.challenge.refundId = 'private-refund';
 if (overlayChallengeValidator(challengeWithRefundData)) {
   failures.push('overlay-challenge-response.json: refund field was accepted');
+}
+
+const overlayLottieSchema = await loadSchema('overlay-lottie-list-response.schema.json');
+const overlayLottieValidator = ajv.getSchema(overlayLottieSchema.$id);
+const lottieWithAccountData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-lottie-list-response.json'), 'utf8'));
+lottieWithAccountData.items[0].channelId = '00000000-0000-4000-8000-0000000000a1';
+if (overlayLottieValidator(lottieWithAccountData)) {
+  failures.push('overlay-lottie-list-response.json: channel identifier was accepted');
+}
+const lottieWithUnsupportedStyle = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-lottie-list-response.json'), 'utf8'));
+lottieWithUnsupportedStyle.items[0].displayStyle = 'arbitrary';
+if (overlayLottieValidator(lottieWithUnsupportedStyle)) {
+  failures.push('overlay-lottie-list-response.json: unsupported display style was accepted');
 }
 
 const overlayVoteSchema = await loadSchema('overlay-vote-tally-response.schema.json');

@@ -76,5 +76,6 @@ on conflict (channel_id, user_id) do nothing;
 --   ...1501-...1502                           l05_queue_policy_enforcement OWN fixture (alert_queue, queue_binding)
 --   ...1601-...1602, ...1611                  l16_security_boundary OWN fixture (viewer accounts, device pairing)
 --   ...c001-...c002, ...ec101-...ec102        l14_viewer_identity
+--   ...1701-...1702, ...1710-...1711          l02b-reputation-signals OWN fixture (viewer accounts, payment+refund)
 --
--- Next free block for a new test's own fixture: ...1701 upward.
+-- Next free block for a new test's own fixture: ...1720 upward.

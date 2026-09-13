@@ -38,11 +38,14 @@ import { createSqlCompanionEntitlementStore } from './db/companion-entitlement-s
 import { createSqlSeatStore } from './db/seat-store.js';
 import { createSqlGoalStore } from './db/goal-store.js';
 import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
+import { createSqlReputationStore } from './db/reputation-sql-store.js';
+import { createSqlProviderCapabilitySnapshotStore } from './db/payment-provider-capability-snapshot-store.js';
 import { createSqlChallengeStore } from './db/challenge-store.js';
 import { createSqlChallengeOverlayStore } from './db/challenge-overlay-store.js';
 import { createSqlTemplateCatalogueStore } from './db/template-catalogue-store.js';
 import { createSqlStickerCatalogueStore } from './db/sticker-catalogue-store.js';
 import { createSqlPublicStickerCatalogueStore, createSqlStickerSelectionStore } from './db/sticker-public-store.js';
+import { createSqlCreatorPackStore, createSqlPublicCreatorPackStore, createSqlCreatorPackSelectionStore } from './db/sticker-creator-pack-store.js';
 import { createSqlInteractionDefinitionStore, createSqlSupportVoteStore, createSqlPublicVoteStore, createSqlHypeModeStore, createSqlWidgetConfigStore, createSqlLeaderboardStore, createSqlInteractionOverlayStore } from './db/interaction-sql-store.js';
 import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
 import { createSqlIngestFailureStore } from './db/ingest-failure-store.js';
@@ -105,6 +108,8 @@ const app = await buildApp(config, {
   seats: sql ? createSqlSeatStore(sql) : undefined,
   goals: sql ? createSqlGoalStore(sql) : undefined,
   overlayGoals: sql ? createSqlGoalOverlayStore(sql) : undefined,
+  reputation: sql ? createSqlReputationStore(sql) : undefined,
+  capabilitySnapshots: sql ? createSqlProviderCapabilitySnapshotStore(sql) : undefined,
   challenges: sql ? createSqlChallengeStore(sql) : undefined,
   overlayChallenges: sql ? createSqlChallengeOverlayStore(sql) : undefined,
   interactionDefinitions: sql ? createSqlInteractionDefinitionStore(sql) : undefined,
@@ -121,6 +126,9 @@ const app = await buildApp(config, {
   stickers: sql ? createSqlStickerCatalogueStore(sql) : undefined,
   publicStickers: sql ? createSqlPublicStickerCatalogueStore(sql) : undefined,
   stickerSelections: sql ? createSqlStickerSelectionStore(sql) : undefined,
+  creatorPack: sql ? createSqlCreatorPackStore(sql) : undefined,
+  publicCreatorPack: sql ? createSqlPublicCreatorPackStore(sql) : undefined,
+  creatorPackSelections: sql ? createSqlCreatorPackSelectionStore(sql) : undefined,
   ingestFailures: sql ? createSqlIngestFailureStore(sql) : undefined,
   sql,
   paymentMethodUpdates: sql && config.paymentServiceOrigin && config.paymentServiceAudience

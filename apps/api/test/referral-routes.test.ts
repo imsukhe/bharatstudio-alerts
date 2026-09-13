@@ -84,3 +84,21 @@ test('both referral routes reject unauthenticated callers and fail closed withou
   assert.equal(unavailableHistory.statusCode, 503);
   await app.close();
 });
+
+test('referral store failures are redacted retryable 503 responses', async () => {
+  const store: ReferralStore = {
+    async getOverview() { throw new Error('postgres://user:secret@host rejected overview'); },
+    async listHistory() { throw new Error('postgres://user:secret@host rejected history'); },
+    async attribute() { throw new Error('not used'); },
+  };
+  const app = await buildApp(config, { sessions, referrals: store });
+  const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
+  for (const url of [`/v1/channels/${channelId}/referrals/overview`, `/v1/channels/${channelId}/referrals`]) {
+    const response = await app.inject({ method: 'GET', url, headers });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.json().errorCode, 'referral_store_unavailable');
+    assert.equal(response.json().retryable, true);
+    assert.equal(JSON.stringify(response.json()).includes('secret'), false);
+  }
+  await app.close();
+});

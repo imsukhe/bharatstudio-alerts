@@ -27,8 +27,13 @@ export async function registerBrandingRoutes(app: FastifyInstance, sessions?: Se
     schema: { params: channelParams },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
-    const items = await store.listAssets(request.auth.userId, request.params.channelId);
-    return reply.code(200).send({ schemaVersion: 'v1', items });
+    try {
+      const items = await store.listAssets(request.auth.userId, request.params.channelId);
+      return reply.code(200).send({ schemaVersion: 'v1', items });
+    } catch (error) {
+      logSafeError(request, 'lottie_asset_list_failed', error);
+      return unavailable(reply, request.id);
+    }
   });
 
   app.put<{ Params: { channelId: string; displayStyle: DisplayStyle }; Body: unknown }>('/v1/channels/:channelId/branding/lottie/:displayStyle', {
@@ -69,9 +74,14 @@ export async function registerBrandingRoutes(app: FastifyInstance, sessions?: Se
     schema: { params: assetParams },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
-    const deleted = await store.deleteAsset(request.auth.userId, request.params.channelId, request.params.displayStyle);
-    return deleted
-      ? reply.code(204).send()
-      : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Custom animation not found', traceId: request.id });
+    try {
+      const deleted = await store.deleteAsset(request.auth.userId, request.params.channelId, request.params.displayStyle);
+      return deleted
+        ? reply.code(204).send()
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Custom animation not found', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'lottie_asset_delete_failed', error);
+      return unavailable(reply, request.id);
+    }
   });
 }

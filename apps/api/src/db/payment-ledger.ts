@@ -1,5 +1,5 @@
 import type { Sql, TransactionSql } from 'postgres';
-import type { PaymentLedgerEntry, PaymentLedgerPage, PaymentLedgerStore } from '../domain/payment-ledger.js';
+import { PaymentLedgerInvalidCursorError, type PaymentLedgerEntry, type PaymentLedgerPage, type PaymentLedgerStore } from '../domain/payment-ledger.js';
 import { formatHistoryCursor, parseHistoryCursor } from './history-cursor.js';
 
 async function inUserTransaction<T>(sql: Sql, userId: string, callback: (tx: TransactionSql) => Promise<T>): Promise<T> {
@@ -17,7 +17,7 @@ export function createSqlPaymentLedgerStore(sql: Sql): PaymentLedgerStore {
       // the format has never depended on the id actually being an event id,
       // just any UUID paired with a timestamp for a strict descending walk.
       const parsedCursor = parseHistoryCursor(cursor);
-      if (cursor !== undefined && !parsedCursor) throw new Error('invalid payments cursor');
+      if (cursor !== undefined && !parsedCursor) throw new PaymentLedgerInvalidCursorError();
       const rows = await inUserTransaction(sql, userId, (tx) => tx<{
         payment_id: string; provider_payment_id: string; gross_amount_paise: number; currency: 'INR';
         status: PaymentLedgerEntry['status']; created_at: Date; refund_total_paise: number;

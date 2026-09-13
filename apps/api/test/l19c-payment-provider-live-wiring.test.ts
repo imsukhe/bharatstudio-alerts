@@ -100,8 +100,11 @@ test('createQr, fetchPayment and refund still throw even when a PaymentOrderServ
   await assert.rejects(() => provider.createQr(intent), PaymentProviderNotImplementedError);
   await assert.rejects(() => provider.fetchPayment('pay_1'), PaymentProviderNotImplementedError);
   await assert.rejects(() => provider.refund('pay_1', 1000), PaymentProviderNotImplementedError);
-  // capability flags are unaffected by which dependency was injected
-  assert.equal(provider.connectionCapabilities().supportsDynamicQr, false);
+  // capability flags are unaffected by which dependency was injected.
+  // L19d: dynamic QR is now genuinely implemented, so this rail-level flag
+  // is true even on an instance built without a DynamicQrService (createQr
+  // still throws for that instance, asserted above).
+  assert.equal(provider.connectionCapabilities().supportsDynamicQr, true);
   assert.equal(provider.connectionCapabilities().supportsRefunds, false);
 });
 

@@ -8,16 +8,16 @@
 //     `CreateOrderRequest`) carries no payment-method restriction, so every
 //     method enabled on the connected account's Razorpay Orders/Checkout is
 //     available; this codebase does not narrow it.
-//   supportsDynamicQr: false — no QR-creation call exists anywhere in this
-//     codebase (grepped services/payment-webhook-go and apps/api). L19
-//     task 4 ("dynamic/order-bound QR for desktop") is not started, and
-//     genuinely cannot be from this task's file ownership: every real
-//     Razorpay API call in this codebase lives in the Go payment-webhook
-//     service (services/payment-webhook-go), which this task's boundary
-//     explicitly excludes. Building QR would mean either a second,
-//     unowned Razorpay caller from apps/api (a second place secrets and
-//     the webhook contract could drift) or editing services/ — both out
-//     of scope. See this task's report, "Remaining open".
+//   supportsDynamicQr: true (L19d) — a genuinely new Razorpay call
+//     (POST /v1/payments/qr_codes, services/payment-webhook-go/internal/
+//     provider/razorpay_qr.go), reached through a new internal service
+//     (internal/qr) and endpoint (/internal/v1/tips/qr) on the same
+//     payment-webhook-go service that already owns every other Razorpay
+//     call, so secrets and the webhook contract never gain a second
+//     source. Like createPayment, createQr throws when this provider
+//     instance was not given a DynamicQrService (db/payment-provider-
+//     razorpay-qr-client.ts) — capability truth is about the rail, wiring
+//     truth is about the instance.
 //   supportsRefunds: false — services/payment-webhook-go/internal/reconcile/
 //     refund.go and refund_handler.go only fetch and reconcile refund
 //     *status* (`RefundProvider.FetchRefundForAccount`); no call anywhere
@@ -46,13 +46,21 @@
 // paymentOrders.createTipOrder moved, from routes/public.ts straight into
 // this provider.
 //
-// fetchPayment stays throwing: this codebase's payment-status truth comes
-// from the webhook-populated ledger read in payment-ledger.ts / the public
-// status route (public-payment-status.ts), not from a "fetch this payment
-// from Razorpay" API call — no such call exists anywhere in this
-// codebase (grepped services/payment-webhook-go and apps/api). Faking one
-// here would be the "silent no-op" the task brief explicitly warns
-// against.
+// fetchPayment stays throwing. A provider-order fetch DOES exist
+// (services/payment-webhook-go/internal/provider/razorpay_orders.go
+// FetchOrderForAccount), but it is not a general-purpose "fetch this
+// payment" call this interface method could safely wrap: it is used only by
+// the background reconciliation runner (internal/reconcile/runner.go),
+// whose Evaluate policy (internal/reconcile/reconcile.go) decides what a
+// fetched order means against the local intent — a "paid" order only
+// queues payment recovery, it never overwrites the ledger directly. Adding
+// fetchPayment here would create a second, policy-free consumer of that
+// same fetch, and the exact disagreement this task's brief warns about
+// (a live fetch that disagrees with the reconciled ledger) would have no
+// answer at that second call site. This codebase's payment-status truth
+// stays the webhook-populated ledger (payment-ledger.ts /
+// public-payment-status.ts); a live fetch is reconciliation input, not a
+// second source of truth. Correct refusal, not a gap.
 import type { PaymentAccount, PaymentAccountStore } from './payment-account.js';
 import type { PaymentOrderService } from './payment-order.js';
 import {
@@ -62,6 +70,7 @@ import {
   type CreateQrResult,
   type CreatorPaymentIntent,
   type CreatorPaymentProvider,
+  type DynamicQrService,
   type PaymentStatus,
   type RefundResult,
   type WebhookVerifierRef,
@@ -71,22 +80,25 @@ const RAZORPAY_CAPABILITIES: ConnectionCapabilities = {
   schemaVersion: 'v1',
   provider: 'razorpay',
   supportsUpiIntent: true,
-  supportsDynamicQr: false,
+  supportsDynamicQr: true,
   supportsRefunds: false,
   supportsRecurringPayments: false,
   supportsCards: true,
   supportsInternationalPayments: false,
 };
 
-// accountStore/paymentOrders are both optional so this one factory serves
-// two live call sites with different needs, with no branching outside this
-// file: payment-accounts.ts (owns account connect/verify, never calls
-// createPayment) passes only accountStore; routes/public.ts (owns the
-// money-moving tip flow, never touches accounts) passes only
-// paymentOrders. Calling an operation whose backing dependency was not
-// supplied throws — same fail-closed shape as every other
-// not-yet-implemented method below, never a silent no-op.
-export function createRazorpayPaymentProvider(accountStore?: PaymentAccountStore, paymentOrders?: PaymentOrderService): CreatorPaymentProvider {
+// accountStore/paymentOrders/qrService are all optional so this one factory
+// serves multiple live call sites with different needs, with no branching
+// outside this file: payment-accounts.ts (owns account connect/verify,
+// never calls createPayment or createQr) passes only accountStore;
+// routes/public.ts (owns the money-moving tip flow) passes paymentOrders
+// and, once wired, qrService. Calling an operation whose backing dependency
+// was not supplied throws — same fail-closed shape as every other
+// not-yet-implemented method below, never a silent no-op. This mirrors
+// createPayment's existing precedent exactly: connectionCapabilities()
+// reports what this rail is capable of, not whether this particular
+// instance happens to be wired for it.
+export function createRazorpayPaymentProvider(accountStore?: PaymentAccountStore, paymentOrders?: PaymentOrderService, qrService?: DynamicQrService): CreatorPaymentProvider {
   function requireAccountStore(): PaymentAccountStore {
     if (!accountStore) throw new Error('razorpay provider: no PaymentAccountStore configured for this instance');
     return accountStore;
@@ -163,8 +175,27 @@ export function createRazorpayPaymentProvider(accountStore?: PaymentAccountStore
       };
     },
 
-    async createQr(_intent: CreatorPaymentIntent): Promise<CreateQrResult> {
-      throw new PaymentProviderNotImplementedError('razorpay', 'createQr', 'dynamic QR is L19 task 4; no Razorpay QR call exists anywhere in this codebase, and building one is out of this task\'s file ownership (see the doc comment above)');
+    async createQr(intent: CreatorPaymentIntent, traceId?: string): Promise<CreateQrResult> {
+      if (!qrService) {
+        // Matches createPayment's precedent exactly: an instance built
+        // without a DynamicQrService (e.g. payment-accounts.ts's
+        // account-only instance) throws rather than silently no-oping.
+        throw new PaymentProviderNotImplementedError('razorpay', 'createQr', 'no DynamicQrService configured for this provider instance');
+      }
+      if (typeof intent.expiresAt !== 'string') {
+        // A QR needs a concrete close-by time; a bare capability-check-style
+        // intent with no expiresAt is never silently given one.
+        throw new PaymentProviderNotImplementedError('razorpay', 'createQr', 'intent is missing expiresAt required to bound how long the QR stays open');
+      }
+      return qrService.createDynamicQr(
+        {
+          channelId: intent.channelId,
+          environment: intent.environment,
+          intentId: intent.intentId,
+          closeBy: intent.expiresAt,
+        },
+        traceId,
+      );
     },
 
     async fetchPayment(_providerPaymentRef: string): Promise<PaymentStatus> {

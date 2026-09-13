@@ -33,7 +33,11 @@ test('CreatorPaymentProvider capability reporting returns Razorpay real, repo-ev
     schemaVersion: 'v1',
     provider: 'razorpay',
     supportsUpiIntent: true,
-    supportsDynamicQr: false,
+    // L19d: dynamic QR is now genuinely implemented (see
+    // payment-provider-razorpay.ts createQr / services/payment-webhook-go
+    // internal/qr) — this assertion is updated to match, not the test's
+    // intent otherwise, which is unchanged.
+    supportsDynamicQr: true,
     supportsRefunds: false,
     supportsRecurringPayments: false,
     supportsCards: true,

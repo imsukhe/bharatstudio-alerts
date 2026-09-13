@@ -18,6 +18,7 @@ import (
 	"github.com/bharatstudio/bharatstudio-alerts/services/payment-webhook-go/internal/ingress"
 	"github.com/bharatstudio/bharatstudio-alerts/services/payment-webhook-go/internal/observability"
 	"github.com/bharatstudio/bharatstudio-alerts/services/payment-webhook-go/internal/provider"
+	"github.com/bharatstudio/bharatstudio-alerts/services/payment-webhook-go/internal/qr"
 	"github.com/bharatstudio/bharatstudio-alerts/services/payment-webhook-go/internal/reconcile"
 	"github.com/bharatstudio/bharatstudio-alerts/services/payment-webhook-go/internal/subscription"
 	"google.golang.org/api/idtoken"
@@ -115,6 +116,7 @@ func run() error {
 		return fmt.Errorf("configure worker pump: %w", err)
 	}
 	checkoutService := checkout.NewService(store, orders)
+	qrService := qr.NewService(store, store, orders)
 	subscriptionCatalog := subscription.EnvironmentCatalog(environment)
 	subscriptionService := subscription.NewService(store, orders, subscriptionCatalog)
 	subscriptionLifecycleService := subscription.NewLifecycleService(store, orders, orders, subscriptionCatalog)
@@ -148,6 +150,7 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.Handle("/v1/webhooks/razorpay", ingress.Handler{Secret: webhookSecret, Store: store, Pumper: workerPumper, Metrics: metrics, Logger: logger})
 	mux.Handle("/internal/v1/tips/orders", checkout.HTTPHandler{Authorizer: privateAuthorizer, Service: checkoutService, Environment: environment, Metrics: metrics})
+	mux.Handle("/internal/v1/tips/qr", qr.HTTPHandler{Authorizer: privateAuthorizer, Service: qrService, Environment: environment, Metrics: metrics})
 	mux.Handle("/internal/v1/subscriptions", subscription.HTTPHandler{Authorizer: privateAuthorizer, Service: subscriptionService, Environment: environment})
 	mux.Handle("/internal/v1/subscriptions/lifecycle", subscription.LifecycleHTTPHandler{Authorizer: privateAuthorizer, Service: subscriptionLifecycleService, Environment: environment})
 	mux.Handle("/internal/v1/reconciliation/payments", reconciliationHandler)

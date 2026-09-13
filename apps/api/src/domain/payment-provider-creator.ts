@@ -22,7 +22,13 @@ export type ConnectionCapabilities = {
   provider: string;
   /** UPI collect/intent flow (as opposed to only a hosted checkout page). */
   supportsUpiIntent: boolean;
-  /** Order/intent-bound dynamic QR (L19 task 4 — not built by any rail yet). */
+  /**
+   * Order/intent-bound dynamic QR (L19 task 4). Built for Razorpay in L19d:
+   * a genuinely new Razorpay call (POST /v1/payments/qr_codes), not a
+   * relabeling of order creation -- see payment-provider-razorpay.ts and
+   * services/payment-webhook-go/internal/qr and internal/provider/
+   * razorpay_qr.go for the implementation and its error paths.
+   */
   supportsDynamicQr: boolean;
   /**
    * True only when this codebase can both verify AND programmatically
@@ -86,6 +92,27 @@ export type CreatePaymentResult = {
   amountPaise: number | null;
   currency: 'INR' | null;
 };
+
+// L19d — the internal call a rail's createQr makes to actually produce a QR.
+// This is deliberately its own interface, not a widening of
+// CreateTipOrderInput/PaymentOrderService: a Razorpay QR Code is not an
+// Orders-API object (see services/payment-webhook-go/internal/provider/
+// razorpay_qr.go) and this codebase's ledger/webhook path never needs to
+// know a QR was involved -- a payment made against one arrives through the
+// same verified webhook exactly like an Orders-API payment does. closeBy is
+// carried as an ISO string across this boundary for the same reason
+// CreatorPaymentIntent.expiresAt is: it crosses a JSON wire, not a reason to
+// give this domain type a Date field.
+export type CreateDynamicQrInput = {
+  channelId: string;
+  environment: 'test' | 'live';
+  intentId: string;
+  closeBy: string;
+};
+
+export interface DynamicQrService {
+  createDynamicQr(input: CreateDynamicQrInput, traceId?: string): Promise<CreateQrResult>;
+}
 
 export type CreateQrResult = {
   schemaVersion: 'v1';
@@ -154,7 +181,7 @@ export interface CreatorPaymentProvider {
   // authorization weight and a provider that ignores it behaves
   // identically.
   createPayment(intent: CreatorPaymentIntent, traceId?: string): Promise<CreatePaymentResult>;
-  createQr(intent: CreatorPaymentIntent): Promise<CreateQrResult>;
+  createQr(intent: CreatorPaymentIntent, traceId?: string): Promise<CreateQrResult>;
   fetchPayment(providerPaymentRef: string): Promise<PaymentStatus>;
   refund(providerPaymentRef: string, amountPaise: number): Promise<RefundResult>;
   webhookVerifier(): WebhookVerifierRef;

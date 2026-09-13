@@ -48,6 +48,13 @@ func (m *Metrics) ObserveCheckoutOutcome(outcome string) {
 	m.observeBusiness("checkout", outcome, []string{"accepted", "invalid", "retryable", "unauthorized", "not_configured"})
 }
 
+// ObserveQrOutcome records dynamic-QR creation outcomes (L19d). Same fixed
+// category discipline as ObserveCheckoutOutcome: no provider or intent
+// identifier is ever a label value.
+func (m *Metrics) ObserveQrOutcome(outcome string) {
+	m.observeBusiness("qr", outcome, []string{"accepted", "invalid", "retryable", "unauthorized", "not_configured"})
+}
+
 func (m *Metrics) ObserveReconciliationOutcome(kind, outcome string) {
 	if kind != "payment_reconciliation" && kind != "refund_reconciliation" {
 		kind = "reconciliation"

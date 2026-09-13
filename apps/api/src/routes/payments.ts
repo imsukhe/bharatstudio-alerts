@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAuth } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
-import type { PaymentLedgerStore } from '../domain/payment-ledger.js';
+import { PaymentLedgerInvalidCursorError, type PaymentLedgerStore } from '../domain/payment-ledger.js';
+import { logSafeError } from '../observability/safe-log.js';
 
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: { type: 'string', format: 'uuid' } } } as const;
 
@@ -26,8 +27,12 @@ export async function registerPaymentLedgerRoutes(app: FastifyInstance, sessions
     try {
       const page = await store.listPayments(request.auth.userId, request.params.channelId, request.query.cursor, request.query.pageSize ?? 25);
       return reply.code(200).send(page);
-    } catch {
-      return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'bad_cursor', message: 'Cursor is invalid', traceId: request.id });
+    } catch (error) {
+      if (error instanceof PaymentLedgerInvalidCursorError) {
+        return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'bad_cursor', message: 'Cursor is invalid', traceId: request.id });
+      }
+      logSafeError(request, 'payment_ledger_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_ledger_unavailable', message: 'The payment ledger is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

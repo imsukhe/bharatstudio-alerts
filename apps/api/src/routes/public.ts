@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { PublicChannelRepository } from '../domain/public-channel.js';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { PaymentOrderService } from '../domain/payment-order.js';
+import type { PaymentOrderService, TipOrder } from '../domain/payment-order.js';
+import { createRazorpayPaymentProvider } from '../domain/payment-provider-razorpay.js';
+import type { CreatePaymentResult } from '../domain/payment-provider-creator.js';
 import type { PublicPaymentStatusRepository } from '../domain/public-payment-status.js';
 import { logSafeError } from '../observability/safe-log.js';
 import type { PublicAbuseGuard } from '../domain/public-abuse.js';
@@ -51,6 +53,36 @@ export async function registerPublicRoutes(
   // A tip itself must still succeed if the tag is invalid or unavailable.
   votePaymentTags?: VotePaymentTagStore,
 ): Promise<void> {
+  // L19: the live money-moving tip-order path now goes through
+  // CreatorPaymentProvider.createPayment rather than calling paymentOrders
+  // directly — see this task's report, "The tip flow, before and after".
+  // No accountStore is available in this route file (registerPublicRoutes
+  // never received one, and app.ts is out of this task's file ownership),
+  // so this provider instance only ever has createPayment wired; its
+  // account-connect methods are simply never called from here. Guard
+  // conditions below are unchanged (`!paymentOrders`), so behaviour when
+  // paymentOrders itself is unconfigured is identical to before this task.
+  const razorpayProvider = createRazorpayPaymentProvider(undefined, paymentOrders);
+
+  // Reconstructs the exact TipOrder shape this route always returned,
+  // from the provider-neutral CreatePaymentResult — see
+  // CreatePaymentResult's doc comment in payment-provider-creator.ts for
+  // why the mapping is 1:1 and lossless for a real tip order.
+  function toTipOrder(result: CreatePaymentResult): TipOrder {
+    if (result.orderId === null || result.amountPaise === null || result.currency === null) {
+      throw new Error('razorpay createPayment did not return a full tip order');
+    }
+    return {
+      schemaVersion: 'v1',
+      orderId: result.orderId,
+      provider: 'razorpay',
+      providerOrderId: result.providerPaymentRef,
+      amountPaise: result.amountPaise,
+      currency: result.currency,
+      status: result.status,
+    };
+  }
+
   app.get<{ Params: { handle: string } }>(
     '/v1/public/channels/:handle',
     {
@@ -288,7 +320,7 @@ export async function registerPublicRoutes(
 
       const providerReceipt = `bsa_${createHash('sha256').update(`${channel.channelId}:${idempotencyKey}`).digest('hex').slice(0, 32)}`;
       try {
-        const order = await paymentOrders.createTipOrder({
+        const result = await razorpayProvider.createPayment({
           channelId: channel.channelId,
           environment: paymentEnvironment,
           idempotencyKey,
@@ -301,7 +333,7 @@ export async function registerPublicRoutes(
           alertConsent: request.body.alertConsent !== false,
           expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         }, request.id);
-        return reply.code(201).send(order);
+        return reply.code(201).send(toTipOrder(result));
       } catch (error) {
         logSafeError(request, 'tip_order_creation_failed', error);
         return reply.code(503).send({
@@ -540,7 +572,7 @@ export async function registerPublicRoutes(
 
       const providerReceipt = `bsati_${createHash('sha256').update(`${consumed.channelId}:${intentId}`).digest('hex').slice(0, 32)}`;
       try {
-        const order = await paymentOrders.createTipOrder({
+        const result = await razorpayProvider.createPayment({
           channelId: consumed.channelId,
           environment: paymentEnvironment,
           idempotencyKey,
@@ -553,7 +585,7 @@ export async function registerPublicRoutes(
           alertConsent: true,
           expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         }, request.id);
-        return reply.code(201).send(order);
+        return reply.code(201).send(toTipOrder(result));
       } catch (error) {
         // The TipIntent is now consumed but no order exists — the token
         // cannot be replayed (single-use, by design). Logged for

@@ -43,6 +43,20 @@ export type ConnectionCapabilities = {
   supportsInternationalPayments: boolean;
 };
 
+// Widened for this task (see the return report, "The tip flow, before and
+// after"): the live viewer-pays-creator tip-order route
+// (routes/public.ts) creates a real CreateTipOrderInput
+// (domain/payment-order.ts), which needs donorDisplayName/message/
+// alertConsent/providerReceipt/expiresAt that the original, capability-
+// route-only CreatorPaymentIntent had no room for. Those five fields are
+// OPTIONAL here rather than promoted onto every field of
+// CreateTipOrderInput, for one deliberate reason: a caller that only wants
+// a generic/QR/status-style intent (or an existing minimal caller/test)
+// must keep type-checking unchanged. Razorpay's createPayment (see
+// payment-provider-razorpay.ts) requires all five together at runtime to
+// treat an intent as a real tip order, and throws
+// PaymentProviderNotImplementedError otherwise -- never a silent partial
+// order.
 export type CreatorPaymentIntent = {
   channelId: string;
   environment: 'test' | 'live';
@@ -50,6 +64,11 @@ export type CreatorPaymentIntent = {
   intentId: string;
   amountPaise: number;
   currency: 'INR';
+  donorDisplayName?: string;
+  message?: string;
+  alertConsent?: boolean;
+  providerReceipt?: string;
+  expiresAt?: string;
 };
 
 export type CreatePaymentResult = {
@@ -58,6 +77,14 @@ export type CreatePaymentResult = {
   providerPaymentRef: string;
   status: 'created' | 'pending';
   checkoutUrl: string | null;
+  // Populated only when this result came from a real tip-order creation
+  // (CreateTipOrderInput's TipOrder, mapped 1:1) so the calling route can
+  // reconstruct an identical TipOrder response without this generic result
+  // type ever depending on payment-order.ts's shape directly. null for a
+  // provider/call that doesn't create a tip order.
+  orderId: string | null;
+  amountPaise: number | null;
+  currency: 'INR' | null;
 };
 
 export type CreateQrResult = {
@@ -121,7 +148,12 @@ export interface CreatorPaymentProvider {
   // this task's scope (payment-order.ts / the payment-webhook-go service)
   // and are not touched here. See "Behaviour preservation" / "Remaining
   // open" in this task's report.
-  createPayment(intent: CreatorPaymentIntent): Promise<CreatePaymentResult>;
+  // traceId is optional and purely for observability (forwarded to the
+  // internal payment-order service's x-bsa-trace-id header, exactly as
+  // routes/public.ts already did before this task) -- it carries no
+  // authorization weight and a provider that ignores it behaves
+  // identically.
+  createPayment(intent: CreatorPaymentIntent, traceId?: string): Promise<CreatePaymentResult>;
   createQr(intent: CreatorPaymentIntent): Promise<CreateQrResult>;
   fetchPayment(providerPaymentRef: string): Promise<PaymentStatus>;
   refund(providerPaymentRef: string, amountPaise: number): Promise<RefundResult>;
@@ -133,4 +165,38 @@ export class PaymentProviderNotImplementedError extends Error {
     super(`${provider} does not implement ${operation}: ${reason}`);
     this.name = 'PaymentProviderNotImplementedError';
   }
+}
+
+// --- Preferred-UPI-app memory (L19 task 5) ---------------------------------
+// "Browser-scoped, non-sensitive, last-used-app hint" (task brief, verbatim)
+// means the value itself belongs in the viewer's browser (localStorage),
+// never a server row -- apps/web owns that storage and is out of this
+// task's file ownership, so it is not wired here (see the return report,
+// "Remaining open"). What DOES belong on the server, and is safe to own
+// here, is the closed, non-secret contract for what a valid preference
+// value is: a bounded enum of app names, structurally incapable of holding
+// a credential, token, card number, or UPI VPA, so any future client code
+// (or a debug echo endpoint) that validates a value against this allowlist
+// cannot be tricked into accepting or logging a secret.
+export const UPI_APP_PREFERENCES = ['google_pay', 'phonepe', 'bhim_other'] as const;
+export type UpiAppPreference = (typeof UPI_APP_PREFERENCES)[number];
+
+export function isValidUpiAppPreference(value: unknown): value is UpiAppPreference {
+  return typeof value === 'string' && (UPI_APP_PREFERENCES as readonly string[]).includes(value);
+}
+
+// --- provider_capability_snapshots (L19 task 2) ----------------------------
+// Persists what connectionCapabilities() returned for one connection at a
+// point in time (migration 0118). This is a cache/audit trail, never the
+// source of truth -- see that migration's header comment.
+export type ProviderCapabilitySnapshot = ConnectionCapabilities & {
+  channelId: string;
+  environment: 'test' | 'live';
+  capturedAt: string;
+  updatedAt: string;
+};
+
+export interface ProviderCapabilitySnapshotStore {
+  upsert(userId: string, channelId: string, environment: 'test' | 'live', capabilities: ConnectionCapabilities): Promise<ProviderCapabilitySnapshot>;
+  get(userId: string, channelId: string, provider: string, environment: 'test' | 'live'): Promise<ProviderCapabilitySnapshot | null>;
 }

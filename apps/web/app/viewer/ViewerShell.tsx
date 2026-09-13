@@ -32,6 +32,7 @@ export function ViewerShell({ title, children }: { title: string; children: Reac
       <nav className="top-nav" aria-label="Viewer navigation">
         <Link className="brand" href="/viewer/dashboard">Bharat<span className="brand-accent">Studio</span> <span className="muted-label">Viewer</span></Link>
         <div className="nav-links">
+          <Link href="/viewer/search">Search profiles</Link>
           {signedIn ? (
             <>
               <Link href="/viewer/dashboard">Dashboard</Link>

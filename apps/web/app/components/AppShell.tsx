@@ -113,6 +113,15 @@ function IconReceipt() {
   );
 }
 
+function IconSources() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M2 6.5l6-4 6 4-6 4-6-4Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M2 10.5l6 4 6-4" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function IconCast() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -134,6 +143,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard/alerts', label: 'Alerts', icon: <IconBell /> },
   { href: '/payments', label: 'Payments', icon: <IconCreditCard /> },
   { href: '/dashboard/customise', label: 'Customise', icon: <IconSliders /> },
+  { href: '/dashboard/sources', label: 'Contribution sources', icon: <IconSources /> },
   { href: '/dashboard/mod', label: 'Mod console', icon: <IconShield /> },
   { href: '/dashboard/referrals', label: 'Referrals', icon: <IconLink /> },
   { href: '/settings', label: 'Settings', icon: <IconSettings /> },

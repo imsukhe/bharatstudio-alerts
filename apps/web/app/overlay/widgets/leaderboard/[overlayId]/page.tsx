@@ -1,77 +1,48 @@
 'use client';
 
 /*
- * OBS browser-source widget for the L16 leaderboard. Same auth/poll shape
- * as every other widget in this migration. Channel-scoped purely by the
+ * OBS browser-source widget for the L16 leaderboard. Same auth shape as
+ * every other widget in this migration. Channel-scoped purely by the
  * overlay session (see list_overlay_leaderboard, 0105) — there is no
  * channel id anywhere in this page's own code, so it cannot be pointed at
  * another creator's board even by a modified URL. Renders rank + tier
  * only; the OverlayLeaderboardRow type has no amount field to render.
+ *
+ * TRANSPORT: see ../shared/overlay-transport.ts — a persistent connection
+ * to the existing overlay SSE stream (apps/api/src/routes/overlay.ts,
+ * unmodified) replaces the old `setInterval` poll of this same snapshot
+ * endpoint; a slower fallback poll of that endpoint keeps this widget
+ * working if the stream is ever unavailable.
  */
-import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getApiOrigin } from '../../../../lib/api-origin';
 import { isOverlayLeaderboard, type OverlayLeaderboard } from '../leaderboard-widget-logic';
+import { useOverlayTransport, type SnapshotOutcome } from '../../shared/overlay-transport';
 
 const POLL_MS = 15_000;
 
+async function fetchLeaderboardSnapshot(apiOrigin: string, token: string, overlayId: string): Promise<SnapshotOutcome<OverlayLeaderboard>> {
+  try {
+    const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/leaderboard?window=weekly`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) return response.status === 401 ? { status: 'unauthorized' } : { status: 'error' };
+    const body = await response.json() as { leaderboard: unknown };
+    return { status: 'ok', value: isOverlayLeaderboard(body.leaderboard) ? body.leaderboard : null };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
 export default function LeaderboardWidgetPage() {
   const params = useParams<{ overlayId: string }>();
-  const [board, setBoard] = useState<OverlayLeaderboard | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const pollTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    document.documentElement.classList.add('browser-overlay-document');
-    document.body.classList.add('browser-overlay-document');
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
-    const cleanup = () => {
-      document.documentElement.classList.remove('browser-overlay-document');
-      document.body.classList.remove('browser-overlay-document');
-    };
-    if (!params.overlayId || !token) {
-      setUnavailable(true);
-      return cleanup;
-    }
-
-    let cancelled = false;
-    let apiOrigin: string;
-    try {
-      apiOrigin = getApiOrigin();
-    } catch {
-      setUnavailable(true);
-      return cleanup;
-    }
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(params.overlayId)}/leaderboard?window=weekly`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        if (cancelled) return;
-        if (!response.ok) {
-          if (response.status === 401) { setUnavailable(true); setBoard(null); }
-          return;
-        }
-        const body = await response.json() as { leaderboard: unknown };
-        if (cancelled) return;
-        setUnavailable(false);
-        setBoard(isOverlayLeaderboard(body.leaderboard) ? body.leaderboard : null);
-      } catch {
-        // Network hiccup — keep the last known good render, try again next tick.
-      }
-    };
-
-    void poll();
-    pollTimer.current = window.setInterval(() => void poll(), POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollTimer.current) window.clearInterval(pollTimer.current);
-      cleanup();
-    };
-  }, [params.overlayId]);
+  const { value: board, unavailable } = useOverlayTransport<OverlayLeaderboard>({
+    overlayId: params.overlayId,
+    fetchSnapshot: fetchLeaderboardSnapshot,
+    getApiOrigin,
+    fallbackPollMs: POLL_MS,
+  });
 
   return (
     <div className="leaderboard-widget-root">

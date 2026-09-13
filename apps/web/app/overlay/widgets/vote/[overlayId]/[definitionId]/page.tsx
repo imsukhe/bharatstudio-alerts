@@ -3,76 +3,50 @@
 /*
  * OBS browser-source widget for L16 support votes. Standalone route, same
  * shape as ../../goal/[overlayId]/page.tsx: bearer token travels only in
- * the URL hash fragment (#token=...), poll-based (not a second SSE
- * stream), degrades to a transparent empty state on any failure — never
- * throws, never shows an error banner on stream. Reuses the same
- * overlay_sessions/token-fingerprint auth as the goal widget and every
- * other overlay read in packages/db/migrations/0105 — no new auth path.
+ * the URL hash fragment (#token=...), degrades to a transparent empty
+ * state on any failure — never throws, never shows an error banner on
+ * stream. Reuses the same overlay_sessions/token-fingerprint auth as the
+ * goal widget and every other overlay read in
+ * packages/db/migrations/0105 — no new auth path.
+ *
+ * TRANSPORT: see ../../shared/overlay-transport.ts — a persistent
+ * connection to the existing overlay SSE stream (routes/overlay.ts,
+ * unmodified) replaces the old `setInterval` poll of this same snapshot
+ * endpoint; a slower fallback poll of that endpoint keeps this widget
+ * working if the stream is ever unavailable.
  */
-import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getApiOrigin } from '../../../../../lib/api-origin';
 import { isOverlayVoteTally, optionPercent, totalVotes, type OverlayVoteTally } from '../../vote-widget-logic';
+import { useOverlayTransport, type SnapshotOutcome } from '../../../shared/overlay-transport';
 
 const POLL_MS = 5_000;
 
+async function fetchVoteSnapshot(apiOrigin: string, token: string, overlayId: string, definitionId: string): Promise<SnapshotOutcome<OverlayVoteTally>> {
+  try {
+    const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/votes/${encodeURIComponent(definitionId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) return response.status === 401 ? { status: 'unauthorized' } : { status: 'error' };
+    const body = await response.json() as { tally: unknown };
+    return { status: 'ok', value: isOverlayVoteTally(body.tally) ? body.tally : null };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
 export default function VoteWidgetPage() {
   const params = useParams<{ overlayId: string; definitionId: string }>();
-  const [tally, setTally] = useState<OverlayVoteTally | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const pollTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    document.documentElement.classList.add('browser-overlay-document');
-    document.body.classList.add('browser-overlay-document');
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
-    const cleanup = () => {
-      document.documentElement.classList.remove('browser-overlay-document');
-      document.body.classList.remove('browser-overlay-document');
-    };
-    if (!params.overlayId || !params.definitionId || !token) {
-      setUnavailable(true);
-      return cleanup;
-    }
-
-    let cancelled = false;
-    let apiOrigin: string;
-    try {
-      apiOrigin = getApiOrigin();
-    } catch {
-      setUnavailable(true);
-      return cleanup;
-    }
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(params.overlayId)}/votes/${encodeURIComponent(params.definitionId)}`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        if (cancelled) return;
-        if (!response.ok) {
-          if (response.status === 401) { setUnavailable(true); setTally(null); }
-          return;
-        }
-        const body = await response.json() as { tally: unknown };
-        if (cancelled) return;
-        setUnavailable(false);
-        setTally(isOverlayVoteTally(body.tally) ? body.tally : null);
-      } catch {
-        // Network hiccup — keep the last known good render, try again next tick.
-      }
-    };
-
-    void poll();
-    pollTimer.current = window.setInterval(() => void poll(), POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollTimer.current) window.clearInterval(pollTimer.current);
-      cleanup();
-    };
-  }, [params.overlayId, params.definitionId]);
+  const { value: tally, unavailable } = useOverlayTransport<OverlayVoteTally>({
+    overlayId: params.overlayId,
+    // Not memoized: useOverlayTransport always reads the latest closure via
+    // a ref, so a fresh function on every render is safe and always sees
+    // the current definitionId.
+    fetchSnapshot: (apiOrigin, token, overlayId) => fetchVoteSnapshot(apiOrigin, token, overlayId, params.definitionId),
+    getApiOrigin,
+    fallbackPollMs: POLL_MS,
+  });
 
   return (
     <div className="vote-widget-root">

@@ -25,11 +25,12 @@
  * for why the string lives there rather than being imported from the API
  * package (the widget only ever sees the JSON the API sends).
  *
- * This is a poll-based snapshot read, not a second SSE stream — the main
- * overlay's session/cursor/replay machinery (routes/overlay.ts) is left
- * completely untouched, matching this task's ownership boundary.
+ * TRANSPORT: see ../../shared/overlay-transport.ts — a persistent
+ * connection to the existing overlay SSE stream (routes/overlay.ts,
+ * unmodified) replaces the old `setInterval` poll of this same snapshot
+ * endpoint; a slower fallback poll of that endpoint keeps this widget
+ * working if the stream is ever unavailable.
  */
-import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getApiOrigin } from '../../../../lib/api-origin';
 import {
@@ -40,6 +41,7 @@ import {
   progressPercent,
   type OverlayChallenge,
 } from '../challenge-widget-logic';
+import { useOverlayTransport, type SnapshotOutcome } from '../../shared/overlay-transport';
 
 const POLL_MS = 5_000;
 
@@ -51,69 +53,28 @@ const STATE_LABELS: Record<OverlayChallenge['state'], string> = {
   cancelled: 'Cancelled',
 };
 
+async function fetchChallengeSnapshot(apiOrigin: string, token: string, overlayId: string): Promise<SnapshotOutcome<OverlayChallenge>> {
+  try {
+    const response = await fetch(`${apiOrigin}/v1/overlay-challenges/${encodeURIComponent(overlayId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) return response.status === 401 ? { status: 'unauthorized' } : { status: 'error' };
+    const body = await response.json() as { challenge: unknown };
+    return { status: 'ok', value: isOverlayChallenge(body.challenge) ? body.challenge : null };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
 export default function ChallengeWidgetPage() {
   const params = useParams<{ overlayId: string }>();
-  const [challenge, setChallenge] = useState<OverlayChallenge | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const pollTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    document.documentElement.classList.add('browser-overlay-document');
-    document.body.classList.add('browser-overlay-document');
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
-    if (!params.overlayId || !token) {
-      setUnavailable(true);
-      return () => {
-        document.documentElement.classList.remove('browser-overlay-document');
-        document.body.classList.remove('browser-overlay-document');
-      };
-    }
-
-    let cancelled = false;
-    let apiOrigin: string;
-    try {
-      apiOrigin = getApiOrigin();
-    } catch {
-      setUnavailable(true);
-      return () => {
-        document.documentElement.classList.remove('browser-overlay-document');
-        document.body.classList.remove('browser-overlay-document');
-      };
-    }
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-challenges/${encodeURIComponent(params.overlayId)}`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        if (cancelled) return;
-        if (!response.ok) {
-          // A single failed poll never blanks a widget that already has
-          // data — it just waits for the next tick. Only a truly
-          // unrecoverable auth failure clears to the empty state.
-          if (response.status === 401) { setUnavailable(true); setChallenge(null); }
-          return;
-        }
-        const body = await response.json() as { challenge: unknown };
-        if (cancelled) return;
-        setUnavailable(false);
-        setChallenge(isOverlayChallenge(body.challenge) ? body.challenge : null);
-      } catch {
-        // Network hiccup — keep the last known good render, try again next tick.
-      }
-    };
-
-    void poll();
-    pollTimer.current = window.setInterval(() => void poll(), POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollTimer.current) window.clearInterval(pollTimer.current);
-      document.documentElement.classList.remove('browser-overlay-document');
-      document.body.classList.remove('browser-overlay-document');
-    };
-  }, [params.overlayId]);
+  const { value: challenge, unavailable } = useOverlayTransport<OverlayChallenge>({
+    overlayId: params.overlayId,
+    fetchSnapshot: fetchChallengeSnapshot,
+    getApiOrigin,
+    fallbackPollMs: POLL_MS,
+  });
 
   const visible = !unavailable && challenge && isWidgetVisible(challenge);
   const resolved = visible && challenge && (challenge.state === 'failed' || challenge.state === 'cancelled');

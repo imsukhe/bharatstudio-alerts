@@ -2,75 +2,45 @@
 
 /*
  * OBS browser-source widget for L16 hype mode. Same shape as the goal and
- * vote widgets: bearer token in the URL hash fragment, poll-based (not a
- * second SSE stream), never throws — a hidden card is the only "no active
- * hype mode" state. Reuses the same overlay_sessions auth as every other
- * widget in this migration.
+ * vote widgets: bearer token in the URL hash fragment, never throws — a
+ * hidden card is the only "no active hype mode" state. Reuses the same
+ * overlay_sessions auth as every other widget in this migration.
+ *
+ * TRANSPORT: see ../../shared/overlay-transport.ts — a persistent
+ * connection to the existing overlay SSE stream (routes/overlay.ts,
+ * unmodified) replaces the old `setInterval` poll of this same snapshot
+ * endpoint; a slower fallback poll of that endpoint keeps this widget
+ * working if the stream is ever unavailable.
  */
-import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getApiOrigin } from '../../../../../lib/api-origin';
 import { formatRupees, hypeMeterPercent, isOverlayHypeMode, type OverlayHypeMode } from '../../hype-widget-logic';
+import { useOverlayTransport, type SnapshotOutcome } from '../../../shared/overlay-transport';
 
 const POLL_MS = 3_000;
 
+async function fetchHypeSnapshot(apiOrigin: string, token: string, overlayId: string, definitionId: string): Promise<SnapshotOutcome<OverlayHypeMode>> {
+  try {
+    const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/hype/${encodeURIComponent(definitionId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) return response.status === 401 ? { status: 'unauthorized' } : { status: 'error' };
+    const body = await response.json() as { hype: unknown };
+    return { status: 'ok', value: isOverlayHypeMode(body.hype) ? body.hype : null };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
 export default function HypeWidgetPage() {
   const params = useParams<{ overlayId: string; definitionId: string }>();
-  const [state, setState] = useState<OverlayHypeMode | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const pollTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    document.documentElement.classList.add('browser-overlay-document');
-    document.body.classList.add('browser-overlay-document');
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
-    const cleanup = () => {
-      document.documentElement.classList.remove('browser-overlay-document');
-      document.body.classList.remove('browser-overlay-document');
-    };
-    if (!params.overlayId || !params.definitionId || !token) {
-      setUnavailable(true);
-      return cleanup;
-    }
-
-    let cancelled = false;
-    let apiOrigin: string;
-    try {
-      apiOrigin = getApiOrigin();
-    } catch {
-      setUnavailable(true);
-      return cleanup;
-    }
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(params.overlayId)}/hype/${encodeURIComponent(params.definitionId)}`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        if (cancelled) return;
-        if (!response.ok) {
-          if (response.status === 401) { setUnavailable(true); setState(null); }
-          return;
-        }
-        const body = await response.json() as { hype: unknown };
-        if (cancelled) return;
-        setUnavailable(false);
-        setState(isOverlayHypeMode(body.hype) ? body.hype : null);
-      } catch {
-        // Network hiccup — keep the last known good render, try again next tick.
-      }
-    };
-
-    void poll();
-    pollTimer.current = window.setInterval(() => void poll(), POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollTimer.current) window.clearInterval(pollTimer.current);
-      cleanup();
-    };
-  }, [params.overlayId, params.definitionId]);
+  const { value: state, unavailable } = useOverlayTransport<OverlayHypeMode>({
+    overlayId: params.overlayId,
+    fetchSnapshot: (apiOrigin, token, overlayId) => fetchHypeSnapshot(apiOrigin, token, overlayId, params.definitionId),
+    getApiOrigin,
+    fallbackPollMs: POLL_MS,
+  });
 
   return (
     <div className="hype-widget-root">

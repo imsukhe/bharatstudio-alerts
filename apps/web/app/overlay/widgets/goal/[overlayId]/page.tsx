@@ -19,80 +19,44 @@
  * packages/db/migrations/0102's list_overlay_goal, which mirrors
  * list_overlay_lottie_assets exactly).
  *
- * This is a poll-based snapshot read, not a second SSE stream — the main
- * overlay's session/cursor/replay machinery (routes/overlay.ts) is left
- * completely untouched, matching the ownership boundary for this task.
+ * TRANSPORT: this snapshot read is now driven by the shared
+ * `useOverlayTransport` hook (../shared/overlay-transport.ts), which
+ * connects the SAME SSE stream the main overlay uses
+ * (apps/api/src/routes/overlay.ts, unmodified) instead of a bare
+ * `setInterval` poll. This endpoint's own request/response shape is
+ * untouched — see that file's header comment for the snapshot-on-connect
+ * and fallback-poll design.
  */
-import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getApiOrigin } from '../../../../lib/api-origin';
 import { formatRupees, isOverlayGoal, progressPercent, type OverlayGoal } from '../goal-widget-logic';
+import { useOverlayTransport, type SnapshotOutcome } from '../../shared/overlay-transport';
 
 const POLL_MS = 5_000;
 
+async function fetchGoalSnapshot(apiOrigin: string, token: string, overlayId: string): Promise<SnapshotOutcome<OverlayGoal>> {
+  try {
+    const response = await fetch(`${apiOrigin}/v1/overlay-goals/${encodeURIComponent(overlayId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) return response.status === 401 ? { status: 'unauthorized' } : { status: 'error' };
+    const body = await response.json() as { goal: unknown };
+    return { status: 'ok', value: isOverlayGoal(body.goal) ? body.goal : null };
+  } catch {
+    // Network hiccup — keep the last known good render, try again later.
+    return { status: 'error' };
+  }
+}
+
 export default function GoalWidgetPage() {
   const params = useParams<{ overlayId: string }>();
-  const [goal, setGoal] = useState<OverlayGoal | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const pollTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    document.documentElement.classList.add('browser-overlay-document');
-    document.body.classList.add('browser-overlay-document');
-    const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
-    if (!params.overlayId || !token) {
-      setUnavailable(true);
-      return () => {
-        document.documentElement.classList.remove('browser-overlay-document');
-        document.body.classList.remove('browser-overlay-document');
-      };
-    }
-
-    let cancelled = false;
-    let apiOrigin: string;
-    try {
-      apiOrigin = getApiOrigin();
-    } catch {
-      setUnavailable(true);
-      return () => {
-        document.documentElement.classList.remove('browser-overlay-document');
-        document.body.classList.remove('browser-overlay-document');
-      };
-    }
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-goals/${encodeURIComponent(params.overlayId)}`, {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        });
-        if (cancelled) return;
-        if (!response.ok) {
-          // A single failed poll never blanks a widget that already has
-          // data — it just waits for the next tick. Only a truly
-          // unrecoverable auth failure clears to the empty state.
-          if (response.status === 401) { setUnavailable(true); setGoal(null); }
-          return;
-        }
-        const body = await response.json() as { goal: unknown };
-        if (cancelled) return;
-        setUnavailable(false);
-        setGoal(isOverlayGoal(body.goal) ? body.goal : null);
-      } catch {
-        // Network hiccup — keep the last known good render, try again next tick.
-      }
-    };
-
-    void poll();
-    pollTimer.current = window.setInterval(() => void poll(), POLL_MS);
-
-    return () => {
-      cancelled = true;
-      if (pollTimer.current) window.clearInterval(pollTimer.current);
-      document.documentElement.classList.remove('browser-overlay-document');
-      document.body.classList.remove('browser-overlay-document');
-    };
-  }, [params.overlayId]);
+  const { value: goal, unavailable } = useOverlayTransport<OverlayGoal>({
+    overlayId: params.overlayId,
+    fetchSnapshot: fetchGoalSnapshot,
+    getApiOrigin,
+    fallbackPollMs: POLL_MS,
+  });
 
   return (
     <div className="goal-widget-root">

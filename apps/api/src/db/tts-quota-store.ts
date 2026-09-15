@@ -14,5 +14,8 @@ export function createSqlTtsQuotaMeter(sql: Sql): TtsQuotaMeter {
       const reason = row.reason === 'tier_not_entitled' ? 'tier_not_entitled' : 'quota_exhausted';
       return { allowed: false, reason, remaining: row.remaining };
     },
+    async release(eventId, characterCount): Promise<void> {
+      await sql`select app_private.release_tts_usage_reservation(${eventId}::uuid, ${characterCount}::integer)`;
+    },
   };
 }

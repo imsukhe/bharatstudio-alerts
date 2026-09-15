@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/store"
+	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/tts"
 )
 
 type fakeAuthorizer struct{ err error }
@@ -73,6 +75,19 @@ func (n *fakeNotifier) Notify(_ context.Context, channelID, eventID string) erro
 	n.channelID = channelID
 	n.eventID = eventID
 	return n.err
+}
+
+// fakeEnricher lets §19.0 RT-03 tests prove that Enrich's outcome, whatever
+// its class, never changes delivery release, retry or task-outcome
+// behaviour -- only Store.Release decides that.
+type fakeEnricher struct {
+	calls   int
+	outcome tts.EnrichOutcome
+}
+
+func (e *fakeEnricher) Enrich(context.Context, string) tts.EnrichOutcome {
+	e.calls++
+	return e.outcome
 }
 
 func commandBody(deadline time.Time) string {
@@ -213,5 +228,59 @@ func TestCloudTaskHandlerRejectsTrailingContentAndOversizedBody(t *testing.T) {
 	handler.ServeHTTP(oversized, oversizedRequest)
 	if oversized.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized status=%d", oversized.Code)
+	}
+}
+
+// RT-03.8: a synthesis failure, of every class, must not degrade the
+// delivery's task outcome, and must not prevent, delay or duplicate
+// release. Store.Release must still run exactly once and the response must
+// still be 200/accepted, regardless of the Enricher's classification.
+func TestCloudTaskHandlerReleasesRegardlessOfEnrichOutcome(t *testing.T) {
+	for _, outcome := range []tts.EnrichOutcome{
+		{Class: tts.EnrichSuccess, Attempts: 1},
+		{Class: tts.EnrichTimeoutAmbiguous, Attempts: 1, Err: errors.New("synthetic timeout")},
+		{Class: tts.EnrichTerminal, Attempts: 1, Err: errors.New("synthetic terminal failure")},
+	} {
+		now := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+		storeValue := &fakeDeliveryStore{claimed: true, completed: true}
+		publisher := &fakePublisher{}
+		enricher := &fakeEnricher{outcome: outcome}
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/internal/tasks/alert", strings.NewReader(commandBody(now.Add(time.Minute))))
+		handler := testHandler(storeValue, publisher, now)
+		handler.config.Enricher = enricher
+		handler.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("class=%v status=%d, want 200 regardless of enrich outcome", outcome.Class, recorder.Code)
+		}
+		if enricher.calls != 1 {
+			t.Fatalf("class=%v enrich calls=%d, want exactly 1", outcome.Class, enricher.calls)
+		}
+		if storeValue.releaseCalls != 1 {
+			t.Fatalf("class=%v release calls=%d, want exactly 1", outcome.Class, storeValue.releaseCalls)
+		}
+		if storeValue.retryCalls != 0 {
+			t.Fatalf("class=%v retry calls=%d, want 0 -- a synthesis failure must never degrade the delivery into retryable", outcome.Class, storeValue.retryCalls)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil || body["status"] != "accepted" {
+			t.Fatalf("class=%v body=%v err=%v, want status=accepted", outcome.Class, body, err)
+		}
+	}
+}
+
+// A missing Enricher (nil) must behave exactly as before this task: no
+// enrichment attempted, delivery still releases normally.
+func TestCloudTaskHandlerReleasesWithNoEnricherConfigured(t *testing.T) {
+	now := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+	storeValue := &fakeDeliveryStore{claimed: true, completed: true}
+	publisher := &fakePublisher{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/tasks/alert", strings.NewReader(commandBody(now.Add(time.Minute))))
+	testHandler(storeValue, publisher, now).ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || storeValue.releaseCalls != 1 {
+		t.Fatalf("status=%d release=%d", recorder.Code, storeValue.releaseCalls)
 	}
 }

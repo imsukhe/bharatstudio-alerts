@@ -25,6 +25,12 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
     // with a reason distinct from plain ineligibility, so the web/overlay
     // and dashboard can tell "not configured for TTS" apart from "TTS quota
     // exhausted, show the upgrade prompt" (§3.2 "Overage behaviour").
+    // §19.0 RT-03 / RT-03.6: meter() settles this charge immediately, before
+    // the provider call. reservedCharacters records what was just charged so
+    // every synthesis-failure path below can release it back — a failed
+    // synthesis must never consume premium characters (blocking acceptance
+    // test, not an assumption).
+    let reservedCharacters = 0;
     if (quotaMeter) {
       const quota = await quotaMeter.meter(input.eventId, input.message.length);
       if (!quota.allowed) {
@@ -36,6 +42,7 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
         await store.storeFallbackReason?.(input.eventId, quota.reason);
         return reply.code(200).send({ schemaVersion: 'v1', mode: 'chime', reason: quota.reason, remaining: quota.remaining });
       }
+      reservedCharacters = input.message.length;
     }
     // L09: a provider that throws, and a provider that answers "chime" because
     // it could not synthesize, are both TTS failures worth counting. Quota
@@ -47,10 +54,12 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
       result = await service.synthesize({ text: input.message, locale: input.locale, ...(input.voiceId ? { voiceId: input.voiceId } : {}), ...(input.model ? { model: input.model } : {}) });
     } catch (error) {
       metrics?.recordTtsFailure('provider_error');
+      if (reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
       throw error;
     }
     if (result.mode === 'chime') {
       metrics?.recordTtsFailure('other');
+      if (reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
       return reply.code(200).send({ schemaVersion: 'v1', mode: 'chime', reason: result.reason });
     }
     const artifactId = await store.storeAudio(input.eventId, result.audio);

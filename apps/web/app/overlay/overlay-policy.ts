@@ -238,7 +238,15 @@ function timestamp(item: OverlayItem): number {
 
 export function selectPresentationGroup(items: OverlayItem[], config: OverlayConfig): { group: OverlayItem[]; rest: OverlayItem[] } {
   if (items.length === 0) return { group: [], rest: [] };
-  const ordered = [...items];
+  // §19.0 RT-03 / RT-03.9: the display queue is ordered by the alert's
+  // creation time, not arrival time, so an alert delayed by slow synthesis
+  // slots back into payment order instead of appearing after one paid
+  // later. Acknowledgement order is unaffected by this — finishDisplay()
+  // in page.tsx still acknowledges by arrivalOrder, which is the cursor
+  // sequence Last-Event-Id/replay actually depends on; only which item is
+  // chosen to display next changes here. arrivalOrder is the tiebreak for
+  // two items with the same createdAt, so ordering stays deterministic.
+  const ordered = [...items].sort((a, b) => timestamp(a) - timestamp(b) || (a.arrivalOrder ?? 0) - (b.arrivalOrder ?? 0));
   if (config.queue.mode === 'aggregated' && ordered.length >= config.queue.aggregationThreshold) {
     const firstTime = timestamp(ordered[0]!);
     // Aggregation is one visual card, so maxVisibleItems must not reduce the

@@ -114,6 +114,22 @@ test('TTS is an optional side effect with a non-blocking chime fallback', () => 
   assert.deepEqual(ttsPlaybackPlan(item('3', 1000), normalizeOverlayConfig({ tts: { enabled: false } })), { mode: 'silent' });
 });
 
+test('RT-03.9: display queue orders by creation time, not arrival time', () => {
+  // '2' was created first but, per a slow synthesis, arrives second; '1' was
+  // created after it but arrives first. Selection (stackLimit 1, fifo) must
+  // still pick the earlier-created item, so a late-synthesised alert slots
+  // back into payment order instead of appearing after one paid later.
+  const createdSecondArrivedFirst = item('1', 1000, 0, '2026-08-15T10:00:05.000Z');
+  const createdFirstArrivedSecond = item('2', 1000, 0, '2026-08-15T10:00:00.000Z');
+  const items = [createdSecondArrivedFirst, createdFirstArrivedSecond];
+  const config = normalizeOverlayConfig({ queue: { mode: 'fifo', stackLimit: 1 }, display: { maxVisibleItems: 1 } });
+  const selected = selectPresentationGroup(items, config);
+  assert.equal(selected.group.length, 1);
+  assert.equal(selected.group[0]?.cursor, '2');
+  assert.equal(selected.rest.length, 1);
+  assert.equal(selected.rest[0]?.cursor, '1');
+});
+
 test('requeues only the unacknowledged suffix for reconnect replay', () => {
   const acknowledgementOrder = [item('1', 1000), item('2', 1000), item('3', 1000)];
   const rest = [item('4', 1000)];

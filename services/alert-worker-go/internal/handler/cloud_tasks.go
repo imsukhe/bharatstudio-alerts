@@ -13,6 +13,7 @@ import (
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/observability"
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/store"
 	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/tasks"
+	"github.com/bharatstudio/bharatstudio-alerts/services/alert-worker-go/internal/tts"
 )
 
 const defaultBodyLimit int64 = 64 << 10
@@ -36,8 +37,12 @@ type Notifier interface {
 	Notify(ctx context.Context, channelID, eventID string) error
 }
 
+// Enricher's outcome (§19.0 RT-03) is a bounded classification, not just an
+// error, so a caller can log what happened without ever letting it change
+// whether, when, or how the delivery is released -- Store.Release always
+// runs next, unconditionally of the returned EnrichOutcome.
 type Enricher interface {
-	Enrich(ctx context.Context, eventID string) error
+	Enrich(ctx context.Context, eventID string) tts.EnrichOutcome
 }
 
 type Config struct {
@@ -161,12 +166,19 @@ func (h Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		writeRetryable(response)
 		return
 	}
-	// TTS is an optional enrichment. It runs after the durable claim and before
-	// release so a successful artifact can be included in replay, but every
-	// provider/network failure is deliberately ignored: the visual alert must
-	// still be released and the browser falls back to its chime.
+	// TTS is an optional enrichment (§19.0 RT-03: checks, then synthesis,
+	// then one release). It runs after the durable claim and before release
+	// so a successful artifact can be included in replay, but its outcome
+	// never gates release: Enrich already bounds itself to one synthesis
+	// attempt's worth of delay (retrying only an unambiguous failure, never
+	// a timeout -- internal/tts/client.go), and every class of failure
+	// still reaches Store.Release next, unconditionally. The classification
+	// is logged for operability only; it never changes ObserveTaskOutcome,
+	// so a synthesis failure of any class cannot degrade this delivery's
+	// task outcome into "retryable" and cannot delay, duplicate or drop it.
 	if h.config.Enricher != nil {
-		_ = h.config.Enricher.Enrich(request.Context(), delivery.EventID)
+		outcome := h.config.Enricher.Enrich(request.Context(), delivery.EventID)
+		h.config.Logger.Event("tts_enrich", string(outcome.Class), command.TraceID)
 	}
 	if _, released, err := h.config.Store.Release(request.Context(), command.DeliveryID, leaseToken); err != nil || !released {
 		h.config.Metrics.ObserveTaskOutcome("retryable")

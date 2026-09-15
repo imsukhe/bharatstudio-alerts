@@ -35,7 +35,7 @@ async function buildTtsApp(store: TtsStore, service: TtsService, quotaMeter?: Tt
 
 test('tier_not_entitled denial durably records the fallback reason', async () => {
   const recorded: { eventId: string; reason: string }[] = [];
-  const meter: TtsQuotaMeter = { async meter() { return { allowed: false, reason: 'tier_not_entitled', remaining: 0 }; } };
+  const meter: TtsQuotaMeter = { async meter() { return { allowed: false, reason: 'tier_not_entitled', remaining: 0 }; }, async release() {} };
   const app = await buildTtsApp(storeWithFallbackRecorder(recorded), succeedingService, meter);
   const response = await app.inject({ method: 'POST', url: `/internal/v1/tts/events/${EVENT_ID}`, headers: { authorization: 'Bearer worker-token' } });
   assert.equal(response.statusCode, 200);
@@ -46,7 +46,7 @@ test('tier_not_entitled denial durably records the fallback reason', async () =>
 
 test('quota_exhausted denial durably records the fallback reason', async () => {
   const recorded: { eventId: string; reason: string }[] = [];
-  const meter: TtsQuotaMeter = { async meter() { return { allowed: false, reason: 'quota_exhausted', remaining: 0 }; } };
+  const meter: TtsQuotaMeter = { async meter() { return { allowed: false, reason: 'quota_exhausted', remaining: 0 }; }, async release() {} };
   const app = await buildTtsApp(storeWithFallbackRecorder(recorded), succeedingService, meter);
   const response = await app.inject({ method: 'POST', url: `/internal/v1/tts/events/${EVENT_ID}`, headers: { authorization: 'Bearer worker-token' } });
   assert.equal(response.statusCode, 200);
@@ -57,7 +57,7 @@ test('quota_exhausted denial durably records the fallback reason', async () => {
 
 test('a successful synthesis never records a fallback reason', async () => {
   const recorded: { eventId: string; reason: string }[] = [];
-  const meter: TtsQuotaMeter = { async meter() { return { allowed: true, remaining: 99 }; } };
+  const meter: TtsQuotaMeter = { async meter() { return { allowed: true, remaining: 99 }; }, async release() {} };
   const store: TtsStore = {
     async getEventInput(eventId) { return { eventId, message: 'Namaste', locale: 'hi-IN', enabled: true, eligible: true }; },
     async storeAudio() { return '00000000-0000-4000-8000-000000000099'; },
@@ -72,7 +72,7 @@ test('a successful synthesis never records a fallback reason', async () => {
 });
 
 test('a store with no storeFallbackReason wired (back-compat) does not crash the denial path', async () => {
-  const meter: TtsQuotaMeter = { async meter() { return { allowed: false, reason: 'tier_not_entitled', remaining: 0 }; } };
+  const meter: TtsQuotaMeter = { async meter() { return { allowed: false, reason: 'tier_not_entitled', remaining: 0 }; }, async release() {} };
   const store: TtsStore = {
     async getEventInput(eventId) { return { eventId, message: 'Namaste', locale: 'hi-IN', enabled: true, eligible: true }; },
     async storeAudio() { throw new Error('must not store'); },

@@ -99,6 +99,7 @@ run_sql_test l03_admin_entitlement_management.sql
 run_sql_test l02_l04_email_delivery.sql
 run_sql_test l02_terms_consent.sql
 run_sql_test l03_tts_event_enrichment.sql
+run_sql_test rt02_overlay_events_artifact_column.sql
 run_sql_test l03_tts_usage_metering.sql
 run_sql_test l03_entitlement_retier_and_dimensions.sql
 run_sql_test l03_queue_mode_ladder.sql

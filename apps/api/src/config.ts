@@ -13,6 +13,11 @@ export type RuntimeConfig = {
   internalServiceAudiences?: string[];
   overlayStreamWindowMs?: number;
   overlayPollMs?: number;
+  // RT-02 §3.3. Unset means no additional admission limit — bounded only by
+  // the platform's own Cloud Run request-concurrency cap. Never a value this
+  // codebase invents; set only by deployment configuration.
+  overlayMaxInstanceSubscribers?: number;
+  overlayMaxChannelSubscribers?: number;
   notificationTokenEncryptionKey?: string;
   publicPaymentTurnstileRequired?: boolean;
   publicPaymentTurnstileSecret?: string;
@@ -149,6 +154,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   if (publicPaymentTurnstileRequired && !publicPaymentTurnstileSecret) {
     throw new Error('PUBLIC_PAYMENT_TURNSTILE_SECRET is required when public payment Turnstile is required');
   }
+  function optionalPositiveInt(name: string): number | undefined {
+    const raw = env[name];
+    if (raw === undefined || raw === '') return undefined;
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error(`${name} must be a positive integer when set`);
+    }
+    return parsed;
+  }
+  const overlayMaxInstanceSubscribers = optionalPositiveInt('OVERLAY_MAX_INSTANCE_SUBSCRIBERS');
+  const overlayMaxChannelSubscribers = optionalPositiveInt('OVERLAY_MAX_CHANNEL_SUBSCRIBERS');
+
   const sarvamApiKey = env.SARVAM_API_KEY;
   const sarvamTtsEndpoint = env.SARVAM_TTS_ENDPOINT;
   if (sarvamTtsEndpoint) {
@@ -177,6 +194,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     apiOrigin: env.API_ORIGIN ?? `http://127.0.0.1:${port}`,
     databaseUrlApp,
     databaseUrlDirect,
+    overlayMaxInstanceSubscribers,
+    overlayMaxChannelSubscribers,
     googleClientId,
     paymentEnvironment,
     paymentServiceOrigin,

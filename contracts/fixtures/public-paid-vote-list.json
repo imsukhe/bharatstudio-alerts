@@ -1,0 +1,14 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-paid-vote-list.schema.json",
+  "schemaVersion": "v1",
+  "items": [
+    {
+      "definitionId": "00000000-0000-4000-8000-000000000091",
+      "label": "Synthetic stream choice",
+      "options": [
+        { "optionKey": "choice_a", "label": "Choice A" },
+        { "optionKey": "choice_b", "label": "Choice B" }
+      ]
+    }
+  ]
+}

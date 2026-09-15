@@ -26,7 +26,11 @@ export async function fetchTipOrder(
   const timeout = setTimeout(() => controller.abort(), tipRequestTimeoutMs(input.timeoutMs));
   try {
     const fetchImpl = input.fetchImpl ?? fetch;
-    return await fetchImpl(input.url, { ...input.init, signal: controller.signal });
+    // Public checkout uses the secure first-party anonymous identity cookie.
+    // The web and API apps may be different same-site origins, so browser
+    // fetch defaults would silently drop that cookie after the first order.
+    // Callers can still explicitly opt out for a truly credential-free read.
+    return await fetchImpl(input.url, { ...input.init, credentials: input.init.credentials ?? 'include', signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }

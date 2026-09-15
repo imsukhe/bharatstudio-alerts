@@ -36,7 +36,7 @@ test('aborts a stalled tip-order request within the configured bound', async () 
   assert.equal(aborted, true);
 });
 
-test('forwards the request idempotency key and does not mutate the body', async () => {
+test('forwards the request idempotency key, retains the body, and includes the same-site checkout cookie', async () => {
   const request = { method: 'POST', headers: { 'Idempotency-Key': 'tip-retry-key-001' }, body: '{"amountPaise":1000}' };
   let received: RequestInit | undefined;
   const fetchImpl: typeof fetch = async (_url, init) => {
@@ -47,4 +47,15 @@ test('forwards the request idempotency key and does not mutate the body', async 
   await fetchTipOrder({ url: 'https://api.example.test/v1/tips/orders', init: request, timeoutMs: 1_000, fetchImpl });
   assert.equal((received?.headers as Record<string, string>)['Idempotency-Key'], 'tip-retry-key-001');
   assert.equal(received?.body, request.body);
+  assert.equal(received?.credentials, 'include');
+});
+
+test('honours an explicit credential mode for a credential-free public read', async () => {
+  let received: RequestInit | undefined;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    received = init;
+    return new Response('{"ok":true}', { status: 200 });
+  };
+  await fetchTipOrder({ url: 'https://api.example.test/v1/public/tip-orders/order/status', init: { credentials: 'omit' }, timeoutMs: 1_000, fetchImpl });
+  assert.equal(received?.credentials, 'omit');
 });

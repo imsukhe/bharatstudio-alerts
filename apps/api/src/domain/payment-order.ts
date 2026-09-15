@@ -9,6 +9,7 @@ export type CreateTipOrderInput = {
   donorDisplayName: string;
   message: string;
   alertConsent: boolean;
+  anonymousIdentityTokenHash?: string;
   expiresAt: string;
 };
 

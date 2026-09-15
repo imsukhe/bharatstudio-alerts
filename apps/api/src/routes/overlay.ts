@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import type { ApiMetrics } from '../observability/metrics.js';
 import { requireAuth, requireAuthAndTerms } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
-import type { OverlayStore } from '../domain/overlay-store.js';
-import type { OverlayWakeup } from '../domain/overlay-wakeup.js';
+import { composeOverlayEvent, type OverlayEvent, type OverlaySessionRef, type OverlayStore, type RawOverlayEvent } from '../domain/overlay-store.js';
+import type { OverlaySubscription, OverlayWakeup } from '../domain/overlay-wakeup.js';
 import type { AccountStore } from '../domain/account-store.js';
 import { logSafeError } from '../observability/safe-log.js';
+import { abortableSleep } from '../domain/abortable-sleep.js';
+import { createReplayCoalescer, type ReplayCoalescer } from '../domain/overlay-replay-coalescer.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: uuid } } as const;
@@ -15,9 +17,34 @@ function unavailable(reply: { code: (status: number) => { send: (body: unknown) 
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_store_unavailable', message: 'Overlay sessions are temporarily unavailable', traceId, retryable: true });
 }
 
-export async function registerOverlayRoutes(app: FastifyInstance, sessions?: SessionStore, store?: OverlayStore, wakeup?: OverlayWakeup, streamOptions: { windowMs: number; pollMs: number } = { windowMs: 25_000, pollMs: 2_000 }, account?: AccountStore, appOrigin?: string, metrics?: ApiMetrics): Promise<void> {
+function admissionLimited(reply: { code: (status: number) => { send: (body: unknown) => unknown } }, traceId: string) {
+  // RT-02 §3.3: a configured, reached ceiling is a clear, retryable
+  // rejection — never a silent hang, and always returned BEFORE
+  // reply.hijack() so it is a normal JSON error response.
+  return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_admission_limited', message: 'Overlay admission is temporarily limited', traceId, retryable: true });
+}
+
+export async function registerOverlayRoutes(app: FastifyInstance, sessions?: SessionStore, store?: OverlayStore, wakeup?: OverlayWakeup, streamOptions: { windowMs: number; pollMs: number; random?: () => number; now?: () => number; sleep?: (timeoutMs: number, signal: AbortSignal) => Promise<void> } = { windowMs: 25_000, pollMs: 2_000 }, account?: AccountStore, appOrigin?: string, metrics?: ApiMetrics): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
+  // RT-02 §3.2: one coalescer per running app instance, shared by every SSE
+  // connection it serves. Keyed by channelId+cursor+limit so concurrent
+  // sessions of the same channel at the same cursor share one store read;
+  // different cursors/channels are never coalesced (separate keys).
+  const replayCoalescer: ReplayCoalescer<RawOverlayEvent[]> = createReplayCoalescer<RawOverlayEvent[]>();
+
+  async function fetchEvents(token: string, overlayId: string, session: OverlaySessionRef | undefined, cursor: string | undefined, limit: number): Promise<OverlayEvent[] | null> {
+    if (session && store?.replayRaw) {
+      const key = `${session.channelId}|${cursor ?? ''}|${limit}`;
+      const { result, shared } = await replayCoalescer.run(key, () => store.replayRaw!(token, overlayId, cursor, limit));
+      metrics?.recordOverlayReplay(shared ? 'shared' : 'leader');
+      return result ? result.map((row) => composeOverlayEvent(row, overlayId)) : null;
+    }
+    // Fallback: no channel context (a store that does not implement
+    // resolveSession/replayRaw). Same durable, per-session semantics as
+    // before RT-02, without channel-keyed dedup.
+    return store!.replay(token, overlayId, cursor, limit);
+  }
 
   app.post<{ Params: { channelId: string } }>('/v1/channels/:channelId/overlay/session', { preHandler: termsAuth, schema: { params: channelParams } }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
@@ -54,9 +81,42 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
     if (!store) return unavailable(reply, request.id);
     const token = bearerToken(request.headers.authorization);
     if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Overlay session is invalid or expired', traceId: request.id });
+    const overlayId = request.params.overlayId;
+
+    // RT-02 §3.2(a): resolve this session's own channel before anything
+    // else — every session validates its own token on every wake, starting
+    // here. A store that does not implement this (test doubles only; the
+    // real SQL store always does) opts this connection out of channel-keyed
+    // fanout/dedup and falls back to the pre-RT-02 per-session shape below.
+    let session: OverlaySessionRef | undefined;
+    if (store.resolveSession) {
+      try {
+        session = (await store.resolveSession(token, overlayId)) ?? undefined;
+      } catch (error) {
+        logSafeError(request, 'overlay_session_resolve_failed', error);
+        return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_replay_unavailable', message: 'Overlay replay is temporarily unavailable', traceId: request.id, retryable: true });
+      }
+      if (!session) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Overlay session is invalid or expired', traceId: request.id });
+    }
+
+    // RT-02 §3.3: admission is checked after token validation and before
+    // the stream is hijacked. `channelKey` is the resolved channel when
+    // available, or the overlayId itself for a store without channel
+    // resolution — the same granularity that store already provides.
+    const channelKey = session?.channelId ?? overlayId;
+    let subscription: OverlaySubscription | null = null;
+    if (wakeup) {
+      subscription = wakeup.subscribe(channelKey);
+      if (!subscription) {
+        metrics?.recordOverlayAdmissionRejection();
+        return admissionLimited(reply, request.id);
+      }
+    }
+    const release = () => subscription?.release();
+
     let events;
     try {
-      events = await store.replay(token, request.params.overlayId, request.headers['last-event-id'], request.query.limit ?? 50);
+      events = await fetchEvents(token, overlayId, session, request.headers['last-event-id'], request.query.limit ?? 50);
       // L09 reconnect-replay: only count a replay the client actually asked to
       // resume (it sent a cursor). A first connection with no Last-Event-Id is
       // not a reconnect, and counting it would inflate the success rate with
@@ -65,12 +125,17 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
     } catch (error) {
       if (request.headers['last-event-id']) metrics?.recordReconnectReplay('failure');
       if (error instanceof Error && error.message === 'invalid_cursor') {
+        release();
         return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'bad_cursor', message: 'Overlay cursor is invalid', traceId: request.id });
       }
       logSafeError(request, 'overlay_replay_failed', error);
+      release();
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_replay_unavailable', message: 'Overlay replay is temporarily unavailable', traceId: request.id, retryable: true });
     }
-    if (!events) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Overlay session is invalid or expired', traceId: request.id });
+    if (!events) {
+      release();
+      return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Overlay session is invalid or expired', traceId: request.id });
+    }
 
     reply.hijack();
     // reply.hijack() takes the response fully out of Fastify's own reply
@@ -108,6 +173,11 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
     request.raw.on('close', () => {
       closed = true;
       disconnect.abort();
+      // RT-02 §3.3: free the admission slot as soon as the client
+      // disconnects, not only when the poll loop next notices `closed`.
+      // Idempotent — the natural end-of-stream release below is a no-op
+      // if this already ran.
+      release();
     });
     const writeEvents = (items: NonNullable<typeof events>) => {
       for (const event of items) {
@@ -116,20 +186,55 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
       }
     };
     writeEvents(events);
-    const deadline = Date.now() + streamOptions.windowMs;
-    while (!closed && Date.now() < deadline) {
-      const waitMs = Math.min(streamOptions.pollMs, Math.max(1, deadline - Date.now()));
+    const now = streamOptions.now ?? Date.now;
+    const deadline = now() + streamOptions.windowMs;
+    while (!closed && now() < deadline) {
+      const waitMs = Math.min(streamOptions.pollMs, Math.max(1, deadline - now()));
+      let woke = false;
       try {
-        if (wakeup) await wakeup.wait(request.params.overlayId, waitMs, disconnect.signal);
-        else await waitWithAbort(waitMs, disconnect.signal);
+        if (wakeup && subscription) {
+          try {
+            woke = (await subscription.wait(waitMs, disconnect.signal)) === 'notification';
+          } catch {
+            // Listener failure is the sole entry to the bounded fallback.
+            const jitterMs = Math.min(waitMs, 500 + Math.floor((streamOptions.random ?? Math.random)() * 1_000));
+            await (streamOptions.sleep ?? abortableSleep)(jitterMs, disconnect.signal);
+            if (closed) break;
+            woke = !disconnect.signal.aborted;
+          }
+        } else {
+          // No listener is configured: treat this as a disconnected wake-up
+          // path and use only the bounded jitter fallback.
+          const jitterMs = Math.min(waitMs, 500 + Math.floor((streamOptions.random ?? Math.random)() * 1_000));
+          await (streamOptions.sleep ?? abortableSleep)(jitterMs, disconnect.signal);
+          if (closed) break;
+          woke = !disconnect.signal.aborted;
+        }
+        if (!woke && wakeup?.health().connected) continue;
+        if (!woke && wakeup && !wakeup.health().connected) {
+          const jitterMs = Math.min(waitMs, 500 + Math.floor((streamOptions.random ?? Math.random)() * 1_000));
+          await (streamOptions.sleep ?? abortableSleep)(jitterMs, disconnect.signal);
+          if (closed) break;
+          woke = !disconnect.signal.aborted;
+        }
       } catch (error) {
         logSafeError(request, 'overlay_stream_wait_failed', error);
         replayUnavailable = true;
         break;
       }
       if (closed) break;
+      if (!woke) continue;
       try {
-        const next = await store.replay(token, request.params.overlayId, cursor, request.query.limit ?? 50);
+        // RT-02 §3.2(a): re-validate this exact session's own token on
+        // every wake, before it is given any events — never inherited from
+        // whichever session happened to lead a shared replay. A session
+        // revoked mid-window stops here, exactly like the `!next` durable
+        // check below already stops an unauthorized replay.
+        if (store.resolveSession) {
+          session = (await store.resolveSession(token, overlayId)) ?? undefined;
+          if (!session) break;
+        }
+        const next = await fetchEvents(token, overlayId, session, cursor, request.query.limit ?? 50);
         if (!next) break;
         writeEvents(next);
       } catch (error) {
@@ -142,6 +247,7 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
         break;
       }
     }
+    release();
     if (!reply.raw.destroyed && !reply.raw.writableEnded) {
       reply.raw.write(replayUnavailable ? ': replay-unavailable\n\n' : ': replay-complete\n\n');
       reply.raw.end();
@@ -170,27 +276,6 @@ export async function registerOverlayRoutes(app: FastifyInstance, sessions?: Ses
       logSafeError(request, 'overlay_cursor_ack_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'overlay_cursor_unavailable', message: 'Overlay cursor acknowledgement is temporarily unavailable', traceId: request.id, retryable: true });
     }
-  });
-}
-
-function waitWithAbort(timeoutMs: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      signal.removeEventListener('abort', finish);
-      resolve();
-    };
-    if (signal.aborted) {
-      finish();
-      return;
-    }
-    signal.addEventListener('abort', finish, { once: true });
-    timer = setTimeout(finish, timeoutMs);
-    timer.unref?.();
   });
 }
 

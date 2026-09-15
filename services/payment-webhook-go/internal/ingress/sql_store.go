@@ -219,12 +219,12 @@ func (s *SQLStore) CreateIntent(ctx context.Context, request checkout.IntentRequ
 	err := s.db.QueryRowContext(ctx, `
 	select intent_id::text, connected_account_ref, amount_paise, currency, provider_receipt,
 	       provider_order_id, donor_display_name, donor_message, alert_consent, status
-  from app_private.create_payment_order_intent(
+  from app_private.create_payment_order_intent_with_identity(
     $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::bigint,
-	    $7::text, $8::text, $9::boolean, $10::timestamptz
+	    $7::text, $8::text, $9::boolean, $10::timestamptz, nullif($11, '')::text
   )`, request.IntentID, request.ChannelID, request.Environment,
 		request.IdempotencyKey, request.Receipt, request.AmountPaise,
-		request.DisplayName, request.Message, request.AlertConsent, request.ExpiresAt,
+		request.DisplayName, request.Message, request.AlertConsent, request.ExpiresAt, request.AnonymousIdentityTokenHash,
 	).Scan(&intent.ID, &intent.ConnectedAccountRef, &intent.AmountPaise, &intent.Currency, &intent.Receipt, &providerOrderID, &intent.DisplayName, &intent.Message, &intent.AlertConsent, &intent.Status)
 	if err != nil {
 		return checkout.Intent{}, err
@@ -366,7 +366,7 @@ select channel_id::text
 	var status string
 	err = s.db.QueryRowContext(ctx, `
 select duplicate, quarantined, payment_id::text, alert_event_id::text, delivery_status
-  from app_private.record_verified_payment_webhook(
+  from app_private.record_verified_payment_webhook_with_identity(
     $1::uuid, $2::text, $3::text, $4::text, $5::text,
     current_timestamp, current_timestamp, $6::jsonb,
     nullif($7, '')::uuid, nullif($8, '')::uuid,

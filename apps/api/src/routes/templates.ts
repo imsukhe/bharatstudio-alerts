@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { requireAuth } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { TemplateCatalogueStore } from '../domain/template-catalogue.js';
+import { logSafeError } from '../observability/safe-log.js';
 
 const channelParams = { type: 'object', additionalProperties: false, required: ['channelId'], properties: { channelId: { type: 'string', format: 'uuid' } } } as const;
 
@@ -22,7 +23,12 @@ export async function registerTemplateRoutes(app: FastifyInstance, sessions?: Se
     schema: { params: channelParams },
   }, async (request, reply) => {
     if (!store || !request.auth) return unavailable(reply, request.id);
-    const items = await store.listForChannel(request.auth.userId, request.params.channelId);
-    return reply.code(200).send({ schemaVersion: 'v1', items });
+    try {
+      const items = await store.listForChannel(request.auth.userId, request.params.channelId);
+      return reply.code(200).send({ schemaVersion: 'v1', items });
+    } catch (error) {
+      logSafeError(request, 'template_catalogue_read_failed', error);
+      return unavailable(reply, request.id);
+    }
   });
 }

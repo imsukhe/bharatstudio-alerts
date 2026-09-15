@@ -237,6 +237,32 @@ test('confirm on an already-used token 409s, on an expired token 410s, on an unk
   await app.close();
 });
 
+test('TipIntent confirmation uses the same opaque anonymous cookie boundary as direct checkout', async () => {
+  const { repository } = fakeTipIntents();
+  const createdOrders: Array<{ anonymousIdentityTokenHash?: string }> = [];
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      createdOrders.push(input);
+      return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: `order_${input.intentId}`, amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+    },
+  };
+  const app = await buildTestApp({ tipIntents: repository, paymentOrders });
+  const firstIntent = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 5000, sourcePlatform: 'youtube' } })).json();
+  const first = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${firstIntent.token}/orders`, headers: { 'idempotency-key': 'synthetic-tipintent-identity-0001' }, payload: {} });
+  assert.equal(first.statusCode, 201);
+  const cookie = first.headers['set-cookie'];
+  assert.equal(typeof cookie, 'string');
+  assert.match(cookie as string, /^__Host-bsa-anonymous=[A-Za-z0-9_-]{43}; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure$/);
+  assert.match(createdOrders[0]?.anonymousIdentityTokenHash ?? '', /^[0-9a-f]{64}$/);
+
+  const secondIntent = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 6000, sourcePlatform: 'youtube' } })).json();
+  const second = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${secondIntent.token}/orders`, headers: { 'idempotency-key': 'synthetic-tipintent-identity-0002', cookie: (cookie as string).split(';', 1)[0] }, payload: {} });
+  assert.equal(second.statusCode, 201);
+  assert.equal(second.headers['set-cookie'], undefined);
+  assert.equal(createdOrders[1]?.anonymousIdentityTokenHash, createdOrders[0]?.anonymousIdentityTokenHash);
+  await app.close();
+});
+
 test('the resolve lookup is rate limited', async () => {
   const { repository } = fakeTipIntents();
   const app = await buildTestApp({ tipIntents: repository, rateLimited: true });

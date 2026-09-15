@@ -159,6 +159,7 @@ export function createRazorpayPaymentProvider(accountStore?: PaymentAccountStore
           donorDisplayName: intent.donorDisplayName,
           message: intent.message,
           alertConsent: intent.alertConsent,
+          anonymousIdentityTokenHash: intent.anonymousIdentityTokenHash,
           expiresAt: intent.expiresAt,
         },
         traceId,

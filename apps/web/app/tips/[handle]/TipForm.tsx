@@ -5,6 +5,8 @@ import { getApiOrigin } from '../../lib/api-origin';
 import { boundedServerMessage, parsePublicOrderStatus, parseTipOrderResponse, type PublicOrderStatus, type TipOrderResponse } from './tip-contract';
 import { fetchTipOrder, getOrCreateTipIdempotencyKey, shouldRetainTipIdempotencyKey } from '../tip-client';
 import { loadRazorpayCheckout } from './razorpay-loader';
+import { mintReceiptForConfirmedTip, receiptPath } from '../receipt-client';
+import { loadPublicPaidVoteCatalogue, type PublicPaidVoteDefinition } from './paid-vote-catalogue';
 
 type TipFormProps = { handle: string; acceptingTips: boolean; minimumTipPaise: number };
 
@@ -69,6 +71,9 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
   const [notice, setNotice] = useState('');
   const [order, setOrder] = useState<TipOrderResponse | null>(null);
   const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
+  const [receiptToken, setReceiptToken] = useState<string | null>(null);
+  const [paidVoteDefinitions, setPaidVoteDefinitions] = useState<PublicPaidVoteDefinition[]>([]);
+  const [paidVoteSelection, setPaidVoteSelection] = useState('');
   const idempotencyKey = useRef<string | null>(null);
 
   useEffect(() => {
@@ -82,6 +87,22 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
     // change without a full navigation to a different page instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void loadPublicPaidVoteCatalogue(getApiOrigin(), handle).then((definitions) => {
+      if (mounted && definitions) setPaidVoteDefinitions(definitions);
+    });
+    return () => { mounted = false; };
+  }, [handle]);
+
+  const paidVoteChoices = paidVoteDefinitions.flatMap((definition) => definition.options.map((option) => ({
+    value: `${definition.definitionId}:${option.optionKey}`,
+    label: `${definition.label}: ${option.label}`,
+    definitionId: definition.definitionId,
+    optionKey: option.optionKey,
+  })));
+  const selectedPaidVote = paidVoteChoices.find((choice) => choice.value === paidVoteSelection);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,6 +131,7 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
           donorDisplayName: donorDisplayName.trim() || null,
           message: message.trim() || null,
           alertConsent,
+          ...(selectedPaidVote ? { interactionDefinitionId: selectedPaidVote.definitionId, voteOptionKey: selectedPaidVote.optionKey } : {}),
         }),
       } });
       const value = await response.json() as unknown;
@@ -149,6 +171,12 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
       if (value.status === 'paid') {
         setState('paid');
         setNotice('Payment confirmed by BharatStudio. The creator’s alert will follow their configured display and consent settings.');
+        // Receipt minting is intentionally best-effort and starts only after
+        // server-confirmed payment truth. Its failure must never relabel a
+        // captured payment as failed or cause another checkout attempt.
+        void mintReceiptForConfirmedTip(getApiOrigin(), orderId).then((token) => {
+          if (token) setReceiptToken(token);
+        });
         setPendingOrder(null);
         clearPendingOrder(handle);
         return true;
@@ -221,6 +249,16 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
       <input id="tip-name" maxLength={80} value={donorDisplayName} onChange={(event) => setDonorDisplayName(event.target.value)} placeholder="How should we thank you?" disabled={!acceptingTips || state === 'submitting'} />
       <label htmlFor="tip-message">Message <span>(optional)</span></label>
       <textarea id="tip-message" rows={4} maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Write something kind…" disabled={!acceptingTips || state === 'submitting'} />
+      {paidVoteChoices.length > 0 ? (
+        <>
+          <label htmlFor="tip-paid-vote">Add your support vote <span>(optional)</span></label>
+          <select id="tip-paid-vote" value={paidVoteSelection} onChange={(event) => setPaidVoteSelection(event.target.value)} disabled={!acceptingTips || state === 'submitting'}>
+            <option value="">No support vote</option>
+            {paidVoteChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+          </select>
+          <p className="helper-text">Your confirmed tip will count toward the selected paid support vote. If the choice closes before checkout, no payment order is created.</p>
+        </>
+      ) : null}
       <label className="consent-row" htmlFor="tip-alert-consent">
         <input id="tip-alert-consent" type="checkbox" checked={alertConsent} onChange={(event) => setAlertConsent(event.target.checked)} disabled={!acceptingTips || state === 'submitting'} />
         <span>Allow this message to appear in the creator’s alert</span>
@@ -228,6 +266,7 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
       <button className="primary-button full-width" type="submit" disabled={!acceptingTips || state === 'submitting' || state === 'checking'}>{state === 'submitting' ? 'Preparing secure checkout…' : state === 'checking' ? 'Checking payment confirmation…' : acceptingTips ? 'Continue to tip' : 'Tips are closed'}</button>
       {state === 'created' && order ? <p className="inline-message" role="status">Order prepared for ₹{Math.round(order.amountPaise / 100)}. Complete the secure checkout window; payment confirmation is verified by the provider webhook.</p> : null}
       {state === 'paid' ? <p className="inline-message" role="status">Payment confirmed. Thank you for supporting the stream.</p> : null}
+      {receiptToken ? <p className="inline-message"><a href={receiptPath(receiptToken)}>View your receipt</a></p> : null}
       {state === 'checking' ? <p className="inline-message" role="status">Payment submitted. Checking the server-confirmed status; this can take a few seconds.</p> : null}
       {notice ? <p className="inline-message" role="status">{notice}</p> : null}
       {state === 'error' ? <p className="error-text" role="alert">{error}</p> : null}

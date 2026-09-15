@@ -18,19 +18,20 @@ var (
 )
 
 type IntentRequest struct {
-	IntentID       string
-	ChannelID      string
-	Environment    string
-	IdempotencyKey string
-	Receipt        string
-	AmountPaise    int64
-	Currency       string
-	DisplayName    string
-	Message        string
-	AlertConsent   bool
-	ExpiresAt      time.Time
-	Notes          map[string]string
-	TraceID        string
+	IntentID                   string
+	ChannelID                  string
+	Environment                string
+	IdempotencyKey             string
+	Receipt                    string
+	AmountPaise                int64
+	Currency                   string
+	DisplayName                string
+	Message                    string
+	AlertConsent               bool
+	AnonymousIdentityTokenHash string
+	ExpiresAt                  time.Time
+	Notes                      map[string]string
+	TraceID                    string
 }
 
 type Intent struct {

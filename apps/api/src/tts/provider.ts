@@ -24,8 +24,22 @@ export interface TtsCache {
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-function boundedText(value: string): string {
-  const normalized = value.replace(/[\u0000-\u001F\u007F]/g, '').trim();
+const TECHNICAL_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/gu;
+const URL_TOKEN = /(?:https?:\/\/|www\.)[^\s<>{}\[\]]+/giu;
+const MARKUP_LIKE_TAG = /<[^>]*>/gu;
+
+// This is deliberately a technical safety boundary rather than a content
+// policy. It keeps source text out of provider-specific markup/URL parsing and
+// prevents invisible directionality characters from changing what gets spoken.
+// Language moderation and account-level blocks need separately approved policy.
+export function sanitizeTtsText(value: string): string {
+  const normalized = value
+    .normalize('NFKC')
+    .replace(TECHNICAL_CONTROL_CHARACTERS, '')
+    .replace(URL_TOKEN, ' shared link ')
+    .replace(MARKUP_LIKE_TAG, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
   if (!normalized || normalized.length > 500) throw new Error('TTS text is outside the approved bounds');
   return normalized;
 }
@@ -44,7 +58,7 @@ export function createSarvamTtsProvider(
   if (parsedEndpoint.protocol !== 'https:') throw new Error('Sarvam endpoint must use HTTPS');
   return {
     async synthesize(request) {
-      const text = boundedText(request.text);
+      const text = sanitizeTtsText(request.text);
       if (!SUPPORTED_TTS_LOCALES.includes(request.locale)) throw new Error('TTS locale is not supported');
       const response = await fetcher(parsedEndpoint.toString(), {
         method: 'POST',
@@ -71,7 +85,12 @@ export function createTtsService(provider?: TtsProvider, cache?: TtsCache) {
   return {
     async synthesize(request: TtsSynthesisRequest): Promise<TtsSynthesisResult> {
       if (!provider) return { mode: 'chime', reason: 'not_configured' };
-      const normalizedText = boundedText(request.text);
+      let normalizedText: string;
+      try {
+        normalizedText = sanitizeTtsText(request.text);
+      } catch {
+        return { mode: 'chime', reason: 'provider_failure' };
+      }
       const key = cacheKey(request, normalizedText);
       const cached = await cache?.get(key);
       if (cached) return { mode: 'audio', audio: cached, cacheHit: true };

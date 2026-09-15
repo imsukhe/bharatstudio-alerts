@@ -135,6 +135,7 @@ export async function runLoadTest(sql: Sql, opts: LoadRunOptions): Promise<LoadR
     unacknowledged: results.filter((r) => r.ok && !r.acknowledged).length,
     latencyMsP50: percentile(durations, 50),
     latencyMsP95: percentile(durations, 95),
+    latencyMsP99: percentile(durations, 99),
     latencyMsMax: durations[durations.length - 1] ?? 0,
     invariants: {
       capturedPaymentsWithoutLiveEvent: snapshot.capturedPaymentsWithoutLiveEvent,

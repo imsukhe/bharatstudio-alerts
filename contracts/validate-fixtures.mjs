@@ -34,6 +34,7 @@ const fixtureToSchema = {
   'public-featured-creators.json': 'public-featured-creators.schema.json',
   'public-profile-response.json': 'public-profile-response.schema.json',
   'public-vote-response.json': 'public-vote-response.schema.json',
+  'public-paid-vote-list.json': 'public-paid-vote-list.schema.json',
   'readiness-ready-response.json': 'readiness-response.schema.json',
   'readiness-unavailable-response.json': 'readiness-response.schema.json',
   'public-sticker-list.json': 'public-sticker-list.schema.json',

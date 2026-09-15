@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import http from 'node:http';
 import { buildApp } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import { loadConfig } from '../src/config.js';
@@ -7,7 +8,9 @@ import type { PublicChannelRepository } from '../src/domain/public-channel.js';
 import type { GoogleIdentityVerifier } from '../src/auth/google.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AlertStore } from '../src/domain/alert-store.js';
-import type { OverlayStore } from '../src/domain/overlay-store.js';
+import type { OverlayEvent, OverlaySessionRef, OverlayStore, RawOverlayEvent } from '../src/domain/overlay-store.js';
+import type { OverlayWakeup, OverlayWakeupHealth, OverlayWakeupResult } from '../src/domain/overlay-wakeup.js';
+import { createOverlayWakeup } from '../src/db/overlay-wakeup.js';
 import type { ChannelStore } from '../src/domain/channel-store.js';
 import type { PaymentOrderService } from '../src/domain/payment-order.js';
 import type { PaymentSubscriptionService } from '../src/domain/payment-subscription.js';
@@ -361,6 +364,35 @@ test('public tip order requires the reviewed payment boundary and forwards canon
   await app.close();
 });
 
+test('public tip checkout derives identity only from an opaque first-party cookie', async () => {
+  const repository: PublicChannelRepository = {
+    async findByHandle() { return { channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 }; },
+    async listFeatured() { return []; },
+  };
+  const inputs: Record<string, unknown>[] = [];
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      inputs.push(input);
+      return { schemaVersion: 'v1', orderId: '00000000-0000-4000-8000-000000000091', provider: 'razorpay', providerOrderId: 'order_synthetic', amountPaise: input.amountPaise, currency: 'INR', status: 'created' };
+    },
+  };
+  const app = await buildApp(config, { publicChannels: repository, paymentOrders });
+  const request = { method: 'POST' as const, url: '/v1/public/channels/demo_creator/tips/orders', headers: { 'idempotency-key': 'synthetic-anonymous-identity-001' }, payload: { amountPaise: 1000, currency: 'INR' as const, anonymousIdentityId: '00000000-0000-4000-8000-000000000099' } };
+  const first = await app.inject(request);
+  assert.equal(first.statusCode, 400); // untrusted identity injection is rejected at the public schema.
+  const accepted = await app.inject({ ...request, payload: { amountPaise: 1000, currency: 'INR' } });
+  assert.equal(accepted.statusCode, 201);
+  const cookie = accepted.headers['set-cookie'];
+  assert.match(String(cookie), /__Host-bsa-anonymous=[A-Za-z0-9_-]{43}; Path=\//);
+  const firstHash = inputs[0]?.anonymousIdentityTokenHash;
+  assert.match(String(firstHash), /^[0-9a-f]{64}$/);
+  const repeated = await app.inject({ ...request, headers: { ...request.headers, cookie: String(cookie).split(';')[0] }, payload: { amountPaise: 1000, currency: 'INR' } });
+  assert.equal(repeated.statusCode, 201);
+  assert.equal(inputs[1]?.anonymousIdentityTokenHash, firstHash);
+  assert.equal(repeated.headers['set-cookie'], undefined);
+  await app.close();
+});
+
 test('public tip order fails closed when the payment boundary is not wired', async () => {
   const app = await buildApp(config, {
     publicChannels: { findByHandle: async () => ({ channelId: '00000000-0000-4000-8000-000000000011', handle: 'demo_creator', displayName: 'Demo Creator', acceptingTips: true, minimumTipPaise: 1000, publicConfigVersion: 1 }), listFeatured: async () => [] },
@@ -667,7 +699,7 @@ test('maintenance API rejects jobs owned by the payment or worker service', asyn
 test('metrics are internal, normalized and free of request identifiers', async () => {
   const app = await buildApp(config, {
     serviceIdentity: { verify: async (authorization?: string) => authorization === 'Bearer synthetic-internal-token' },
-    overlayWakeup: { async wait() {}, async close() {}, health: () => ({ connected: true, reconnects: 2, failures: 1 }) },
+    overlayWakeup: fakeWakeup(async () => 'timeout' as const, () => ({ connected: true, reconnects: 2, failures: 1 })),
   });
   const unauthorized = await app.inject({ method: 'GET', url: '/internal/metrics' });
   assert.equal(unauthorized.statusCode, 401);
@@ -778,6 +810,33 @@ function fakeOverlays(): OverlayStore {
         : null;
     },
     async acknowledge(_token, overlayId) { return overlayId === '00000000-0000-4000-8000-000000000061'; },
+    // RT-02 §3.2(a): resolves the fixed synthetic overlay to a fixed
+    // synthetic channel. Deliberately does NOT implement `replayRaw` — the
+    // route's coalesced/dedup path is exercised by dedicated RT-02 tests
+    // below, so every pre-existing test that overrides `replay()` (via
+    // `{ ...fakeOverlays(), async replay(...) {...} }`) keeps working
+    // through the non-coalesced fallback in `fetchEvents`.
+    async resolveSession(_token, overlayId) {
+      return overlayId === '00000000-0000-4000-8000-000000000061' ? { channelId: '00000000-0000-4000-8000-000000000011' } : null;
+    },
+  };
+}
+
+// RT-02: OverlayWakeup is now channel-keyed (`subscribe(channelId)` ->
+// { wait, release }) rather than a flat `waitForNotification(overlayId, ...)`.
+// Every pre-RT-02 test only ever cared about the timing/looping behaviour of
+// `wait`, never about which channel it subscribed to, so this adapter keeps
+// those test bodies close to their original shape.
+function fakeWakeup(
+  wait: (timeoutMs: number, signal?: AbortSignal) => Promise<OverlayWakeupResult>,
+  health: () => OverlayWakeupHealth = () => ({ connected: true, reconnects: 0, failures: 0 }),
+): OverlayWakeup {
+  return {
+    subscribe() {
+      return { wait, release() {} };
+    },
+    async close() {},
+    health,
   };
 }
 
@@ -801,10 +860,7 @@ function fakeChannels(): ChannelStore {
 
 test('overlay SSE uses the wake-up path and then replays durably until its bounded close', async () => {
   let waits = 0;
-  const wakeup = {
-    async wait() { waits += 1; },
-    async close() {},
-  };
+  const wakeup = fakeWakeup(async () => { waits += 1; return 'notification' as const; });
   const app = await buildApp({ ...config, overlayStreamWindowMs: 20, overlayPollMs: 5 }, {
     sessions: fakeSessions(),
     overlays: fakeOverlays(),
@@ -830,6 +886,108 @@ test('overlay SSE uses the wake-up path and then replays durably until its bound
   // prior inject()-based test ever sent a real Origin header here.
   assert.equal(response.headers['access-control-allow-origin'], config.appOrigin);
   assert.equal(response.headers['access-control-allow-credentials'], 'true');
+  await app.close();
+});
+
+test('connected idle overlay performs no replay query when the wake-up wait times out', async () => {
+  let replayCalls = 0;
+  let logicalNow = 0;
+  const overlays: OverlayStore = {
+    ...fakeOverlays(),
+    async replay(...args) { replayCalls += 1; return fakeOverlays().replay(...args); },
+  };
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 15, overlayPollMs: 5 }, {
+    sessions: fakeSessions(),
+    overlays,
+    overlayWakeup: fakeWakeup(async () => { logicalNow += 10 * 60 * 1000; return 'timeout' as const; }),
+    overlayNow: () => logicalNow,
+  });
+  const response = await app.inject({
+    method: 'GET',
+    url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events',
+    headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(replayCalls, 1, 'only the initial durable replay is allowed during connected idle');
+  await app.close();
+});
+
+test('disconnected fallback replays durably with deterministic bounded jitter, then reconnect idle stops polling', async () => {
+  const first = { schemaVersion: 'v1' as const, cursor: '2026-08-14T10:00:00.000000Z|00000000-0000-4000-8000-000000000071', eventId: '00000000-0000-4000-8000-000000000051', eventType: 'alert.ready' as const, traceId: 'rt01-first', createdAt: '2026-08-14T10:00:00.000Z', payload: { message: 'first' } };
+  const second = { ...first, cursor: '2026-08-14T10:00:01.000000Z|00000000-0000-4000-8000-000000000072', eventId: '00000000-0000-4000-8000-000000000052', traceId: 'rt01-second', payload: { message: 'late event' } };
+  let replayCalls = 0;
+  let wakeCalls = 0;
+  let disconnected = true;
+  const overlays: OverlayStore = { ...fakeOverlays(), async replay(_token, _overlayId, cursor) { replayCalls += 1; if (!cursor) return [first]; if (cursor === first.cursor) return [second]; return []; } };
+  const wakeup = fakeWakeup(
+    async () => { wakeCalls += 1; if (wakeCalls === 3) disconnected = false; return 'timeout' as const; },
+    () => ({ connected: !disconnected, reconnects: disconnected ? 1 : 2, failures: disconnected ? 1 : 1 }),
+  );
+  const started = Date.now();
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 80, overlayPollMs: 10 }, { sessions: fakeSessions(), overlays, overlayWakeup: wakeup, overlayNow: () => Date.now(), overlayRandom: () => 0 });
+  const response = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(replayCalls, 3, 'initial replay plus two bounded disconnected fallbacks');
+  assert.equal((response.body.match(/rt01-first/g) ?? []).length, 1);
+  assert.equal((response.body.match(/rt01-second/g) ?? []).length, 1);
+  assert.ok(wakeCalls >= 3);
+  assert.ok(Date.now() - started < 500, 'fallback jitter remains bounded');
+  await app.close();
+});
+
+test('fallback sleep seam is deterministic and reconnect timeout does not sleep or replay', async () => {
+  const first = { schemaVersion: 'v1' as const, cursor: '2026-08-14T10:00:00.000000Z|00000000-0000-4000-8000-000000000081', eventId: '00000000-0000-4000-8000-000000000061', eventType: 'alert.ready' as const, traceId: 'rt01-seam-first', createdAt: '2026-08-14T10:00:00.000Z', payload: { message: 'first seam' } };
+  const second = { ...first, cursor: '2026-08-14T10:00:01.000000Z|00000000-0000-4000-8000-000000000082', eventId: '00000000-0000-4000-8000-000000000062', traceId: 'rt01-seam-second', payload: { message: 'second seam' } };
+  let logicalNow = 0;
+  let wakeCalls = 0;
+  let replayCalls = 0;
+  let disconnected = true;
+  const sleeps: number[] = [];
+  const overlays: OverlayStore = { ...fakeOverlays(), async replay(_token, _overlayId, cursor) { replayCalls += 1; if (!cursor) return [first]; if (replayCalls === 2) return []; if (replayCalls === 3) return [second]; return []; } };
+  const wakeup = fakeWakeup(
+    async () => { wakeCalls += 1; if (wakeCalls >= 3) { disconnected = false; logicalNow += 500; } return 'timeout' as const; },
+    () => ({ connected: !disconnected, reconnects: 1, failures: 1 }),
+  );
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 3_000, overlayPollMs: 1_000 }, { sessions: fakeSessions(), overlays, overlayWakeup: wakeup, overlayNow: () => logicalNow, overlayRandom: () => 0.25, overlaySleep: async (ms) => { sleeps.push(ms); logicalNow += ms; } });
+  const response = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(sleeps, [750, 750]);
+  assert.equal(replayCalls, 3);
+  assert.equal((response.body.match(/rt01-seam-second/g) ?? []).length, 1);
+  await app.close();
+});
+
+test('real SSE request close aborts disconnected fallback before replay', async () => {
+  let replayCalls = 0;
+  const overlays: OverlayStore = { ...fakeOverlays(), async replay(...args) { replayCalls += 1; return fakeOverlays().replay(...args); } };
+  let sleepStarted = false;
+  let signalAborted = false;
+  const wakeup = fakeWakeup(async () => { throw new Error('overlay_listener_unavailable'); }, () => ({ connected: false, reconnects: 1, failures: 1 }));
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 5_000, overlayPollMs: 10 }, { sessions: fakeSessions(), overlays, overlayWakeup: wakeup, overlayRandom: () => 0, overlaySleep: async (_ms, signal) => { sleepStarted = true; await new Promise<void>((resolve) => { if (signal.aborted) resolve(); else signal.addEventListener('abort', () => { signalAborted = true; resolve(); }, { once: true }); }); } });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 });
+  const url = new URL('/v1/overlays/00000000-0000-4000-8000-000000000061/events', address);
+  await new Promise<void>((resolve, reject) => {
+    const request = http.request(url, { headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+    request.on('response', (response) => { response.setEncoding('utf8'); response.on('data', (chunk: string) => { if (chunk.includes('replay-start')) { request.destroy(); resolve(); } }); });
+    request.on('error', (error) => { if ((error as NodeJS.ErrnoException).code !== 'ECONNRESET') reject(error); });
+    request.end();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(sleepStarted, true);
+  assert.equal(signalAborted, true);
+  assert.equal(replayCalls, 1, 'abort during fallback cannot trigger a replay');
+  await app.close();
+});
+
+test('fallback sleep errors remain a distinct replay-unavailable outcome', async () => {
+  let replayCalls = 0;
+  const overlays: OverlayStore = { ...fakeOverlays(), async replay(...args) { replayCalls += 1; return fakeOverlays().replay(...args); } };
+  const wakeup = fakeWakeup(async () => { throw new Error('overlay_listener_unavailable'); }, () => ({ connected: false, reconnects: 1, failures: 1 }));
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 50, overlayPollMs: 10 }, { sessions: fakeSessions(), overlays, overlayWakeup: wakeup, overlayRandom: () => 0, overlaySleep: async () => { throw new Error('synthetic sleep failure'); } });
+  const response = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(replayCalls, 1);
+  assert.match(response.body, /replay-unavailable/);
   await app.close();
 });
 
@@ -881,7 +1039,7 @@ test('overlay SSE emits a durable event that arrives after the initial replay an
   };
   const app = await buildApp({ ...config, overlayStreamWindowMs: 20, overlayPollMs: 5 }, {
     overlays: overlayStore,
-    overlayWakeup: { async wait() {}, async close() {} },
+    overlayWakeup: fakeWakeup(async () => 'notification' as const),
   });
 
   const initial = await app.inject({
@@ -934,20 +1092,17 @@ test('overlay on replica B replays an event committed through replica A', async 
     },
     async acknowledge() { return true; },
   };
-  const replicaBWakeup = {
-    async wait(_overlayId: string, timeoutMs: number) {
-      wakeupsOnReplicaB += 1;
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, timeoutMs);
-        signalReplicaB = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-      });
-    },
-    async close() {},
-  };
-  const replicaAWakeup = { async wait() {}, async close() {} };
+  const replicaBWakeup = fakeWakeup(async (timeoutMs: number) => {
+    wakeupsOnReplicaB += 1;
+    return await new Promise<'notification' | 'timeout'>((resolve) => {
+      const timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      signalReplicaB = () => {
+        clearTimeout(timer);
+        resolve('notification');
+      };
+    });
+  });
+  const replicaAWakeup = fakeWakeup(async () => 'notification' as const);
   const replicaA = await buildApp({ ...config, overlayStreamWindowMs: 30, overlayPollMs: 5 }, {
     overlays: durableStore,
     overlayWakeup: replicaAWakeup,
@@ -1038,7 +1193,7 @@ test('overlay SSE closes cleanly when replay fails after the stream opens', asyn
   };
   const app = await buildApp({ ...config, overlayStreamWindowMs: 30, overlayPollMs: 5 }, {
     overlays: overlayStore,
-    overlayWakeup: { async wait() {}, async close() {} },
+    overlayWakeup: fakeWakeup(async () => 'notification' as const),
   });
 
   const response = await app.inject({
@@ -1051,6 +1206,213 @@ test('overlay SSE closes cleanly when replay fails after the stream opens', asyn
   assert.match(response.body, /Replay failure must reconnect/);
   assert.match(response.body, /replay-unavailable/);
   assert.ok(replayCalls >= 2);
+  await app.close();
+});
+
+// RT-02.2 + RT-02.3, at the full route level: two sessions of the SAME
+// channel, at the same cursor, concurrently -- exactly one underlying
+// replayRaw read (dedup), and each session's own composed `ttsAudioUrl`
+// carries only its own overlayId, never the other session's, including the
+// `ttsAudioUrl: null` (no artifact) case.
+test('RT-02.2/RT-02.3: concurrent same-channel sessions share one read and each composes its own ttsAudioUrl', async () => {
+  const overlay1 = '00000000-0000-4000-8000-000000000061';
+  const overlay2 = '00000000-0000-4000-8000-000000000062';
+  const channelId = '00000000-0000-4000-8000-000000000011';
+  let replayRawCalls = 0;
+  let releaseGate: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+
+  const store: OverlayStore = {
+    async create() { throw new Error('not used'); },
+    async revoke() { return true; },
+    async rotate() { return null; },
+    async replay() { throw new Error('replay() must not be called when replayRaw is available'); },
+    async acknowledge() { return true; },
+    async resolveSession(_token, overlayId) {
+      return overlayId === overlay1 || overlayId === overlay2 ? { channelId } : null;
+    },
+    async replayRaw(_token, _overlayId, lastEventId): Promise<RawOverlayEvent[] | null> {
+      replayRawCalls += 1;
+      if (replayRawCalls === 1) await gate; // hold this read open until both requests are in flight
+      if (lastEventId) return [];
+      return [
+        { cursor: 'c1', eventId: 'e1', eventType: 'alert.ready', traceId: 't1', createdAt: '2026-09-15T10:00:00.000Z', payload: { message: 'with audio' }, ttsAudioArtifactId: 'artifact-shared-1' },
+        { cursor: 'c2', eventId: 'e2', eventType: 'alert.ready', traceId: 't2', createdAt: '2026-09-15T10:00:01.000Z', payload: { message: 'no audio' }, ttsAudioArtifactId: null },
+      ];
+    },
+  };
+
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 0, overlayPollMs: 5 }, {
+    sessions: fakeSessions(),
+    overlays: store,
+  });
+
+  const first = app.inject({ method: 'GET', url: `/v1/overlays/${overlay1}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  const second = app.inject({ method: 'GET', url: `/v1/overlays/${overlay2}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseGate?.();
+  const [response1, response2] = await Promise.all([first, second]);
+
+  assert.equal(response1.statusCode, 200);
+  assert.equal(response2.statusCode, 200);
+  assert.equal(replayRawCalls, 1, 'two sessions at the same channel/cursor must share exactly one read');
+
+  assert.match(response1.body, new RegExp(`/v1/overlay-audio/${overlay1}/artifact-shared-1`));
+  assert.doesNotMatch(response1.body, new RegExp(`/v1/overlay-audio/${overlay2}/`));
+  assert.match(response2.body, new RegExp(`/v1/overlay-audio/${overlay2}/artifact-shared-1`));
+  assert.doesNotMatch(response2.body, new RegExp(`/v1/overlay-audio/${overlay1}/`));
+  assert.match(response1.body, /"ttsAudioUrl":null/);
+  assert.match(response2.body, /"ttsAudioUrl":null/);
+
+  await app.close();
+});
+
+// RT-02.1, at the full route level: a notification for channel A's SSE
+// stream never wakes channel B's stream on the same instance, and channel
+// B performs no additional store read from it.
+test('RT-02.1: a notification for one channel never wakes a sibling channel\'s stream on the same instance', async () => {
+  const overlayA = '00000000-0000-4000-8000-000000000061';
+  const overlayB = '00000000-0000-4000-8000-000000000066';
+  const channelA = '00000000-0000-4000-8000-000000000011';
+  const channelB = '00000000-0000-4000-8000-000000000099';
+  const callsByOverlay = new Map<string, number>();
+  let notify: ((value: string) => void) | undefined;
+  const client = {
+    listen(_channel: string, onnotify: (value: string) => void, onlisten?: () => void) {
+      notify = onnotify;
+      onlisten?.();
+      return new Promise(() => {});
+    },
+    async end() {},
+  };
+  const wakeup = createOverlayWakeup(client);
+
+  const store: OverlayStore = {
+    async create() { throw new Error('not used'); },
+    async revoke() { return true; },
+    async rotate() { return null; },
+    async replay() { throw new Error('replay() must not be called when replayRaw is available'); },
+    async acknowledge() { return true; },
+    async resolveSession(_token, overlayId) {
+      if (overlayId === overlayA) return { channelId: channelA };
+      if (overlayId === overlayB) return { channelId: channelB };
+      return null;
+    },
+    async replayRaw(_token, overlayId): Promise<RawOverlayEvent[] | null> {
+      callsByOverlay.set(overlayId, (callsByOverlay.get(overlayId) ?? 0) + 1);
+      return [];
+    },
+  };
+
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 120, overlayPollMs: 10 }, {
+    sessions: fakeSessions(),
+    overlays: store,
+    overlayWakeup: wakeup,
+  });
+
+  const streamA = app.inject({ method: 'GET', url: `/v1/overlays/${overlayA}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  const streamB = app.inject({ method: 'GET', url: `/v1/overlays/${overlayB}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  notify?.(JSON.stringify({ channelId: channelA, eventId: 'notify-a' }));
+
+  await Promise.all([streamA, streamB]);
+  await app.close();
+
+  assert.equal(callsByOverlay.get(overlayA), 2, 'channel A: initial replay plus exactly one wake-triggered replay');
+  assert.equal(callsByOverlay.get(overlayB), 1, 'channel B: initial replay only -- zero additional store reads from channel A\'s notification');
+});
+
+// RT-02.4: a session revoked mid-window stops receiving events, while a
+// sibling session on the SAME channel continues.
+test('RT-02.4: a session revoked mid-window stops while a sibling session on the same channel continues', async () => {
+  const overlayRevoked = '00000000-0000-4000-8000-000000000061';
+  const overlaySibling = '00000000-0000-4000-8000-000000000065';
+  const channelId = '00000000-0000-4000-8000-000000000011';
+  let resolveCallsRevoked = 0;
+  let replayCallsSibling = 0;
+  let eventCounter = 0;
+
+  const store: OverlayStore = {
+    async create() { throw new Error('not used'); },
+    async revoke() { return true; },
+    async rotate() { return null; },
+    async replay() { throw new Error('replay() must not be called when replayRaw is available'); },
+    async acknowledge() { return true; },
+    async resolveSession(_token, overlayId) {
+      if (overlayId === overlayRevoked) {
+        resolveCallsRevoked += 1;
+        // Valid for the pre-hijack check (1) and the first wake (2); revoked
+        // from the second wake's revalidation (3) onward.
+        return resolveCallsRevoked <= 2 ? { channelId } : null;
+      }
+      if (overlayId === overlaySibling) return { channelId };
+      return null;
+    },
+    async replayRaw(_token, overlayId): Promise<RawOverlayEvent[] | null> {
+      eventCounter += 1;
+      if (overlayId === overlaySibling) replayCallsSibling += 1;
+      return [{ cursor: `c${eventCounter}`, eventId: `e${eventCounter}`, eventType: 'alert.ready', traceId: `t${eventCounter}`, createdAt: '2026-09-15T10:00:00.000Z', payload: { message: `event-${overlayId}-${eventCounter}` }, ttsAudioArtifactId: null }];
+    },
+  };
+
+  const wakeup = fakeWakeup(async () => 'notification' as const);
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 45, overlayPollMs: 5 }, {
+    sessions: fakeSessions(),
+    overlays: store,
+    overlayWakeup: wakeup,
+  });
+
+  const [revokedResponse, siblingResponse] = await Promise.all([
+    app.inject({ method: 'GET', url: `/v1/overlays/${overlayRevoked}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } }),
+    app.inject({ method: 'GET', url: `/v1/overlays/${overlaySibling}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } }),
+  ]);
+
+  assert.equal(revokedResponse.statusCode, 200);
+  assert.equal(siblingResponse.statusCode, 200);
+  // The revoked session stopped cleanly (no error frame): the initial fetch
+  // plus exactly one wake-triggered fetch succeed (resolveSession stays
+  // valid for both), and the NEXT wake's revalidation returns null and
+  // breaks the loop before a third fetch ever happens.
+  assert.match(revokedResponse.body, /replay-complete/);
+  assert.equal((revokedResponse.body.match(new RegExp(`event-${overlayRevoked}`, 'g')) ?? []).length, 2);
+  // The sibling kept receiving events across the whole window.
+  assert.ok(replayCallsSibling >= 2, 'the sibling session must keep replaying after the other session is revoked');
+  await app.close();
+});
+
+// RT-02.7: with a ceiling configured and reached, a new stream gets a
+// retryable 503 before any stream is hijacked -- never a hang -- and once
+// an existing connection disconnects, the next client is admitted.
+test('RT-02.7: a reached admission ceiling returns 503 overlay_admission_limited, and a disconnect frees the slot', async () => {
+  const client = {
+    listen(_channel: string, _onnotify: (value: string) => void, onlisten?: () => void) {
+      onlisten?.();
+      return new Promise(() => {});
+    },
+    async end() {},
+  };
+  const wakeup = createOverlayWakeup(client, { maxInstanceSubscribers: 1 });
+  const app = await buildApp({ ...config, overlayStreamWindowMs: 200, overlayPollMs: 20 }, {
+    sessions: fakeSessions(),
+    overlays: fakeOverlays(),
+    overlayWakeup: wakeup,
+  });
+
+  const held = app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const rejected = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  assert.equal(rejected.statusCode, 503);
+  const body = rejected.json();
+  assert.equal(body.errorCode, 'overlay_admission_limited');
+  assert.equal(body.retryable, true);
+  assert.ok(body.traceId);
+
+  await held; // the first stream's window closes and releases its slot
+
+  const admittedAfterRelease = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  assert.equal(admittedAfterRelease.statusCode, 200);
+
   await app.close();
 });
 

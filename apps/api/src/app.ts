@@ -56,7 +56,7 @@ import type { GoalStore, OverlayGoalStore } from './domain/goal-store.js';
 import type { SeatStore } from './domain/seat-store.js';
 import type { HypeModeStore, InteractionDefinitionStore, InteractionOverlayStore, LeaderboardStore, PublicVoteStore, SupportVoteStore, WidgetConfigStore } from './domain/interaction-types.js';
 import { registerInteractionRoutes } from './routes/interactions.js';
-import type { PaidSupportVoteStore, PaidVoteOverlayStore, VotePaymentTagStore } from './domain/vote-payment-types.js';
+import type { PaidSupportVoteStore, PaidVoteOverlayStore, PublicPaidVoteStore, VotePaymentTagStore } from './domain/vote-payment-types.js';
 import type { TemplateCatalogueStore } from './domain/template-catalogue.js';
 import { registerTemplateRoutes } from './routes/templates.js';
 import type { StickerCatalogueStore, PublicStickerCatalogueStore, StickerSelectionStore } from './domain/sticker-catalogue.js';
@@ -92,6 +92,9 @@ export type AppDependencies = {
   alerts?: AlertStore;
   overlays?: OverlayStore;
   overlayWakeup?: OverlayWakeup;
+  overlayNow?: () => number;
+  overlayRandom?: () => number;
+  overlaySleep?: (timeoutMs: number, signal: AbortSignal) => Promise<void>;
   paymentOrders?: PaymentOrderService;
   paymentSubscriptions?: PaymentSubscriptionService;
   publicPaymentStatus?: PublicPaymentStatusRepository;
@@ -133,6 +136,7 @@ export type AppDependencies = {
   interactionLeaderboard?: LeaderboardStore;
   interactionOverlay?: InteractionOverlayStore;
   votePaymentTags?: VotePaymentTagStore;
+  publicPaidVotes?: PublicPaidVoteStore;
   paidVotes?: PaidSupportVoteStore;
   paidVoteOverlay?: PaidVoteOverlayStore;
   templates?: TemplateCatalogueStore;
@@ -260,6 +264,7 @@ export async function buildApp(
     undefined,
     config.appOrigin,
     dependencies.votePaymentTags,
+    dependencies.publicPaidVotes,
   );
   await registerAuthRoutes(app, dependencies);
   await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
@@ -294,6 +299,9 @@ export async function buildApp(
     {
       windowMs: config.overlayStreamWindowMs ?? (config.nodeEnv === 'test' ? 0 : 25_000),
       pollMs: config.overlayPollMs ?? 2_000,
+      now: dependencies.overlayNow,
+      random: dependencies.overlayRandom,
+      sleep: dependencies.overlaySleep,
     },
     dependencies.account,
     config.appOrigin,

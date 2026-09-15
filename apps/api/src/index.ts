@@ -9,6 +9,7 @@ import { createSqlAlertStore } from './db/alert-store.js';
 import { createSqlCompanionPairingStore } from './db/companion-pairing-store.js';
 import { createSqlOverlayStore } from './db/overlay-store.js';
 import { createDirectOverlayWakeup } from './db/overlay-wakeup.js';
+import { createApiMetrics } from './observability/metrics.js';
 import { createGooglePaymentOrderService } from './db/payment-order-client.js';
 import { createGooglePaymentSubscriptionService } from './db/payment-subscription-client.js';
 import { createGoogleServiceIdentityVerifier } from './auth/service-identity.js';
@@ -47,7 +48,7 @@ import { createSqlStickerCatalogueStore } from './db/sticker-catalogue-store.js'
 import { createSqlPublicStickerCatalogueStore, createSqlStickerSelectionStore } from './db/sticker-public-store.js';
 import { createSqlCreatorPackStore, createSqlPublicCreatorPackStore, createSqlCreatorPackSelectionStore } from './db/sticker-creator-pack-store.js';
 import { createSqlInteractionDefinitionStore, createSqlSupportVoteStore, createSqlPublicVoteStore, createSqlHypeModeStore, createSqlWidgetConfigStore, createSqlLeaderboardStore, createSqlInteractionOverlayStore } from './db/interaction-sql-store.js';
-import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
+import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlPublicPaidVoteStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
 import { createSqlIngestFailureStore } from './db/ingest-failure-store.js';
 import { createSqlStaffCreatorPackReviewStore } from './db/staff-creator-pack-review-store.js';
 import { createSqlAssistStore } from './db/assist-sql-store.js';
@@ -71,6 +72,10 @@ const sharedTokenProtector = config.notificationTokenEncryptionKey
   ? createNotificationTokenProtector(config.notificationTokenEncryptionKey)
   : undefined;
 const youtubeOAuthConfig = loadYoutubeOAuthConfig();
+// RT-02 §3.4: created once, up front, so the direct listener's notification
+// counters (routed vs unroutable) and buildApp's request/replay/admission
+// counters are the SAME instance rather than two independent counter sets.
+const metrics = createApiMetrics();
 const app = await buildApp(config, {
   publicChannels: sql ? createPublicChannelRepository(sql) : undefined,
   google: config.googleClientId ? createGoogleIdentityVerifier(config.googleClientId) : undefined,
@@ -79,7 +84,14 @@ const app = await buildApp(config, {
   alerts,
   companionPairing: sql && alerts ? createSqlCompanionPairingStore(sql, alerts, `${config.appOrigin.replace(/\/+$/, '')}/companion/pair`) : undefined,
   overlays: sql ? createSqlOverlayStore(sql, config.appOrigin) : undefined,
-  overlayWakeup: config.databaseUrlDirect ? createDirectOverlayWakeup(config.databaseUrlDirect) : undefined,
+  overlayWakeup: config.databaseUrlDirect
+    ? createDirectOverlayWakeup(config.databaseUrlDirect, {
+      maxInstanceSubscribers: config.overlayMaxInstanceSubscribers,
+      maxChannelSubscribers: config.overlayMaxChannelSubscribers,
+      onNotification: (outcome) => metrics.recordOverlayNotification(outcome),
+    })
+    : undefined,
+  metrics,
   paymentOrders,
   paymentSubscriptions,
   publicPaymentStatus: sql ? createPublicPaymentStatusRepository(sql) : undefined,
@@ -122,6 +134,7 @@ const app = await buildApp(config, {
   interactionLeaderboard: sql ? createSqlLeaderboardStore(sql) : undefined,
   interactionOverlay: sql ? createSqlInteractionOverlayStore(sql) : undefined,
   votePaymentTags: sql ? createSqlVotePaymentTagStore(sql) : undefined,
+  publicPaidVotes: sql ? createSqlPublicPaidVoteStore(sql) : undefined,
   paidVotes: sql ? createSqlPaidSupportVoteStore(sql) : undefined,
   paidVoteOverlay: sql ? createSqlPaidVoteOverlayStore(sql) : undefined,
   templates: sql ? createSqlTemplateCatalogueStore(sql) : undefined,

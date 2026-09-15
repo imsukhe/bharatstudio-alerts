@@ -163,8 +163,9 @@ declare v_reviewer uuid; v_decision text; v_reason text;
 begin
   perform set_config('app.user_id', '0000000a-0000-4000-8000-000000000501', true);
   select reviewer_id, decision, reason into v_reviewer, v_decision, v_reason
-    from app_private.staff_list_creator_pack_review_audit(current_setting('app.pack_under_test')::uuid)
-   order by reviewed_at desc limit 1;
+    from public.staff_creator_pack_review_audit
+   where pack_sticker_id = current_setting('app.pack_under_test')::uuid
+   order by review_order desc limit 1;
   assert v_reviewer = '0000000a-0000-4000-8000-000000000501'::uuid, 'audit must name the actual reviewer, got: ' || v_reviewer::text;
   assert v_decision = 'rejected', 'audit must record the rejection, got: ' || v_decision;
   assert v_reason = 'fails brand-safety review: contains an external URL reference', 'audit must record the rejection reason, got: ' || coalesce(v_reason, '<null>');
@@ -203,8 +204,9 @@ begin
   assert v_count = 2, 'the audit trail must retain both the rejection and the later approval, got: ' || v_count;
 
   select decision into v_latest_decision
-    from app_private.staff_list_creator_pack_review_audit(current_setting('app.pack_under_test')::uuid)
-   order by reviewed_at desc limit 1;
+    from public.staff_creator_pack_review_audit
+   where pack_sticker_id = current_setting('app.pack_under_test')::uuid
+   order by review_order desc limit 1;
   assert v_latest_decision = 'approved', 'the most recent audit entry must be the approval, got: ' || v_latest_decision;
 end
 $$;

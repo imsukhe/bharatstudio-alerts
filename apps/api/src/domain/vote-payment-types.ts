@@ -20,10 +20,25 @@ export type TagVotePaymentInput = {
   optionKey: string;
 };
 
-export type TagVotePaymentResult = { outcome: 'tagged' } | { outcome: 'invalid' };
+export type TagVotePaymentResult = { outcome: 'tagged' } | { outcome: 'invalid' } | { outcome: 'unavailable' };
 
 export interface VotePaymentTagStore {
   tag(input: TagVotePaymentInput): Promise<TagVotePaymentResult>;
+}
+
+// Narrow unauthenticated projection for the public tip form. It remains
+// deliberately separate from creator interaction definitions so queue,
+// moderation, visual/configuration, tally and viewer fields cannot reach a
+// public response by accident.
+export type PublicPaidVoteOption = { optionKey: string; label: string };
+export type PublicPaidVoteDefinition = {
+  definitionId: string;
+  label: string;
+  options: PublicPaidVoteOption[];
+};
+
+export interface PublicPaidVoteStore {
+  listForChannel(channelId: string): Promise<PublicPaidVoteDefinition[]>;
 }
 
 // Money-derived tally — never a stored counter (app_private.

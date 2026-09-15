@@ -273,6 +273,20 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '503':
           $ref: '#/components/responses/RetryableFailure'
+  /v1/public/channels/{handle}/paid-votes:
+    get:
+      tags: [Public]
+      operationId: listPublicPaidVotes
+      parameters:
+        - $ref: '#/components/parameters/Handle'
+      responses:
+        '200':
+          description: Active paid support-vote choices for this channel. The projection intentionally excludes interaction configuration, payment tallies, and identity data.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicPaidVoteList' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/public/channels/{handle}/tips/orders:
     post:
       tags: [Public]
@@ -295,6 +309,8 @@ paths:
                 $ref: '#/components/schemas/CreateTipOrderResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
         '429':
           $ref: '#/components/responses/RateLimited'
   /v1/public/tip-orders/{orderId}/status:
@@ -1840,6 +1856,45 @@ components:
         donorDisplayName: { type: [string, 'null'], maxLength: 80 }
         message: { type: [string, 'null'], maxLength: 500 }
         alertConsent: { type: boolean, default: true }
+        interactionDefinitionId:
+          type: [string, 'null']
+          format: uuid
+          description: Optional active paid support-vote definition. Must be supplied with voteOptionKey or omitted with it.
+        voteOptionKey:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 40
+          pattern: '^[a-z0-9_-]+$'
+          description: Optional bounded option for interactionDefinitionId. A selected stale/invalid option never creates a payment order.
+    PublicPaidVoteOption:
+      type: object
+      additionalProperties: false
+      required: [optionKey, label]
+      properties:
+        optionKey: { type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9_-]+$' }
+        label: { type: string, minLength: 1, maxLength: 120 }
+    PublicPaidVoteDefinition:
+      type: object
+      additionalProperties: false
+      required: [definitionId, label, options]
+      properties:
+        definitionId: { type: string, format: uuid }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        options:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/PublicPaidVoteOption' }
+    PublicPaidVoteList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/PublicPaidVoteDefinition' }
     CreateTipOrderResponse:
       type: object
       additionalProperties: false

@@ -29,14 +29,34 @@ async function main(): Promise<void> {
   try {
     await waitForConnected();
 
-    const waitingA = wakeupA.wait('overlay-integration-a', 1_500);
-    const waitingB = wakeupB.wait('overlay-integration-b', 1_500);
-    await publisher`select pg_notify('bharatstudio_overlay_events', ${JSON.stringify({ event: 'integration' })})`;
-    await Promise.all([waitingA, waitingB]);
+    // RT-02: both wake-up instances hold their own real LISTEN connection
+    // to the SAME Postgres channel (bharatstudio_overlay_events) -- Postgres
+    // itself has no notion of "channel A vs channel B" here, only this
+    // single literal LISTEN channel. Routing to the right overlay/channel
+    // subscribers is entirely this module's job, from the notification
+    // payload's `channelId`. This proves that against a real database and
+    // two real, independent listener connections, not fakes: a
+    // notification for channel A resolves only channel A's subscription
+    // (on either instance) and never channel B's, even though channel B's
+    // own instance received the exact same raw NOTIFY.
+    const subscriptionA = wakeupA.subscribe('overlay-integration-a');
+    const subscriptionB = wakeupB.subscribe('overlay-integration-b');
+    assert.ok(subscriptionA, 'wakeupA should admit a subscriber with no configured ceiling');
+    assert.ok(subscriptionB, 'wakeupB should admit a subscriber with no configured ceiling');
+
+    const waitingA = subscriptionA.wait(1_500);
+    const waitingB = subscriptionB.wait(1_500);
+    await publisher`select pg_notify('bharatstudio_overlay_events', ${JSON.stringify({ channelId: 'overlay-integration-a', eventId: 'integration-event' })})`;
+    const [resultA, resultB] = await Promise.all([waitingA, waitingB]);
+
+    assert.equal(resultA, 'notification', 'channel A\'s subscription should resolve from its own channel\'s notification');
+    assert.equal(resultB, 'timeout', 'channel B\'s subscription must never resolve from channel A\'s notification');
 
     assert.equal(wakeupA.health?.().failures, 0);
     assert.equal(wakeupB.health?.().failures, 0);
-    console.log('OVERLAY_WAKEUP_POSTGRES_TWO_LISTENER_INTEGRATION=PASS');
+    subscriptionA.release();
+    subscriptionB.release();
+    console.log('OVERLAY_WAKEUP_POSTGRES_TWO_LISTENER_CHANNEL_ISOLATION_INTEGRATION=PASS');
   } finally {
     await wakeupA.close();
     await wakeupB.close();

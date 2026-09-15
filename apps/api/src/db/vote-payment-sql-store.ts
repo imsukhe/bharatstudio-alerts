@@ -9,6 +9,8 @@ import type {
   PaidSupportVoteStore,
   PaidVoteOverlayStore,
   PaidVoteTally,
+  PublicPaidVoteDefinition,
+  PublicPaidVoteStore,
   TagVotePaymentInput,
   TagVotePaymentResult,
   VotePaymentTagStore,
@@ -27,6 +29,7 @@ function fingerprint(token: string): string {
 }
 
 type PaidTallyRowDb = { option_key: string; label: string; amount_paise: string | number; resolved: boolean; resolved_option_key: string | null };
+type PublicPaidVoteRowDb = { definition_id: string; label: string; option_key: string; option_label: string };
 
 function toPaidTally(rows: PaidTallyRowDb[]): PaidVoteTally | null {
   const first = rows[0];
@@ -44,9 +47,9 @@ function toPaidTally(rows: PaidTallyRowDb[]): PaidVoteTally | null {
 // payment order is created, using the same channelId/environment/
 // idempotencyKey that route already computes. Public/unauthenticated —
 // every real gate (definition exists, is a paid-mode support_vote, option
-// exists) lives inside the SECURITY DEFINER function; an invalid/mismatched
-// tag never blocks the underlying tip (see routes/public.ts's own comment
-// at the call site for why a tagging failure must not fail the checkout).
+// exists) lives inside the SECURITY DEFINER function. A selected invalid tag
+// is distinct from an unavailable database: the route must never label a
+// temporary outage as a stale viewer selection.
 export function createSqlVotePaymentTagStore(sql: Sql): VotePaymentTagStore {
   return {
     async tag(input: TagVotePaymentInput): Promise<TagVotePaymentResult> {
@@ -58,9 +61,35 @@ export function createSqlVotePaymentTagStore(sql: Sql): VotePaymentTagStore {
           )
         `;
         return { outcome: 'tagged' };
-      } catch {
-        return { outcome: 'invalid' };
+      } catch (error) {
+        // PostgreSQL exposes stable SQLSTATEs for caller-invalid procedure
+        // input (the migration raises 22023/23503/42501/P0002); anything
+        // else is operational and must remain retryable to the public route.
+        const code = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : undefined;
+        return code === '22023' || code === '23503' || code === '42501' || code === 'P0002'
+          ? { outcome: 'invalid' }
+          : { outcome: 'unavailable' };
       }
+    },
+  };
+}
+
+export function createSqlPublicPaidVoteStore(sql: Sql): PublicPaidVoteStore {
+  return {
+    async listForChannel(channelId): Promise<PublicPaidVoteDefinition[]> {
+      const rows = await sql<PublicPaidVoteRowDb[]>`
+        select definition_id, label, option_key, option_label
+          from app_private.list_public_paid_support_votes(${channelId}::uuid)
+      `;
+      const definitions = new Map<string, PublicPaidVoteDefinition>();
+      for (const row of rows) {
+        const existing = definitions.get(row.definition_id);
+        if (existing) existing.options.push({ optionKey: row.option_key, label: row.option_label });
+        else definitions.set(row.definition_id, { definitionId: row.definition_id, label: row.label, options: [{ optionKey: row.option_key, label: row.option_label }] });
+      }
+      return [...definitions.values()];
     },
   };
 }

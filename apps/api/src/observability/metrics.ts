@@ -30,6 +30,11 @@ export type ApiMetrics = {
   // labels only — never a payment/order/event/donor identifier.
   recordReconnectReplay(outcome: 'success' | 'failure'): void;
   recordTtsFailure(reason: 'provider_error' | 'timeout' | 'quota_exhausted' | 'other'): void;
+  // RT-02 §3.4 counters. Outcome labels only — a channel id, overlay id,
+  // payment id or donor identifier must never appear here.
+  recordOverlayNotification(outcome: 'routed' | 'unroutable'): void;
+  recordOverlayAdmissionRejection(): void;
+  recordOverlayReplay(outcome: 'shared' | 'leader'): void;
   // Reconciliation-time gauges, refreshed wholesale by the periodic check.
   setReconciliationSnapshot(snapshot: ReconciliationSnapshot): void;
   renderPrometheus(): string;
@@ -43,6 +48,9 @@ export function createApiMetrics(): ApiMetrics {
   const counters = new Map<CounterKey, { count: number; durationMs: number }>();
   const reconnectReplay = { success: 0, failure: 0 };
   const ttsFailures = { provider_error: 0, timeout: 0, quota_exhausted: 0, other: 0 };
+  const overlayNotifications = { routed: 0, unroutable: 0 };
+  const overlayReplay = { shared: 0, leader: 0 };
+  let overlayAdmissionRejections = 0;
   let reconciliation: ReconciliationSnapshot | undefined;
 
   return {
@@ -58,6 +66,15 @@ export function createApiMetrics(): ApiMetrics {
     },
     recordTtsFailure(reason) {
       ttsFailures[reason] += 1;
+    },
+    recordOverlayNotification(outcome) {
+      overlayNotifications[outcome] += 1;
+    },
+    recordOverlayAdmissionRejection() {
+      overlayAdmissionRejections += 1;
+    },
+    recordOverlayReplay(outcome) {
+      overlayReplay[outcome] += 1;
     },
     setReconciliationSnapshot(snapshot) {
       reconciliation = snapshot;
@@ -86,6 +103,20 @@ export function createApiMetrics(): ApiMetrics {
       for (const reason of Object.keys(ttsFailures) as (keyof typeof ttsFailures)[]) {
         lines.push(`bsa_tts_failures_total{reason="${reason}"} ${ttsFailures[reason]}`);
       }
+
+      lines.push('# HELP bsa_overlay_notifications_total Overlay wake-up notifications received by the direct listener, by routing outcome (RT-02).');
+      lines.push('# TYPE bsa_overlay_notifications_total counter');
+      lines.push(`bsa_overlay_notifications_total{outcome="routed"} ${overlayNotifications.routed}`);
+      lines.push(`bsa_overlay_notifications_total{outcome="unroutable"} ${overlayNotifications.unroutable}`);
+
+      lines.push('# HELP bsa_overlay_admission_rejections_total Overlay SSE connections rejected by a configured per-instance or per-channel subscriber ceiling (RT-02).');
+      lines.push('# TYPE bsa_overlay_admission_rejections_total counter');
+      lines.push(`bsa_overlay_admission_rejections_total ${overlayAdmissionRejections}`);
+
+      lines.push('# HELP bsa_overlay_replay_total Overlay durable replay reads, by whether the read was shared (deduplicated) across sessions of the same channel or performed as the leader (RT-02).');
+      lines.push('# TYPE bsa_overlay_replay_total counter');
+      lines.push(`bsa_overlay_replay_total{outcome="shared"} ${overlayReplay.shared}`);
+      lines.push(`bsa_overlay_replay_total{outcome="leader"} ${overlayReplay.leader}`);
 
       lines.push('# HELP bsa_reconciliation_captured_payments_without_live_event Captured payments with no corresponding LiveEvent (money in, nothing on stream). Reconciliation-time.');
       lines.push('# TYPE bsa_reconciliation_captured_payments_without_live_event gauge');

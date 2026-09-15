@@ -17,6 +17,11 @@ import (
 const maxCheckoutBodyBytes int64 = 32 << 10
 
 var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{16,128}$`)
+var anonymousIdentityHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func validAnonymousIdentityHash(value string) bool {
+	return anonymousIdentityHashPattern.MatchString(value)
+}
 
 // The local checkout intent is valid for at most fifteen minutes. This is a
 // BharatStudio boundary invariant; it is deliberately not sent as Razorpay's
@@ -43,18 +48,19 @@ type HTTPHandler struct {
 }
 
 type checkoutRequest struct {
-	IntentID       string            `json:"intentId"`
-	ChannelID      string            `json:"channelId"`
-	Environment    string            `json:"environment"`
-	IdempotencyKey string            `json:"idempotencyKey"`
-	Receipt        string            `json:"receipt"`
-	AmountPaise    int64             `json:"amountPaise"`
-	Currency       string            `json:"currency"`
-	DisplayName    string            `json:"donorDisplayName"`
-	Message        string            `json:"message"`
-	AlertConsent   *bool             `json:"alertConsent"`
-	ExpiresAt      time.Time         `json:"expiresAt"`
-	Notes          map[string]string `json:"notes,omitempty"`
+	IntentID                   string            `json:"intentId"`
+	ChannelID                  string            `json:"channelId"`
+	Environment                string            `json:"environment"`
+	IdempotencyKey             string            `json:"idempotencyKey"`
+	Receipt                    string            `json:"receipt"`
+	AmountPaise                int64             `json:"amountPaise"`
+	Currency                   string            `json:"currency"`
+	DisplayName                string            `json:"donorDisplayName"`
+	Message                    string            `json:"message"`
+	AlertConsent               *bool             `json:"alertConsent"`
+	AnonymousIdentityTokenHash string            `json:"anonymousIdentityTokenHash,omitempty"`
+	ExpiresAt                  time.Time         `json:"expiresAt"`
+	Notes                      map[string]string `json:"notes,omitempty"`
 }
 
 func (h HTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -106,7 +112,7 @@ func (h HTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	now := time.Now()
-	if input.Environment != h.Environment || input.Currency != "INR" || input.AmountPaise < 1000 || input.IntentID == "" || input.ChannelID == "" || input.Receipt == "" || input.AlertConsent == nil || input.ExpiresAt.IsZero() || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(maxCheckoutLifetime)) {
+	if input.Environment != h.Environment || input.Currency != "INR" || input.AmountPaise < 1000 || input.IntentID == "" || input.ChannelID == "" || input.Receipt == "" || input.AlertConsent == nil || (input.AnonymousIdentityTokenHash != "" && !validAnonymousIdentityHash(input.AnonymousIdentityTokenHash)) || input.ExpiresAt.IsZero() || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(maxCheckoutLifetime)) {
 		h.Metrics.ObserveCheckoutOutcome("invalid")
 		writeJSON(response, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return
@@ -117,8 +123,9 @@ func (h HTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Reque
 		IntentID: input.IntentID, ChannelID: input.ChannelID, Environment: input.Environment,
 		IdempotencyKey: input.IdempotencyKey, Receipt: input.Receipt, AmountPaise: input.AmountPaise,
 		Currency: input.Currency, DisplayName: input.DisplayName, Message: input.Message,
-		AlertConsent: *input.AlertConsent,
-		ExpiresAt:    input.ExpiresAt, Notes: input.Notes, TraceID: traceID,
+		AlertConsent:               *input.AlertConsent,
+		AnonymousIdentityTokenHash: input.AnonymousIdentityTokenHash,
+		ExpiresAt:                  input.ExpiresAt, Notes: input.Notes, TraceID: traceID,
 	})
 	if err != nil {
 		h.Metrics.ObserveCheckoutOutcome("retryable")

@@ -5,6 +5,7 @@ import { getApiOrigin } from '../../lib/api-origin';
 import { boundedServerMessage, parsePublicOrderStatus, parseTipOrderResponse, type TipOrderResponse } from '../../tips/[handle]/tip-contract';
 import { fetchTipOrder } from '../../tips/tip-client';
 import { loadRazorpayCheckout } from '../../tips/[handle]/razorpay-loader';
+import { mintReceiptForConfirmedTip, receiptPath } from '../../tips/receipt-client';
 
 type Props = {
   token: string;
@@ -28,6 +29,7 @@ export function TipIntentConfirm({ token, channelDisplayName, amountPaise, donor
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [order, setOrder] = useState<TipOrderResponse | null>(null);
+  const [receiptToken, setReceiptToken] = useState<string | null>(null);
 
   async function checkOnce(orderId: string): Promise<boolean> {
     try {
@@ -38,6 +40,11 @@ export function TipIntentConfirm({ token, channelDisplayName, amountPaise, donor
       if (value.status === 'paid') {
         setState('paid');
         setNotice('Payment confirmed. Thank you for supporting the stream.');
+        // Same advisory receipt handoff as the direct-tip journey. The
+        // verified payment state is final even if receipt minting is down.
+        void mintReceiptForConfirmedTip(getApiOrigin(), orderId).then((token) => {
+          if (token) setReceiptToken(token);
+        });
         return true;
       }
       if (value.status === 'expired' || value.status === 'failed') {
@@ -120,6 +127,7 @@ export function TipIntentConfirm({ token, channelDisplayName, amountPaise, donor
       </button>
       {state === 'created' && order ? <p className="inline-message" role="status">Complete the secure checkout window; confirmation is verified by the provider webhook.</p> : null}
       {notice ? <p className="inline-message" role="status">{notice}</p> : null}
+      {receiptToken ? <p className="inline-message"><a href={receiptPath(receiptToken)}>View your receipt</a></p> : null}
       {state === 'error' ? <p className="error-text" role="alert">{error}</p> : null}
     </div>
   );

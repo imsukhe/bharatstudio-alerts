@@ -80,3 +80,18 @@ test('GET returns 503 when no store is wired', async () => {
   assert.equal(response.json().errorCode, 'template_store_unavailable');
   await app.close();
 });
+
+test('GET redacts a template store rejection as a retryable 503', async () => {
+  const app = await buildTestApp({
+    async listForChannel() { throw new Error('postgres://user:secret@host unavailable'); },
+  });
+  const response = await app.inject({
+    method: 'GET', url: `/v1/channels/${channelId}/templates`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().errorCode, 'template_store_unavailable');
+  assert.equal(response.json().retryable, true);
+  assert.equal(JSON.stringify(response.json()).includes('secret'), false);
+  await app.close();
+});

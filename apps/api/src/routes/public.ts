@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { PublicChannelRepository } from '../domain/public-channel.js';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PaymentOrderService, TipOrder } from '../domain/payment-order.js';
 import { createRazorpayPaymentProvider } from '../domain/payment-provider-razorpay.js';
 import type { CreatePaymentResult } from '../domain/payment-provider-creator.js';
@@ -12,10 +12,27 @@ import { TIPINTENT_TOKEN_PATTERN } from '../db/tipintent-store.js';
 // L16 gap closure (0108): let a tip carry a paid-vote option tag. See the
 // call site below for why a tagging failure never fails the underlying
 // checkout.
-import type { VotePaymentTagStore } from '../domain/vote-payment-types.js';
+import type { PublicPaidVoteStore, VotePaymentTagStore } from '../domain/vote-payment-types.js';
 
 const handlePattern = '^[A-Za-z0-9._-]+$';
 const idempotencyKeyPattern = '^[A-Za-z0-9._:-]+$';
+const anonymousIdentityCookie = '__Host-bsa-anonymous';
+
+function anonymousTokenFromCookie(header: string | undefined): string | undefined {
+  const value = header?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${anonymousIdentityCookie}=`))?.slice(anonymousIdentityCookie.length + 1);
+  return value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : undefined;
+}
+
+function anonymousTokenHash(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function anonymousCookie(token: string): string {
+  // __Host- cookies are only valid with Secure + Path=/ and no Domain.  Keep
+  // the invariant in every environment rather than quietly weakening it in a
+  // development branch; test clients can still inspect the header directly.
+  return `${anonymousIdentityCookie}=${token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure`;
+}
 
 // Constant-time comparison so a mistimed response can never help a caller
 // narrow down the internal creation secret one byte at a time.
@@ -50,8 +67,11 @@ export async function registerPublicRoutes(
   tipIntentShortLinkOrigin = 'https://app.bharatstudio.com',
   // L16 gap closure (0108): optional for isolated route tests. Production
   // supplies it from buildApp/index whenever a SQL client is configured.
-  // A tip itself must still succeed if the tag is invalid or unavailable.
   votePaymentTags?: VotePaymentTagStore,
+  // The public page gets this strict projection, never the creator-facing
+  // interaction configuration. Optional preserves testable fail-closed
+  // behavior if runtime wiring is missing.
+  publicPaidVotes?: PublicPaidVoteStore,
 ): Promise<void> {
   // L19: the live money-moving tip-order path now goes through
   // CreatorPaymentProvider.createPayment rather than calling paymentOrders
@@ -189,6 +209,34 @@ export async function registerPublicRoutes(
     },
   );
 
+  app.get<{ Params: { handle: string } }>(
+    '/v1/public/channels/:handle/paid-votes',
+    {
+      schema: {
+        params: {
+          type: 'object', additionalProperties: false, required: ['handle'],
+          properties: { handle: { type: 'string', minLength: 1, maxLength: 64, pattern: handlePattern } },
+        },
+      },
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      if (!repository || !publicPaidVotes) {
+        return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'interaction_unavailable', message: 'Support choices are temporarily unavailable', traceId: request.id, retryable: true });
+      }
+      const channel = (await repository.findByHandle(request.params.handle))
+        ?? (await repository.resolveReleasedHandle?.(request.params.handle));
+      if (!channel) return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
+      try {
+        const items = await publicPaidVotes.listForChannel(channel.channelId);
+        return reply.code(200).send({ schemaVersion: 'v1', items });
+      } catch (error) {
+        logSafeError(request, 'public_paid_vote_list_failed', error);
+        return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'interaction_unavailable', message: 'Support choices are temporarily unavailable', traceId: request.id, retryable: true });
+      }
+    },
+  );
+
   app.post<{
     Params: { handle: string };
     Headers: { 'idempotency-key'?: string };
@@ -294,30 +342,42 @@ export async function registerPublicRoutes(
         });
       }
 
-      // L16 gap closure (0108): tag this tip toward a paid support-vote
-      // option BEFORE the order is created, keyed by the same
-      // (channelId, environment, idempotencyKey) triple the payment
-      // itself will settle under — see 0108's migration header for the
-      // full join chain this tag enables. A donor sending a stale/invalid
-      // definitionId, an option that doesn't exist, or a definition not
-      // in paid mode must never break their tip: app_private.
-      // tag_vote_payment validates all of that and rejects, and this
-      // call site swallows that rejection rather than surfacing it —
-      // the checkout itself is the thing that must never fail here.
-      if (votePaymentTags && request.body.interactionDefinitionId && request.body.voteOptionKey) {
+      const hasDefinition = Boolean(request.body.interactionDefinitionId);
+      const hasOption = Boolean(request.body.voteOptionKey);
+      if (hasDefinition !== hasOption) {
+        return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_interaction_selection', message: 'Choose a complete support-vote option or continue without one', traceId: request.id, retryable: false });
+      }
+      // A selected vote is a payment instruction, not optional decoration.
+      // Validate/tag before provider order creation, so a stale or forged
+      // selection cannot silently charge as an ordinary tip. An unselected
+      // ordinary tip never enters this branch and retains existing behavior.
+      if (hasDefinition && hasOption) {
+        if (!votePaymentTags) {
+          return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'interaction_unavailable', message: 'Support choices are temporarily unavailable', traceId: request.id, retryable: true });
+        }
         try {
-          await votePaymentTags.tag({
+          const tagged = await votePaymentTags.tag({
             channelId: channel.channelId,
             environment: paymentEnvironment,
             idempotencyKey,
-            interactionDefinitionId: request.body.interactionDefinitionId,
-            optionKey: request.body.voteOptionKey,
+            interactionDefinitionId: request.body.interactionDefinitionId!,
+            optionKey: request.body.voteOptionKey!,
           });
+          if (tagged.outcome === 'invalid') {
+            return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_interaction_selection', message: 'That support-vote choice is no longer available. Choose another option or continue without it', traceId: request.id, retryable: false });
+          }
+          if (tagged.outcome === 'unavailable') {
+            return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'interaction_unavailable', message: 'Support choices are temporarily unavailable', traceId: request.id, retryable: true });
+          }
         } catch (error) {
           logSafeError(request, 'vote_payment_tag_failed', error);
+          return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'interaction_unavailable', message: 'Support choices are temporarily unavailable', traceId: request.id, retryable: true });
         }
       }
 
+      const priorAnonymousToken = anonymousTokenFromCookie(request.headers.cookie);
+      const issuedAnonymousToken = priorAnonymousToken ? undefined : randomBytes(32).toString('base64url');
+      const anonymousIdentityTokenHash = anonymousTokenHash(priorAnonymousToken ?? issuedAnonymousToken!);
       const providerReceipt = `bsa_${createHash('sha256').update(`${channel.channelId}:${idempotencyKey}`).digest('hex').slice(0, 32)}`;
       try {
         const result = await razorpayProvider.createPayment({
@@ -331,8 +391,10 @@ export async function registerPublicRoutes(
           donorDisplayName: request.body.donorDisplayName ?? '',
           message: request.body.message ?? '',
           alertConsent: request.body.alertConsent !== false,
+          anonymousIdentityTokenHash,
           expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         }, request.id);
+        if (issuedAnonymousToken) reply.header('set-cookie', anonymousCookie(issuedAnonymousToken));
         return reply.code(201).send(toTipOrder(result));
       } catch (error) {
         logSafeError(request, 'tip_order_creation_failed', error);
@@ -571,6 +633,9 @@ export async function registerPublicRoutes(
       }
 
       const providerReceipt = `bsati_${createHash('sha256').update(`${consumed.channelId}:${intentId}`).digest('hex').slice(0, 32)}`;
+      const priorAnonymousToken = anonymousTokenFromCookie(request.headers.cookie);
+      const issuedAnonymousToken = priorAnonymousToken ? undefined : randomBytes(32).toString('base64url');
+      const anonymousIdentityTokenHash = anonymousTokenHash(priorAnonymousToken ?? issuedAnonymousToken!);
       try {
         const result = await razorpayProvider.createPayment({
           channelId: consumed.channelId,
@@ -583,8 +648,10 @@ export async function registerPublicRoutes(
           donorDisplayName: consumed.donorDisplayName ?? '',
           message: consumed.message ?? '',
           alertConsent: true,
+          anonymousIdentityTokenHash,
           expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         }, request.id);
+        if (issuedAnonymousToken) reply.header('set-cookie', anonymousCookie(issuedAnonymousToken));
         return reply.code(201).send(toTipOrder(result));
       } catch (error) {
         // The TipIntent is now consumed but no order exists — the token

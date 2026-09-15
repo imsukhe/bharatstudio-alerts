@@ -73,6 +73,7 @@ export type CreatorPaymentIntent = {
   donorDisplayName?: string;
   message?: string;
   alertConsent?: boolean;
+  anonymousIdentityTokenHash?: string;
   providerReceipt?: string;
   expiresAt?: string;
 };

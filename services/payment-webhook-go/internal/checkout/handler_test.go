@@ -138,3 +138,26 @@ func TestHTTPHandlerRejectsCheckoutLifetimeBeyondPlatformMaximum(t *testing.T) {
 		t.Fatal("overlong expiry reached service")
 	}
 }
+
+func TestHTTPHandlerAcceptsOnlyCanonicalAnonymousIdentityHashes(t *testing.T) {
+	service := &fakeOrderCreator{result: Intent{ID: "intent-1", AmountPaise: 1000, Currency: "INR", ProviderOrderID: "order-1"}}
+	handler := HTTPHandler{Authorizer: fakeCheckoutAuthorizer{}, Service: service, Environment: "test"}
+	validHash := strings.Repeat("a", 64)
+	body := strings.Replace(validCheckoutBody(), `"alertConsent":true,`, `"alertConsent":true,"anonymousIdentityTokenHash":"`+validHash+`",`, 1)
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/tips/orders", strings.NewReader(body))
+	request.Header.Set("Idempotency-Key", "synthetic-idempotency-001")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || service.request.AnonymousIdentityTokenHash != validHash {
+		t.Fatalf("valid identity hash status=%d request=%#v", response.Code, service.request)
+	}
+
+	badBody := strings.Replace(validCheckoutBody(), `"alertConsent":true,`, `"alertConsent":true,"anonymousIdentityTokenHash":"not-a-hash",`, 1)
+	request = httptest.NewRequest(http.MethodPost, "/internal/v1/tips/orders", strings.NewReader(badBody))
+	request.Header.Set("Idempotency-Key", "synthetic-idempotency-001")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || service.request.AnonymousIdentityTokenHash != validHash {
+		t.Fatalf("malformed identity hash status=%d request=%#v", response.Code, service.request)
+	}
+}

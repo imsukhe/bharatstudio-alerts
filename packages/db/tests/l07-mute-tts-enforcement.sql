@@ -6,6 +6,13 @@
 -- names. Synthetic identifiers only; own fixture ids
 -- 00000000-...-00000000a001 upward, distinct from every other test file's
 -- range.
+--
+-- RT-02/0127: get_overlay_events no longer bakes `ttsAudioUrl` into the
+-- jsonb payload (a shared/deduplicated replay must never leak one session's
+-- overlayId into another's URL); it returns the resolved artifact id as its
+-- own `tts_audio_artifact_id` column instead, under the exact same
+-- mute-aware null this file already proves. Every assertion below reads
+-- that column now; nothing about what mute enforcement means changed.
 
 \set ON_ERROR_STOP on
 
@@ -73,17 +80,17 @@ set local role bsa_app;
 select set_config('app.overlay_session_id', '00000000-0000-4000-8000-00000000a031', true);
 do $$
 declare
-  muted_url text;
-  sibling_url text;
+  muted_artifact_id text;
+  sibling_artifact_id text;
 begin
-  select payload ->> 'ttsAudioUrl' into muted_url
+  select tts_audio_artifact_id::text into muted_artifact_id
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a021';
-  select payload ->> 'ttsAudioUrl' into sibling_url
+  select tts_audio_artifact_id::text into sibling_artifact_id
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a022';
-  if muted_url is null then raise exception 'pre-mute: target queue unexpectedly had no ttsAudioUrl'; end if;
-  if sibling_url is null then raise exception 'pre-mute: sibling queue unexpectedly had no ttsAudioUrl'; end if;
+  if muted_artifact_id is null then raise exception 'pre-mute: target queue unexpectedly had no TTS artifact id'; end if;
+  if sibling_artifact_id is null then raise exception 'pre-mute: sibling queue unexpectedly had no TTS artifact id'; end if;
 end
 $$;
 commit;
@@ -107,9 +114,9 @@ set local role bsa_app;
 select set_config('app.overlay_session_id', '00000000-0000-4000-8000-00000000a031', true);
 do $$
 declare
-  muted_url text;
+  muted_artifact_id text;
   muted_duration text;
-  sibling_url text;
+  sibling_artifact_id text;
   muted_row_exists boolean;
 begin
   select (count(*) > 0) into muted_row_exists
@@ -119,16 +126,16 @@ begin
     raise exception 'muting suppressed the whole alert delivery, not just the TTS audio';
   end if;
 
-  select payload ->> 'ttsAudioUrl', payload ->> 'ttsAudioDurationMs' into muted_url, muted_duration
+  select tts_audio_artifact_id::text, payload ->> 'ttsAudioDurationMs' into muted_artifact_id, muted_duration
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a021';
-  if muted_url is not null then raise exception 'muted queue still carried a ttsAudioUrl: %', muted_url; end if;
+  if muted_artifact_id is not null then raise exception 'muted queue still carried a TTS artifact id: %', muted_artifact_id; end if;
   if muted_duration is not null then raise exception 'muted queue still carried a ttsAudioDurationMs: %', muted_duration; end if;
 
-  select payload ->> 'ttsAudioUrl' into sibling_url
+  select tts_audio_artifact_id::text into sibling_artifact_id
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a022';
-  if sibling_url is null then raise exception 'muting one queue incorrectly silenced the sibling (non-muted) queue too';
+  if sibling_artifact_id is null then raise exception 'muting one queue incorrectly silenced the sibling (non-muted) queue too';
   end if;
 end
 $$;
@@ -171,12 +178,12 @@ set local role bsa_app;
 select set_config('app.overlay_session_id', '00000000-0000-4000-8000-00000000a031', true);
 do $$
 declare
-  restored_url text;
+  restored_artifact_id text;
 begin
-  select payload ->> 'ttsAudioUrl' into restored_url
+  select tts_audio_artifact_id::text into restored_artifact_id
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000a043';
-  if restored_url is null then raise exception 'unmuting did not restore ttsAudioUrl for a new delivery'; end if;
+  if restored_artifact_id is null then raise exception 'unmuting did not restore the TTS artifact id for a new delivery'; end if;
 end
 $$;
 commit;

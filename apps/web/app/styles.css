@@ -246,10 +246,11 @@ summary { cursor: pointer; color: var(--text); font-family: var(--font-display);
 .tip-form label span { font-weight: 400; }
 .amount-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 0 14px; background: rgb(255 255 255 / 5%); }
 .amount-row span { color: var(--accent); font-family: var(--font-display); font-size: 1.1rem; font-weight: 700; }
-.tip-form input, .tip-form textarea { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
+.tip-form input, .tip-form textarea, .tip-form select { width: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; }
 .tip-form input { padding: 14px 0; }
 .tip-form textarea { resize: vertical; border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: rgb(255 255 255 / 5%); }
-.tip-form input:disabled, .tip-form textarea:disabled { cursor: not-allowed; opacity: .55; }
+.tip-form select { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: rgb(255 255 255 / 5%); }
+.tip-form input:disabled, .tip-form textarea:disabled, .tip-form select:disabled { cursor: not-allowed; opacity: .55; }
 .tip-form > input:not([type="checkbox"]) { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: rgb(255 255 255 / 5%); }
 .consent-row { display: flex !important; grid-template-columns: auto 1fr; align-items: flex-start; gap: 9px; margin-top: 4px; line-height: 1.45; }
 .consent-row input { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 2px; accent-color: var(--accent); }

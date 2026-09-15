@@ -7,6 +7,11 @@
 -- touching a sibling queue -- this file proves SYNTHESIS ELIGIBILITY itself,
 -- one layer earlier in the pipeline. Synthetic ids only, own range
 -- 00000000-...-00000000b0xx, distinct from every other test file's range.
+--
+-- RT-02/0127: get_overlay_events returns the resolved TTS artifact id as
+-- its own `tts_audio_artifact_id` column instead of a baked `ttsAudioUrl`
+-- in the jsonb payload (see that migration's header). The mute-aware null
+-- this file proves is unchanged; only the column read below moved.
 
 \set ON_ERROR_STOP on
 
@@ -188,17 +193,17 @@ set local role bsa_app;
 select set_config('app.overlay_session_id', '00000000-0000-4000-8000-00000000b031', true);
 do $$
 declare
-  muted_url text;
-  unmuted_url text;
+  muted_artifact_id text;
+  unmuted_artifact_id text;
 begin
-  select payload ->> 'ttsAudioUrl' into muted_url
+  select tts_audio_artifact_id::text into muted_artifact_id
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000b045' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000b021';
-  select payload ->> 'ttsAudioUrl' into unmuted_url
+  select tts_audio_artifact_id::text into unmuted_artifact_id
     from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
    where event_id = '00000000-0000-0000-0000-00000000b045' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000b022';
-  if muted_url is not null then raise exception 'still-muted queue B021 unexpectedly carried a ttsAudioUrl: %', muted_url; end if;
-  if unmuted_url is null then raise exception 'unmuted queue B022 unexpectedly had no ttsAudioUrl'; end if;
+  if muted_artifact_id is not null then raise exception 'still-muted queue B021 unexpectedly carried a TTS artifact id: %', muted_artifact_id; end if;
+  if unmuted_artifact_id is null then raise exception 'unmuted queue B022 unexpectedly had no TTS artifact id'; end if;
 end
 $$;
 commit;

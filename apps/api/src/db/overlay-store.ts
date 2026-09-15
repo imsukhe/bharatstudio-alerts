@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Sql } from 'postgres';
-import type { OverlayEvent, OverlaySession, OverlayStore } from '../domain/overlay-store.js';
+import { composeOverlayEvent, type OverlaySession, type OverlaySessionRef, type OverlayStore, type RawOverlayEvent } from '../domain/overlay-store.js';
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -30,6 +30,24 @@ function parseCursor(value: string | undefined): { createdAt: Date | null; deliv
 }
 
 export function createSqlOverlayStore(sql: Sql, webOrigin: string): OverlayStore {
+  async function replayRaw(token: string, overlayId: string, lastEventId: string | undefined, limit: number): Promise<RawOverlayEvent[] | null> {
+    const cursor = parseCursor(lastEventId);
+    return sql.begin(async (tx) => {
+      await tx`select set_config('app.overlay_session_id', ${overlayId}, true)`;
+      const active = await tx<{ overlay_id: string }[]>`
+        select overlay_id from app_private.lookup_overlay_token(${overlayId}::uuid, ${fingerprint(token)})
+      `;
+      if (!active[0]) return null;
+      const rows = await tx<{
+        cursor: string; event_id: string; event_type: RawOverlayEvent['eventType']; trace_id: string; created_at: Date; payload: Record<string, unknown>; tts_audio_artifact_id: string | null;
+      }[]>`
+        select cursor, event_id, event_type, trace_id, created_at, payload, tts_audio_artifact_id
+          from app_private.get_overlay_events(${overlayId}::uuid, ${cursor.createdAt}, ${cursor.deliveryId}::uuid, ${limit})
+      `;
+      return rows.map((row): RawOverlayEvent => ({ cursor: row.cursor, eventId: row.event_id, eventType: row.event_type, traceId: row.trace_id, createdAt: row.created_at.toISOString(), payload: row.payload, ttsAudioArtifactId: row.tts_audio_artifact_id }));
+    }) as Promise<RawOverlayEvent[] | null>;
+  }
+
   return {
     async create(userId, channelId) {
       const overlayId = randomUUID();
@@ -85,22 +103,23 @@ export function createSqlOverlayStore(sql: Sql, webOrigin: string): OverlayStore
       if (!channelId) return null;
       return createSession(webOrigin, replacementId, expiresAt, token);
     },
-    async replay(token, overlayId, lastEventId, limit) {
-      const cursor = parseCursor(lastEventId);
+    async resolveSession(token, overlayId) {
+      // RT-02 §3.2(a): a cheap, no-event-read authorization check, run on
+      // every wake so a revoked/expired session stops immediately whether
+      // it is a shared-replay leader or follower. Same lookup `replayRaw`
+      // uses for its own admission, kept side-effect-free and index-only.
       return sql.begin(async (tx) => {
         await tx`select set_config('app.overlay_session_id', ${overlayId}, true)`;
-        const active = await tx<{ overlay_id: string }[]>`
-          select overlay_id from app_private.lookup_overlay_token(${overlayId}::uuid, ${fingerprint(token)})
+        const rows = await tx<{ channel_id: string }[]>`
+          select channel_id from app_private.lookup_overlay_token(${overlayId}::uuid, ${fingerprint(token)})
         `;
-        if (!active[0]) return null;
-        const rows = await tx<{
-          cursor: string; event_id: string; event_type: OverlayEvent['eventType']; trace_id: string; created_at: Date; payload: Record<string, unknown>;
-        }[]>`
-          select cursor, event_id, event_type, trace_id, created_at, payload
-            from app_private.get_overlay_events(${overlayId}::uuid, ${cursor.createdAt}, ${cursor.deliveryId}::uuid, ${limit})
-        `;
-        return rows.map((row): OverlayEvent => ({ schemaVersion: 'v1', cursor: row.cursor, eventId: row.event_id, eventType: row.event_type, traceId: row.trace_id, createdAt: row.created_at.toISOString(), payload: row.payload }));
-      }) as Promise<OverlayEvent[] | null>;
+        return rows[0] ? { channelId: rows[0].channel_id } : null;
+      }) as Promise<OverlaySessionRef | null>;
+    },
+    replayRaw,
+    async replay(token, overlayId, lastEventId, limit) {
+      const rows = await replayRaw(token, overlayId, lastEventId, limit);
+      return rows ? rows.map((row) => composeOverlayEvent(row, overlayId)) : null;
     },
     async acknowledge(token, overlayId, cursor, eventId) {
       parseCursor(cursor);

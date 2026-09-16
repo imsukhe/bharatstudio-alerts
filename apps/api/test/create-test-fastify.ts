@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
-import { fastifyAjvOptions } from '../src/fastify-ajv-options.js';
+import { fastifyAjvOptions, FASTIFY_BODY_LIMIT_BYTES } from '../src/fastify-ajv-options.js';
 
 /**
  * The ONLY sanctioned way to construct a Fastify instance under
@@ -15,8 +15,12 @@ import { fastifyAjvOptions } from '../src/fastify-ajv-options.js';
  * `bharatstudio-requirements/reviews/2026-09-16-api-test-harness-validation-divergence.md`.
  *
  * `ajv` is deliberately not overridable — that is the whole point of the
- * helper. Every other Fastify server option is passed straight through for
- * tests that need one (e.g. a custom `bodyLimit`).
+ * helper. `bodyLimit` defaults to the server's own
+ * `FASTIFY_BODY_LIMIT_BYTES` for the same reason (a bare harness took
+ * Fastify's 1 MiB default, so a 200 KB body passed in tests and 413'd in
+ * production), but IS overridable: a test exercising a route with its own
+ * larger limit needs to say so, and saying so explicitly is not the defect —
+ * silently inheriting a different value was.
  *
  * Named `createTestFastify` rather than `buildTestApp` on purpose: nineteen
  * test files already define their own local `buildTestApp(...)` wrapper that
@@ -24,5 +28,5 @@ import { fastifyAjvOptions } from '../src/fastify-ajv-options.js';
  * infinite recursion.
  */
 export function createTestFastify(options: Omit<FastifyServerOptions, 'ajv'> = {}): FastifyInstance {
-  return Fastify({ ...options, ajv: fastifyAjvOptions() });
+  return Fastify({ bodyLimit: FASTIFY_BODY_LIMIT_BYTES, ...options, ajv: fastifyAjvOptions() });
 }

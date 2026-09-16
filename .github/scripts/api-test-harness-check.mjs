@@ -60,6 +60,7 @@ const APP_MODULE = join(API_DIR, 'src/app.ts');
 const HELPER_MODULE = join(TEST_DIR, 'create-test-fastify.ts');
 
 const OPTIONS_EXPORT = 'fastifyAjvOptions';
+const BODY_LIMIT_EXPORT = 'FASTIFY_BODY_LIMIT_BYTES';
 const HELPER_EXPORT = 'createTestFastify';
 
 const failures = [];
@@ -146,6 +147,14 @@ for (const file of [APP_MODULE, HELPER_MODULE]) {
   if (!new RegExp(`${OPTIONS_EXPORT}\\s*\\(`).test(stripCommentsAndStrings(source))) {
     fail(`${rel(file)} imports \`${OPTIONS_EXPORT}\` but never calls it.`);
   }
+  // Checked with the import statements removed: importing a constant and
+  // never using it is exactly the drift this rule exists to catch, and a bare
+  // mention in the import line would satisfy a naive match. (The AJV rule
+  // above gets this for free by requiring a CALL; a constant has no call.)
+  const withoutImports = stripCommentsAndStrings(source).replace(/import[^;]*from\s*['"][^'"]*['"]\s*;?/g, '');
+  if (!new RegExp(`\\b${BODY_LIMIT_EXPORT}\\b`).test(withoutImports)) {
+    fail(`${rel(file)} does not use \`${BODY_LIMIT_EXPORT}\`. The server-wide body limit must be shared between the app and the harness for the same reason the AJV options are — see ${rel(OPTIONS_MODULE)}.`);
+  }
 }
 
 // A second occurrence of the option name anywhere under apps/api/ is a copy.
@@ -155,8 +164,18 @@ const apiSources = [
 ];
 for (const file of apiSources) {
   if (file === OPTIONS_MODULE) continue;
-  if (/removeAdditional/.test(stripCommentsAndStrings(readFileSync(file, 'utf8')))) {
+  const code = stripCommentsAndStrings(readFileSync(file, 'utf8'));
+  if (/removeAdditional/.test(code)) {
     fail(`${rel(file)} restates \`removeAdditional\`. There must be exactly one definition — ${rel(OPTIONS_MODULE)} — and every other site must import it.`);
+  }
+  // Same rule, one option along. A NUMERIC literal body limit outside the
+  // options module is a second definition of the server-wide floor, which is
+  // how app.ts and the harness came to disagree (64 KB vs Fastify's 1 MiB
+  // default: a 200 KB body is 200 in one and 413 in the other). A named
+  // constant is allowed and is how a route with its own legitimately larger
+  // limit expresses it (routes/branding.ts's Lottie upload).
+  if (/bodyLimit\s*:\s*[\d_]/.test(code)) {
+    fail(`${rel(file)} sets \`bodyLimit\` to a numeric literal. The server-wide limit has exactly one definition — ${rel(OPTIONS_MODULE)}'s \`${BODY_LIMIT_EXPORT}\` — and a route needing its own larger limit must name a constant for it.`);
   }
 }
 

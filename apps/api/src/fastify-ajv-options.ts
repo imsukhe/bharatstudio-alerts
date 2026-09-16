@@ -32,3 +32,19 @@ import type { FastifyServerOptions } from 'fastify';
 export function fastifyAjvOptions(): NonNullable<FastifyServerOptions['ajv']> {
   return { customOptions: { removeAdditional: false } };
 }
+
+/**
+ * The single definition of this API's server-wide request body limit.
+ *
+ * Same story as `fastifyAjvOptions()` above, one option along, and it
+ * survived the first fix: `app.ts` set `bodyLimit: 64 * 1024` inline while
+ * the test harness took Fastify's own default of 1 MiB. Measured — a 200 KB
+ * body is `200 OK` under the default and `413` under this value — so a test
+ * could prove a large payload accepted that production rejects outright.
+ *
+ * Route-level limits are a different thing and stay where they are: a route
+ * that legitimately accepts more (the Lottie upload in `routes/branding.ts`)
+ * sets its own via a named constant. This is only the server-wide floor that
+ * the harness must share.
+ */
+export const FASTIFY_BODY_LIMIT_BYTES = 64 * 1024;

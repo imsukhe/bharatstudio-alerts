@@ -1,5 +1,5 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
-import { fastifyAjvOptions } from './fastify-ajv-options.js';
+import { fastifyAjvOptions, FASTIFY_BODY_LIMIT_BYTES } from './fastify-ajv-options.js';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -207,7 +207,7 @@ export async function buildApp(
     // (test/create-test-fastify.ts) also imports, so the harness and this
     // server can no longer disagree. See the 2026-09-16 review record.
     ajv: fastifyAjvOptions(),
-    bodyLimit: 64 * 1024,
+    bodyLimit: FASTIFY_BODY_LIMIT_BYTES,
     ...(config.nodeEnv === 'test'
       ? { logger: false }
       : { logger: { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.url', 'req.raw.url'] } }),

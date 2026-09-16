@@ -128,7 +128,7 @@ declare
   visual_row_exists boolean;
 begin
   select (count(*) > 0) into visual_row_exists
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b043';
   if not visual_row_exists then
     raise exception 'all-muted event was suppressed visually too -- the cost gate must be synthesis-only';
@@ -197,10 +197,10 @@ declare
   unmuted_artifact_id text;
 begin
   select tts_audio_artifact_id::text into muted_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b045' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000b021';
   select tts_audio_artifact_id::text into unmuted_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b045' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000b022';
   if muted_artifact_id is not null then raise exception 'still-muted queue B021 unexpectedly carried a TTS artifact id: %', muted_artifact_id; end if;
   if unmuted_artifact_id is null then raise exception 'unmuted queue B022 unexpectedly had no TTS artifact id'; end if;

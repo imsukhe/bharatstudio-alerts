@@ -197,7 +197,7 @@ declare
 begin
   select payload ->> 'ttsFallbackReason', (payload ->> 'watermark')::boolean
     into fallback_reason, watermark_flag
-    from app_private.get_overlay_events('00000000-0000-4000-8000-000000001831', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-000000001831', 50)
    where event_id = '00000000-0000-0000-0000-000000003811';
   if fallback_reason <> 'tier_not_entitled' then
     raise exception 'overlay stream did not carry the free-tier fallback reason: %', fallback_reason;
@@ -219,7 +219,7 @@ declare
 begin
   select payload ->> 'ttsFallbackReason', (payload ->> 'watermark')::boolean
     into fallback_reason, watermark_flag
-    from app_private.get_overlay_events('00000000-0000-4000-8000-000000001832', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-000000001832', 50)
    where event_id = '00000000-0000-0000-0000-000000003821';
   if fallback_reason <> 'quota_exhausted' then
     raise exception 'overlay stream did not carry the pro-tier quota-exhausted fallback reason: %', fallback_reason;

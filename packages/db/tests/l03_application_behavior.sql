@@ -1615,7 +1615,7 @@ select set_config('app.overlay_session_id', '00000000-0000-4000-8000-00000000009
 do $$
 begin
   if (select count(*) from app_private.get_overlay_events(
-    '00000000-0000-4000-8000-000000000093', null, null, 100)
+    '00000000-0000-4000-8000-000000000093', 100)
     where event_id = '00000000-0000-4000-8000-000000000151'
       and payload ->> 'deliveryId' = '00000000-0000-4000-8000-000000000182') <> 0 then
     raise exception 'L05 paused queue leaked a replayable overlay event';
@@ -1658,7 +1658,7 @@ select set_config('app.overlay_session_id', '00000000-0000-4000-8000-00000000009
 do $$
 begin
   if (select count(*) from app_private.get_overlay_events(
-    '00000000-0000-4000-8000-000000000093', null, null, 100)
+    '00000000-0000-4000-8000-000000000093', 100)
     where event_id = '00000000-0000-4000-8000-000000000151'
       and payload ->> 'deliveryId' = '00000000-0000-4000-8000-000000000182') = 0 then
     raise exception 'L05 resumed queue did not expose its durable overlay event';
@@ -2043,29 +2043,29 @@ values ('00000000-0000-4000-8000-000000000224', '00000000-0000-4000-8000-0000000
 on conflict (channel_id, idempotency_key) do nothing;
 select set_config('app.overlay_session_id', '00000000-0000-4000-8000-000000000091', true);
 select * from app_private.lookup_overlay_token('00000000-0000-4000-8000-000000000091', 'fingerprint-a');
-select * from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', null, null, 50);
+select * from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', 50);
 do $$
 begin
   if not exists (
-       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', null, null, 50)
+       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', 50)
         where event_id = '00000000-0000-4000-8000-000000000051'
      )
      or not exists (
-       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', null, null, 50)
+       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', 50)
         where event_id = '00000000-0000-4000-8000-000000000151'
           and payload ->> 'queueId' = '00000000-0000-4000-8000-000000000021'
           and payload -> 'overrideValues' ->> 'style' = 'payment'
           and trace_id = 'razorpay:provider-event-1'
      )
      or not exists (
-       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', null, null, 50)
+       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', 50)
         where event_id = '00000000-0000-4000-8000-000000000151'
           and payload ->> 'queueId' = '00000000-0000-4000-8000-000000000022'
           and payload -> 'overrideValues' ->> 'style' = 'payment-secondary'
           and trace_id = 'razorpay:provider-event-1'
      )
      or not exists (
-       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', null, null, 50)
+       select 1 from app_private.get_overlay_events('00000000-0000-4000-8000-000000000091', 50)
         where event_id = '00000000-0000-4000-8000-000000000151'
           and payload -> 'configSnapshot' ->> 'defaultStyle' = 'celebration'
           and (payload -> 'configSnapshot' -> 'display' ->> 'anchor') = 'top_right'
@@ -2099,7 +2099,7 @@ begin
   select overlay_event.cursor
     into replay_cursor
     from app_private.get_overlay_events(
-      '00000000-0000-4000-8000-000000000091', null, null, 100
+      '00000000-0000-4000-8000-000000000091', 100
     ) overlay_event
    where overlay_event.payload ->> 'deliveryId' = '00000000-0000-4000-8000-000000000182';
   if replay_cursor is null then
@@ -2202,10 +2202,24 @@ declare
 begin
   select exists (
     select 1
+      -- REWRITTEN 2026-09-16 (migration 0137). This call used to pass a
+      -- cursor positioned AFTER the older delivery
+      -- ('2026-08-15T10:00:01Z', '...236') to prove that an older,
+      -- still-unacknowledged delivery is replayed anyway -- 0055's rule:
+      -- "the cursor is an acknowledgement checkpoint, not an eligibility
+      -- filter". Those two parameters had been ignored by the SQL since
+      -- 0064 and are gone as of 0137, so the property is now STRUCTURAL:
+      -- there is no cursor to position past anything, and no caller can
+      -- reintroduce one without changing the signature.
+      --
+      -- The assertion is kept rather than deleted, because the risk it
+      -- guards did not go away -- it moved. What could still hide an older
+      -- unacknowledged delivery is the status predicate
+      -- (`delivery.status in ('ready','displayed')`), which is what now
+      -- carries the whole eligibility rule. This case fails if anyone
+      -- narrows it.
       from app_private.get_overlay_events(
         '00000000-0000-4000-8000-000000000091',
-        '2026-08-15T10:00:01Z'::timestamptz,
-        '00000000-0000-4000-8000-000000000236',
         100
       ) event_row
      where event_row.event_id = '00000000-0000-4000-8000-000000000231'

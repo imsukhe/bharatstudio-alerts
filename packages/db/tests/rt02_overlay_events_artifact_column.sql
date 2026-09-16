@@ -172,33 +172,33 @@ begin
   select artifact_id into v_expected_artifact_id from rt02_expected_artifact limit 1;
 
   select tts_audio_artifact_id into v_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b041';
   if v_artifact_id is null then raise exception 'expected an artifact id for the event with stored TTS audio'; end if;
   if v_artifact_id <> v_expected_artifact_id then raise exception 'artifact id % did not match the stored artifact %', v_artifact_id, v_expected_artifact_id; end if;
 
   select tts_audio_artifact_id into v_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b043';
   if v_artifact_id is not null then raise exception 'expected a null artifact id for the event with no stored TTS audio, got %', v_artifact_id; end if;
 
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b045';
   if v_row_count <> 0 then raise exception 'a delivery on a paused queue must never appear'; end if;
 
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b047';
   if v_row_count <> 0 then raise exception 'a delivery on a closed queue must never appear'; end if;
 
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b049';
   if v_row_count <> 0 then raise exception 'a suppressed (dispatch_allowed = false) delivery must never appear'; end if;
 
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b04b';
   if v_row_count <> 0 then raise exception 'a cancelled (tts_cancelled) delivery must never appear'; end if;
 
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b04d';
   if v_row_count <> 0 then raise exception 'channel A''s session must never see channel B''s delivery'; end if;
 end
@@ -215,11 +215,11 @@ declare
   v_artifact_id uuid;
   v_row_count integer;
 begin
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b034', null, null, 50);
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b034', 50);
   if v_row_count <> 1 then raise exception 'channel B''s session should see exactly its own one delivery, saw %', v_row_count; end if;
 
   select tts_audio_artifact_id into v_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b034', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b034', 50)
    where event_id = '00000000-0000-0000-0000-00000000b04d';
   if v_artifact_id is null then raise exception 'channel B''s own delivery should resolve its own artifact id'; end if;
 end
@@ -235,7 +235,7 @@ do $$
 declare
   v_row_count integer;
 begin
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b032', null, null, 50);
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b032', 50);
   if v_row_count <> 0 then raise exception 'a revoked overlay session must never receive events, saw %', v_row_count; end if;
 end
 $$;
@@ -248,7 +248,7 @@ do $$
 declare
   v_row_count integer;
 begin
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b033', null, null, 50);
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b033', 50);
   if v_row_count <> 0 then raise exception 'an expired overlay session must never receive events, saw %', v_row_count; end if;
 end
 $$;
@@ -276,12 +276,12 @@ declare
   v_row_count integer;
 begin
   select tts_audio_artifact_id into v_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b041';
   if v_artifact_id is not null then raise exception 'a muted queue must still yield a null artifact id, got %', v_artifact_id; end if;
 
   -- The alert itself (visual) must still be present -- mute is audio-only.
-  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', null, null, 50)
+  select count(*) into v_row_count from app_private.get_overlay_events('00000000-0000-4000-8000-00000000b031', 50)
    where event_id = '00000000-0000-0000-0000-00000000b041';
   if v_row_count = 0 then raise exception 'muting suppressed the whole alert delivery, not just the artifact id'; end if;
 end

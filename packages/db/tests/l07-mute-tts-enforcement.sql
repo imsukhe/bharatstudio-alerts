@@ -84,10 +84,10 @@ declare
   sibling_artifact_id text;
 begin
   select tts_audio_artifact_id::text into muted_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a021';
   select tts_audio_artifact_id::text into sibling_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a022';
   if muted_artifact_id is null then raise exception 'pre-mute: target queue unexpectedly had no TTS artifact id'; end if;
   if sibling_artifact_id is null then raise exception 'pre-mute: sibling queue unexpectedly had no TTS artifact id'; end if;
@@ -120,20 +120,20 @@ declare
   muted_row_exists boolean;
 begin
   select (count(*) > 0) into muted_row_exists
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a021';
   if not muted_row_exists then
     raise exception 'muting suppressed the whole alert delivery, not just the TTS audio';
   end if;
 
   select tts_audio_artifact_id::text, payload ->> 'ttsAudioDurationMs' into muted_artifact_id, muted_duration
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a021';
   if muted_artifact_id is not null then raise exception 'muted queue still carried a TTS artifact id: %', muted_artifact_id; end if;
   if muted_duration is not null then raise exception 'muted queue still carried a ttsAudioDurationMs: %', muted_duration; end if;
 
   select tts_audio_artifact_id::text into sibling_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a041' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a022';
   if sibling_artifact_id is null then raise exception 'muting one queue incorrectly silenced the sibling (non-muted) queue too';
   end if;
@@ -181,7 +181,7 @@ declare
   restored_artifact_id text;
 begin
   select tts_audio_artifact_id::text into restored_artifact_id
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a043';
   if restored_artifact_id is null then raise exception 'unmuting did not restore the TTS artifact id for a new delivery'; end if;
 end
@@ -241,14 +241,14 @@ declare
   sibling_row_exists boolean;
 begin
   select (count(*) > 0) into cancelled_row_exists
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a045' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a021';
   if cancelled_row_exists then
     raise exception 'a cancelled delivery still appeared in the overlay stream';
   end if;
 
   select (count(*) > 0) into sibling_row_exists
-    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', null, null, 50)
+    from app_private.get_overlay_events('00000000-0000-4000-8000-00000000a031', 50)
    where event_id = '00000000-0000-0000-0000-00000000a045' and (payload ->> 'queueId')::uuid = '00000000-0000-4000-8000-00000000a022';
   if not sibling_row_exists then
     raise exception 'cancelling one queue''s delivery removed the sibling queue''s delivery of the same event too';

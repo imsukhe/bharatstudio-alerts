@@ -30,8 +30,21 @@ function parseCursor(value: string | undefined): { createdAt: Date | null; deliv
 }
 
 export function createSqlOverlayStore(sql: Sql, webOrigin: string): OverlayStore {
+  // `lastEventId` is accepted and deliberately NOT used as a resume point.
+  // See migration 0137's header, which carries 0055's rule: the cursor is an
+  // acknowledgement checkpoint, not an eligibility filter. Deliveries publish
+  // out of order, so resuming by cursor position can strand an older,
+  // still-unacknowledged delivery permanently. Acknowledgement itself is the
+  // filter -- get_overlay_events admits only ('ready', 'displayed') and
+  // excludes 'acknowledged' outright.
+  //
+  // Until 0137 this function parsed the cursor and passed it into two
+  // parameters the SQL had ignored since 0064, which read as though replay
+  // resumed from it. The parameter stays on this signature because it is the
+  // shape the transport hands us; it is not silently dropped, it is
+  // documented as not a resume point.
   async function replayRaw(token: string, overlayId: string, lastEventId: string | undefined, limit: number): Promise<RawOverlayEvent[] | null> {
-    const cursor = parseCursor(lastEventId);
+    void lastEventId;
     return sql.begin(async (tx) => {
       await tx`select set_config('app.overlay_session_id', ${overlayId}, true)`;
       const active = await tx<{ overlay_id: string }[]>`
@@ -42,7 +55,7 @@ export function createSqlOverlayStore(sql: Sql, webOrigin: string): OverlayStore
         cursor: string; event_id: string; event_type: RawOverlayEvent['eventType']; trace_id: string; created_at: Date; payload: Record<string, unknown>; tts_audio_artifact_id: string | null;
       }[]>`
         select cursor, event_id, event_type, trace_id, created_at, payload, tts_audio_artifact_id
-          from app_private.get_overlay_events(${overlayId}::uuid, ${cursor.createdAt}, ${cursor.deliveryId}::uuid, ${limit})
+          from app_private.get_overlay_events(${overlayId}::uuid, ${limit})
       `;
       return rows.map((row): RawOverlayEvent => ({ cursor: row.cursor, eventId: row.event_id, eventType: row.event_type, traceId: row.trace_id, createdAt: row.created_at.toISOString(), payload: row.payload, ttsAudioArtifactId: row.tts_audio_artifact_id }));
     }) as Promise<RawOverlayEvent[] | null>;

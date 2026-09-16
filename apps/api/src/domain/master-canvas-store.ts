@@ -24,14 +24,24 @@ export function isMasterCanvasModuleKey(value: unknown): value is MasterCanvasMo
   return typeof value === 'string' && (MASTER_CANVAS_MODULE_KEYS as readonly string[]).includes(value);
 }
 
-// The module keys this slice actually renders. Kept separate from the
-// full catalogue above: MASTER_CANVAS_MODULE_KEYS is what the SERVER will
-// accept and cap-count; this is what the CLIENT runtime currently knows
-// how to mount. A module can be configured (and cap-counted) long before
-// a renderer for it ships. PRF-02 slice 2 adds module #3 (Tug-of-War
-// Vote) and module #4 (Boss Fight) to the two slice-1 shipped.
-export const MASTER_CANVAS_BUILT_MODULE_KEYS = ['supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight'] as const;
-export type MasterCanvasBuiltModuleKey = typeof MASTER_CANVAS_BUILT_MODULE_KEYS[number];
+// REMOVED 2026-09-16: MASTER_CANVAS_BUILT_MODULE_KEYS / MasterCanvasBuiltModuleKey.
+//
+// It listed which modules the client runtime could mount, went stale in
+// slices 3, 4 and 5 (four keys against the client's nine), was referred
+// forward three times as "stale, to fix" -- and had ZERO consumers. Nothing
+// in apps/, packages/ or any test ever imported it.
+//
+// Deleted rather than updated, because updating it would have recreated the
+// real defect: a second, server-side source of truth for a fact only the
+// client can know. Which modules can be MOUNTED is a property of the web
+// runtime, and apps/web/app/overlay/canvas/[overlayId]/page.tsx's
+// BUILT_MODULE_KEYS is where it belongs. The server deliberately accepts and
+// cap-counts the whole catalogue (MASTER_CANVAS_MODULE_KEYS above) precisely
+// so a module can be configured before its renderer ships -- so the server
+// has no use for a "built" list at all.
+//
+// A stale list with no consumers is worse than no list: it reads as
+// authoritative to the next person and is wrong.
 
 export type MasterCanvasModuleInactiveReason = 'disabled' | 'tier_module_cap';
 

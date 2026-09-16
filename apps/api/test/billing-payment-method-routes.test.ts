@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerAlertRoutes } from '../src/routes/alerts.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -38,7 +38,7 @@ const acceptedAccount: AccountStore = {
 // (not buildApp/app.ts, which this task's lane does not own) so the new
 // endpoint can be exercised without any other lane's wiring.
 async function buildTestApp(paymentMethodUpdates?: PaymentMethodUpdateService) {
-  const app = Fastify({ ajv: { customOptions: { removeAdditional: false } } });
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   app.setErrorHandler(async (error, request, reply) => {
     const fastifyError = error as { validation?: unknown; statusCode?: number };

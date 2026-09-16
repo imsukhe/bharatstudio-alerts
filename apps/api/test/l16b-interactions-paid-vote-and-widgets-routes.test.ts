@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import type { Sql } from 'postgres';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerInteractionRoutes } from '../src/routes/interactions.js';
@@ -45,7 +45,7 @@ async function buildTestApp(deps: {
   widgetOverlaySql?: Sql;
   tugOfWarVoteOverlay?: Partial<TugOfWarVoteOverlayStore>;
 } = {}) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerInteractionRoutes(
     app, sessions, account,

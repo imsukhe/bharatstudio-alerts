@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { registerViewerRoutes } from '../src/routes/viewer.js';
 import type { ViewerDashboardRow, ViewerDeletionResult, ViewerStore } from '../src/domain/viewer-store.js';
 
@@ -26,7 +26,7 @@ async function buildViewerApp(overrides: Partial<ViewerStore> = {}) {
     async resetPassword() { return true; },
     ...overrides,
   };
-  const app = Fastify();
+  const app = createTestFastify();
   await registerViewerRoutes(app, { viewer: store });
   return { app, requestedEmails };
 }
@@ -73,7 +73,7 @@ test('reset-password rejects an invalid/used/expired token with one generic shap
 });
 
 test('reset-password fails closed (503) when no viewer store is configured', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerViewerRoutes(app, {});
   const response = await app.inject({ method: 'POST', url: '/v1/viewer/password/reset', payload: { token: 'a'.repeat(32), newPassword: 'correct-horse-battery' } });
   assert.equal(response.statusCode, 503);

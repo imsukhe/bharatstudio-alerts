@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerInteractionRoutes } from '../src/routes/interactions.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -11,7 +11,7 @@ import type {
   MutateWidgetResult, PublicVoteStore, SupportVoteStore, VoteTally, WidgetConfig, WidgetConfigStore,
 } from '../src/domain/interaction-types.js';
 
-// registerInteractionRoutes is tested directly against a bare Fastify
+// registerInteractionRoutes is tested directly against a standalone `createTestFastify()`
 // instance rather than through buildApp/app.ts — this lane owns
 // routes/interactions.ts but deliberately does not edit app.ts (ownership
 // boundary); wiring is applied at review. Mirrors l16-goals-routes.test.ts.
@@ -57,7 +57,7 @@ async function buildTestApp(deps: {
   leaderboard?: Partial<LeaderboardStore>;
   overlay?: Partial<InteractionOverlayStore>;
 } = {}) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerInteractionRoutes(
     app, sessions, account,

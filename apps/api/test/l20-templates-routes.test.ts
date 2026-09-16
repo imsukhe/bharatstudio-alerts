@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerTemplateRoutes } from '../src/routes/templates.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { TemplateCatalogueStore, TemplateSummary } from '../src/domain/template-catalogue.js';
 
-// registerTemplateRoutes is tested directly against a bare Fastify
+// registerTemplateRoutes is tested directly against a standalone `createTestFastify()`
 // instance rather than through buildApp/app.ts — this lane owns
 // routes/templates.ts but deliberately does not edit app.ts (see the
 // task's ownership boundary); app.ts wiring is applied at review.
@@ -31,7 +31,7 @@ function fakeSummary(overrides: Partial<TemplateSummary> = {}): TemplateSummary 
 }
 
 async function buildTestApp(store?: Partial<TemplateCatalogueStore>) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerTemplateRoutes(app, sessions, store as TemplateCatalogueStore | undefined);
   return app;

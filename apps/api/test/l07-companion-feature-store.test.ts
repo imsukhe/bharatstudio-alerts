@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerCompanionRoutes } from '../src/routes/companion.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -9,7 +9,7 @@ import type { CompanionFeatureStore, CompanionTestReport, CompanionTtsCancelResu
 import type { CompanionEntitlementStore } from '../src/domain/companion-entitlement-policy.js';
 
 // L07 remaining feature list (master plan 7.11 items 2, 5, 8-10). These
-// Routes are mounted on bare Fastify only to isolate feature dependencies;
+// Routes are mounted on a standalone `createTestFastify()` instance only to isolate feature dependencies;
 // normal buildApp/production composition supplies both feature and live
 // entitlement stores. This still exercises the exact request pipeline.
 
@@ -98,7 +98,7 @@ function fakeFeatures(opts: FeaturesOpts): CompanionFeatureStore {
 }
 
 async function buildTestApp(alertsOpts: AlertsOpts, featuresOpts: FeaturesOpts | undefined, companionEntitlement?: CompanionEntitlementStore) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerCompanionRoutes(app, fakeSessions(), fakeAlerts(alertsOpts), undefined, featuresOpts ? fakeFeatures(featuresOpts) : undefined, companionEntitlement);
   await app.ready();

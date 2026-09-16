@@ -69,14 +69,25 @@ export async function registerMetricsRoutes(app: FastifyInstance, deps: MetricsR
   // scheduler mechanism calls both and every schedule in
   // bharatstudio-crons/schedules/v1.json sends `{ idempotencyKey, window }`.
   //
-  // This route previously declared only `idempotencyKey`. That did NOT break
-  // the scheduler — Fastify configures AJV with `removeAdditional: true`, so
-  // `additionalProperties: false` silently STRIPS an unknown field instead of
-  // rejecting it, and `window` would simply have vanished before the handler
-  // ran (proven in test/l09-metrics-routes.test.ts). Declaring it is still
-  // the right thing: a schema that silently drops what a caller sends is a
-  // contract that lies about itself, and the next reader cannot tell
-  // "ignored deliberately" from "forgotten". It is accepted with the
+  // This route previously declared only `idempotencyKey`, and declaring
+  // `window` was LOAD-BEARING rather than hygiene.
+  //
+  // CORRECTED 2026-09-16 (review: bharatstudio-requirements/reviews/
+  // 2026-09-16-api-test-harness-validation-divergence.md). This comment used
+  // to claim the opposite: that the omission "did NOT break the scheduler"
+  // because Fastify strips unknown fields under `additionalProperties: false`,
+  // "proven in test/l09-metrics-routes.test.ts". Every part of that was wrong.
+  // Stripping is Fastify's AJV DEFAULT; this application sets
+  // `removeAdditional: false` (src/fastify-ajv-options.ts), so an undeclared
+  // field is REJECTED with 400. The test that "proved" it built a bare
+  // `Fastify()` and so measured the default, not this API — which is why
+  // test/create-test-fastify.ts now exists and a check forbids bare
+  // `Fastify()` under apps/api/test.
+  //
+  // The practical consequence of the correction: before `window` was
+  // declared, the `reliability-reconciliation` schedule — which sends
+  // `{ idempotencyKey, window }` — would have been rejected 400 on every
+  // run. It is accepted with the
   // identical constraints maintenance.ts uses and deliberately not read —
   // this reconciliation always recomputes the whole snapshot rather than a
   // window of it.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerGoalRoutes } from '../src/routes/goals.js';
 import { registerChallengeRoutes } from '../src/routes/challenges.js';
@@ -15,7 +15,7 @@ import type {
 } from '../src/domain/contribution-source-types.js';
 
 // L16c (0117): the goals.ts/challenges.ts/interactions.ts source-inclusion
-// endpoints, tested directly against a bare Fastify instance per route
+// endpoints, tested directly against a standalone `createTestFastify()` instance per route
 // file, mirroring l16-goals-routes.test.ts's own model.
 
 const userId = '00000000-0000-4000-8000-000000000001';
@@ -53,7 +53,7 @@ function fakeContributionSources(overrides: Partial<ContributionSourceStore> = {
 // --- goals.ts --------------------------------------------------------------
 
 test('GET goal sources returns the resolved include/exclude state, default-included', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerGoalRoutes(app, sessions, undefined, account, undefined, fakeContributionSources());
   const response = await app.inject({
@@ -66,7 +66,7 @@ test('GET goal sources returns the resolved include/exclude state, default-inclu
 });
 
 test('PUT goal sources rejects a percentage-shaped body at the schema layer (include/exclude only)', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerGoalRoutes(app, sessions, undefined, account, undefined, fakeContributionSources());
   const response = await app.inject({
@@ -79,7 +79,7 @@ test('PUT goal sources rejects a percentage-shaped body at the schema layer (inc
 });
 
 test('PUT goal sources maps a not_found outcome to 404', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerGoalRoutes(app, sessions, undefined, account, undefined, fakeContributionSources({
     async set() { return { outcome: 'not_found' }; },
@@ -94,7 +94,7 @@ test('PUT goal sources maps a not_found outcome to 404', async () => {
 });
 
 test('goal sources routes fail closed (503) with no store configured', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerGoalRoutes(app, sessions, undefined, account, undefined, undefined);
   const response = await app.inject({
@@ -112,7 +112,7 @@ test('PUT challenge sources excludes a source and echoes the resolved state back
     { sourceType: 'payment', included: true },
     { sourceType: 'youtube_superchat', included: false },
   ];
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerChallengeRoutes(app, sessions, undefined, account, undefined, fakeContributionSources({
     async set() { return { outcome: 'ok', sources: excluded }; },
@@ -128,7 +128,7 @@ test('PUT challenge sources excludes a source and echoes the resolved state back
 });
 
 test('GET challenge sources requires authentication', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerChallengeRoutes(app, sessions, undefined, account, undefined, fakeContributionSources());
   const response = await app.inject({ method: 'GET', url: `/v1/channels/${channelId}/challenges/${challengeId}/sources` });
@@ -139,7 +139,7 @@ test('GET challenge sources requires authentication', async () => {
 // --- interactions.ts (hype mode's interaction_definition target) -----------
 
 test('GET interaction definition sources returns the resolved state', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerInteractionRoutes(
     app, sessions, account,
@@ -157,7 +157,7 @@ test('GET interaction definition sources returns the resolved state', async () =
 });
 
 test('PUT interaction definition sources maps a forbidden outcome to 404, not a leaking 403', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerInteractionRoutes(
     app, sessions, account,

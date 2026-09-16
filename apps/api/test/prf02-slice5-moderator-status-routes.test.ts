@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerMasterCanvasRoutes } from '../src/routes/master-canvas.js';
 import {
@@ -31,7 +31,7 @@ const overlayId = '00000000-0000-4000-8000-000000005531';
 const url = `/v1/overlay-widgets/${overlayId}/moderator-status`;
 
 async function buildTestApp(store?: Partial<ModeratorStatusOverlayStore>) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerMasterCanvasRoutes(
     app,

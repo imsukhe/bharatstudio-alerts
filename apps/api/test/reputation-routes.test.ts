@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerReputationRoutes } from '../src/routes/reputation.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { GetVerdictResult, ReputationStore, SupporterReputationVerdict } from '../src/domain/reputation-store.js';
 
-// registerReputationRoutes is tested directly against a bare Fastify
+// registerReputationRoutes is tested directly against a standalone `createTestFastify()`
 // instance rather than through buildApp/app.ts — this lane owns
 // routes/reputation.ts but deliberately does not edit app.ts (see the
 // task's ownership boundary); app.ts wiring is applied at review.
@@ -29,7 +29,7 @@ function fakeVerdict(overrides: Partial<SupporterReputationVerdict> = {}): Suppo
 }
 
 async function buildTestApp(store?: Partial<ReputationStore>) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerReputationRoutes(app, sessions, store as ReputationStore | undefined);
   return app;

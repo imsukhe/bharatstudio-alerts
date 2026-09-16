@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerGoalRoutes } from '../src/routes/goals.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -8,7 +8,7 @@ import type { AccountStore } from '../src/domain/account-store.js';
 import type { CreateGoalResult, GoalStore, MutateGoalResult, SupportGoal } from '../src/domain/goal-store.js';
 import type { OverlayGoalStore } from '../src/domain/goal-store.js';
 
-// registerGoalRoutes is tested directly against a bare Fastify instance
+// registerGoalRoutes is tested directly against a standalone `createTestFastify()` instance
 // rather than through buildApp/app.ts — this lane owns routes/goals.ts but
 // deliberately does not edit app.ts (see the task's ownership boundary);
 // app.ts wiring is applied at review.
@@ -39,7 +39,7 @@ function fakeGoal(overrides: Partial<SupportGoal> = {}): SupportGoal {
 }
 
 async function buildTestApp(store?: Partial<GoalStore>, overlayGoals?: OverlayGoalStore) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerGoalRoutes(app, sessions, store as GoalStore | undefined, account, overlayGoals);
   return app;

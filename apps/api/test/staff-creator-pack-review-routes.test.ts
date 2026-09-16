@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerAdminRoutes } from '../src/routes/admin.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -12,7 +12,7 @@ import type {
 } from '../src/domain/staff-creator-pack-review.js';
 
 // Same shape as admin-ingest-failure-routes.test.ts: registerAdminRoutes
-// itself is the unit under test, on a minimal Fastify instance rather
+// itself is the unit under test, on a minimal `createTestFastify()` instance rather
 // than app.ts's buildApp — this pass does not own app.ts, and this
 // store's production wiring there is explicitly out of scope (see
 // routes/admin.ts's header comment on staffCreatorPackReviewStore).
@@ -21,7 +21,7 @@ function buildTestApp(
   store: AdminStore | undefined,
   staffStore: StaffCreatorPackReviewStore | undefined,
 ) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   return registerAdminRoutes(app, sessions, store, undefined, staffStore).then(() => app);
 }

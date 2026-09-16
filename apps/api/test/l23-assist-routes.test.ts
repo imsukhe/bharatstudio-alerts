@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerAssistRoutes } from '../src/routes/assist.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -8,7 +8,7 @@ import type { AccountStore } from '../src/domain/account-store.js';
 import type { AssistConfirmation, AssistStore, AssistSuggestion, CreateAssistSuggestionResult, DecideAssistSuggestionResult } from '../src/domain/assist-types.js';
 import type { AssistGenerationRequest, AssistSuggestionProvider } from '../src/domain/assist-provider.js';
 
-// registerAssistRoutes is tested directly against a bare Fastify instance
+// registerAssistRoutes is tested directly against a standalone `createTestFastify()` instance
 // rather than through buildApp/app.ts — this lane owns routes/assist.ts but
 // deliberately does not edit app.ts (see the task's ownership boundary),
 // same pattern as l17-challenges-routes.test.ts's own note for
@@ -50,7 +50,7 @@ function fakeConfirmation(overrides: Partial<AssistConfirmation> = {}): AssistCo
 }
 
 async function buildTestApp(store?: Partial<AssistStore>, provider?: AssistSuggestionProvider) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerAssistRoutes(app, sessions, store as AssistStore | undefined, account, provider);
   return app;
@@ -209,17 +209,27 @@ test('a signal value outside the flat string/number/boolean contract is rejected
   await app.close();
 });
 
-test('an unrecognised top-level body field is not silently forwarded to the provider seam', async () => {
+// CORRECTED 2026-09-16 (review: 2026-09-16-api-test-harness-validation-divergence).
+// This test previously ran on a bare `Fastify()` and asserted that the request
+// SUCCEEDED and the provider was called with the unrecognised `donorMessage`
+// stripped out (`assert.ok(captured)` plus an exact key-set check on the
+// forwarded request). That was Fastify's AJV default `removeAdditional: true`,
+// not this API: `src/fastify-ajv-options.ts` sets `removeAdditional: false`,
+// so the request is REJECTED with 400 and the provider seam is never reached
+// at all. The stated property ("not silently forwarded") still holds — it
+// holds by rejection rather than by stripping.
+test('an unrecognised top-level body field is rejected, never reaching the provider seam', async () => {
   let captured: AssistGenerationRequest | undefined;
   const spyProvider: AssistSuggestionProvider = { async generate(request) { captured = request; return { suggestedPayload: {}, basis: '' }; } };
   const app = await buildTestApp({ async create(_userId, _channelId, input) { return { outcome: 'created', suggestion: fakeSuggestion({ suggestedPayload: input.suggestedPayload, basis: input.basis }) }; } }, spyProvider);
-  await app.inject({
+  const response = await app.inject({
     method: 'POST', url: `/v1/channels/${channelId}/assist/suggestions`,
     headers: { authorization: `Bearer ${token}` },
     payload: { surface: 'moderation', tier: 'creator', signal: { matchedFlaggedTerm: true }, donorMessage: 'hi there' },
   });
-  assert.ok(captured);
-  assert.deepEqual(Object.keys(captured!).sort(), ['signal', 'surface', 'tier']);
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json().code, 'FST_ERR_VALIDATION');
+  assert.equal(captured, undefined);
   await app.close();
 });
 

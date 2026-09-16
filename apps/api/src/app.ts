@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import { fastifyAjvOptions } from './fastify-ajv-options.js';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -201,8 +202,11 @@ export async function buildApp(
   const app = Fastify({
     // Reject, rather than silently strip, unknown creator-controlled fields.
     // Silent removal would make a client believe a configuration was saved
-    // when the server actually discarded part of it.
-    ajv: { customOptions: { removeAdditional: false } },
+    // when the server actually discarded part of it. The value itself lives
+    // in ONE module (./fastify-ajv-options.js) that the test harness
+    // (test/create-test-fastify.ts) also imports, so the harness and this
+    // server can no longer disagree. See the 2026-09-16 review record.
+    ajv: fastifyAjvOptions(),
     bodyLimit: 64 * 1024,
     ...(config.nodeEnv === 'test'
       ? { logger: false }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerStreamMissionRoutes } from '../src/routes/stream-mission.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -17,7 +17,7 @@ import type {
 } from '../src/domain/stream-mission-store.js';
 
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card).
-// registerStreamMissionRoutes is tested directly against a bare Fastify
+// registerStreamMissionRoutes is tested directly against a standalone `createTestFastify()`
 // instance, matching prf02-master-canvas-routes.test.ts's own convention
 // for a routes file that does not itself own app.ts.
 
@@ -53,14 +53,17 @@ function fakeMission(overrides: Partial<StreamMission> = {}): StreamMission {
 }
 
 async function buildTestApp(store?: Partial<StreamMissionStore>, overlayMission?: StreamMissionOverlayStore) {
-  // `removeAdditional: false` mirrors apps/api/src/app.ts:205 exactly, and
-  // it is load-bearing for the "no clock-bound field on the wire" case
+  // `createTestFastify` takes its ajv options from the same
+  // `fastifyAjvOptions()` that src/app.ts calls -- imported, not copied --
+  // and that is load-bearing for the "no clock-bound field on the wire" case
   // below. Fastify's DEFAULT ajv options silently STRIP a property that
   // `additionalProperties: false` forbids instead of rejecting the request;
-  // the real app turns that off so the request is a 400. A bare Fastify()
-  // here would therefore have tested a different server than the one this
-  // codebase ships -- found by running the negative case, not by reading.
-  const app = Fastify({ ajv: { customOptions: { removeAdditional: false } } });
+  // this application sets `removeAdditional: false` so the request is a 400.
+  // A bare Fastify() here would therefore have tested a different server
+  // than the one this codebase ships -- found by running the negative case,
+  // not by reading. (This helper previously mirrored the options by hand;
+  // that copy is now gone -- see the 2026-09-16 harness-divergence review.)
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerStreamMissionRoutes(app, sessions, store as StreamMissionStore | undefined, account, overlayMission);
   return app;

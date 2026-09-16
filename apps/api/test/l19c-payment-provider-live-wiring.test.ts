@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { registerPublicRoutes } from '../src/routes/public.js';
 import { registerPaymentAccountRoutes } from '../src/routes/payment-accounts.js';
 import type { PublicChannelRepository } from '../src/domain/public-channel.js';
@@ -40,7 +40,7 @@ test('POST tips/orders routes through CreatorPaymentProvider.createPayment and r
       return order;
     },
   };
-  const app = Fastify({ ajv: { customOptions: { removeAdditional: false } } });
+  const app = createTestFastify();
   await registerPublicRoutes(app, repository, paymentOrders, 'test');
   await app.ready();
 
@@ -152,7 +152,7 @@ test('the razorpay capabilities route exposes the same closed UPI-app allowlist,
     async getCurrentUser() { throw new Error('not used'); }, async list() { return []; }, async revoke() { return false; },
   };
   const store: PaymentAccountStore = { async list() { return []; }, async register() { throw new Error('not used'); }, async revoke() { return false; }, async skipOnboarding() { return '2026-08-16T00:00:00.000Z'; } };
-  const app = Fastify();
+  const app = createTestFastify();
   await registerPaymentAccountRoutes(app, sessions, store);
   await app.ready();
   const response = await app.inject({ method: 'GET', url: `/v1/channels/${channelId}/payment-accounts/razorpay/capabilities`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
@@ -177,7 +177,7 @@ test('capabilities route persists a snapshot when a store is configured, and sti
     async upsert() { throw new Error('db unavailable'); },
     async get() { return null; },
   };
-  const appFailing = Fastify();
+  const appFailing = createTestFastify();
   await registerPaymentAccountRoutes(appFailing, sessions, store, undefined, undefined, failingSnapshots);
   await appFailing.ready();
   const failingResponse = await appFailing.inject({ method: 'GET', url: `/v1/channels/${channelId}/payment-accounts/razorpay/capabilities`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
@@ -192,7 +192,7 @@ test('capabilities route persists a snapshot when a store is configured, and sti
     },
     async get() { return null; },
   };
-  const appWorking = Fastify();
+  const appWorking = createTestFastify();
   await registerPaymentAccountRoutes(appWorking, sessions, store, undefined, undefined, workingSnapshots);
   await appWorking.ready();
   const workingResponse = await appWorking.inject({ method: 'GET', url: `/v1/channels/${channelId}/payment-accounts/razorpay/capabilities`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
@@ -225,7 +225,7 @@ test('Razorpay OAuth: authorize-url is 503 when unconfigured, and callback regis
 
   // Unconfigured: fails closed, exactly like every other optional
   // dependency in this codebase.
-  const appUnconfigured = Fastify();
+  const appUnconfigured = createTestFastify();
   await registerPaymentAccountRoutes(appUnconfigured, sessions, store);
   await appUnconfigured.ready();
   const unconfigured = await appUnconfigured.inject({ method: 'GET', url: `/v1/channels/${channelId}/payment-accounts/razorpay/oauth/authorize-url`, headers: { authorization: `Bearer ${'a'.repeat(48)}` } });
@@ -238,7 +238,7 @@ test('Razorpay OAuth: authorize-url is 503 when unconfigured, and callback regis
     assert.equal(body.code, 'auth_code_synthetic');
     return { razorpay_account_id: 'acc_from_oauth' };
   };
-  const appConfigured = Fastify();
+  const appConfigured = createTestFastify();
   await registerPaymentAccountRoutes(appConfigured, sessions, store, undefined, { clientId: 'client_1', clientSecret: 'secret_1', redirectUri: 'https://app.example.test/oauth/callback' }, undefined, fakeHttpClient);
   await appConfigured.ready();
 

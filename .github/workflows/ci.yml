@@ -45,8 +45,9 @@ env:
   GO_VERSION: "1.26"
 
 jobs:
-  # pnpm contracts:validate · pnpm explain:check · pnpm deployment:test ·
-  # git diff --check — no Docker, no Go, fast feedback.
+  # pnpm contracts:validate · pnpm explain:check · pnpm harness:check ·
+  # pnpm deployment:test · git diff --check — no Docker, no Go, fast
+  # feedback.
   node-static-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -64,6 +65,14 @@ jobs:
         run: pnpm contracts:validate
       - name: explain:check
         run: pnpm explain:check
+      - name: harness:check
+        # The API test harness must validate request bodies under the same
+        # AJV options the API itself uses. Static source-text check only —
+        # see .github/scripts/api-test-harness-check.mjs's header and
+        # bharatstudio-requirements/reviews/2026-09-16-api-test-harness-validation-divergence.md
+        # for the defect it exists to prevent recurring, and for exactly
+        # what it does and does not prove.
+        run: pnpm harness:check
       - name: deployment:test
         run: pnpm deployment:test
       - name: git diff --check

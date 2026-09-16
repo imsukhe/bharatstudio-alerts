@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { registerPublicRoutes } from '../src/routes/public.js';
 import type { PublicChannelRepository } from '../src/domain/public-channel.js';
 import type { PaymentOrderService } from '../src/domain/payment-order.js';
 import type { PublicPaidVoteStore, TagVotePaymentInput, TagVotePaymentResult, VotePaymentTagStore } from '../src/domain/vote-payment-types.js';
 
 // L16 gap closure (0108): this focused route test exercises the optional
-// vote-payment dependency with a bare Fastify instance. The complementary
+// vote-payment dependency with a standalone `createTestFastify()` instance. The complementary
 // l16-runtime-composition test proves buildApp passes the production store.
 
 const channelId = '00000000-0000-4000-8000-000000000011';
@@ -31,7 +31,7 @@ function fakePaymentOrders(onCreate?: () => void): PaymentOrderService {
 }
 
 async function buildTestApp(votePaymentTags?: VotePaymentTagStore, publicPaidVotes?: PublicPaidVoteStore, onCreate?: () => void) {
-  const app = Fastify({ ajv: { customOptions: { removeAdditional: false } } });
+  const app = createTestFastify();
   await registerPublicRoutes(
     app, repository, fakePaymentOrders(onCreate), 'test', undefined, undefined, false,
     undefined, undefined, 'https://app.example.test', votePaymentTags, publicPaidVotes,

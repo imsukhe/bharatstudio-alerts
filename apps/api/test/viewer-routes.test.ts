@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { registerViewerRoutes } from '../src/routes/viewer.js';
 import type { ViewerDashboardRow, ViewerDeletionResult, ViewerSessionPrincipal, ViewerStore } from '../src/domain/viewer-store.js';
 
 // `buildApp` now wires viewer routes in production. These tests still use a
 // standalone Fastify instance to isolate the ViewerStore boundary.
 async function buildViewerApp(viewer: ViewerStore) {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerViewerRoutes(app, { viewer });
   return app;
 }
@@ -144,7 +144,7 @@ test('viewer deletion request returns an erased-vs-retained record', async () =>
 });
 
 test('viewer routes fail closed (503) when no viewer store is configured', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerViewerRoutes(app, {});
   const response = await app.inject({ method: 'POST', url: '/v1/viewer/login', payload: { email: 'viewer@example.com', password: 'correct-horse-battery', deviceLabel: 'iPhone' } });
   assert.equal(response.statusCode, 503);

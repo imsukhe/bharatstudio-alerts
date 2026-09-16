@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import type { Sql } from 'postgres';
 import { registerMetricsRoutes } from '../src/routes/metrics.js';
 import { createApiMetrics } from '../src/observability/metrics.js';
 
-// `buildApp` now wires metrics in production. This suite uses a bare Fastify
-// instance to isolate the service-identity and reconciliation boundaries.
+// `buildApp` now wires metrics in production. This suite mounts the metrics
+// routes on a standalone `createTestFastify()` instance to isolate the
+// service-identity and reconciliation boundaries — standalone, but validating
+// under the same ajv options as the real server, never a bare `Fastify()`.
 
 const identity = { verify: async (authorization?: string) => authorization === 'Bearer worker-token' };
 
@@ -26,7 +28,7 @@ function mockSql(responses: unknown[][]): Sql {
 }
 
 test('GET /internal/metrics rejects a request with no service identity', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerMetricsRoutes(app, { metrics: createApiMetrics() });
   const response = await app.inject({ method: 'GET', url: '/internal/metrics' });
   assert.equal(response.statusCode, 401);
@@ -34,7 +36,7 @@ test('GET /internal/metrics rejects a request with no service identity', async (
 });
 
 test('GET /internal/metrics rejects an invalid bearer token the same way', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
   const response = await app.inject({ method: 'GET', url: '/internal/metrics', headers: { authorization: 'Bearer wrong' } });
   assert.equal(response.statusCode, 401);
@@ -42,7 +44,7 @@ test('GET /internal/metrics rejects an invalid bearer token the same way', async
 });
 
 test('GET /internal/metrics returns the scrape for a verified internal caller', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   const metrics = createApiMetrics();
   metrics.recordTtsFailure('timeout');
   await registerMetricsRoutes(app, { metrics, serviceIdentity: identity });
@@ -53,7 +55,7 @@ test('GET /internal/metrics returns the scrape for a verified internal caller', 
 });
 
 test('the scrape endpoint never exposes payment data, tokens or personal data', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   const metrics = createApiMetrics();
   metrics.observe('POST', '/internal/v1/tips/orders', 200, 40);
   metrics.setReconciliationSnapshot({
@@ -76,7 +78,7 @@ test('the scrape endpoint never exposes payment data, tokens or personal data', 
 });
 
 test('POST /internal/metrics/reconcile requires service identity', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
   const response = await app.inject({ method: 'POST', url: '/internal/metrics/reconcile', payload: { idempotencyKey: 'synthetic-reconcile-key-0001' } });
   assert.equal(response.statusCode, 401);
@@ -84,7 +86,7 @@ test('POST /internal/metrics/reconcile requires service identity', async () => {
 });
 
 test('POST /internal/metrics/reconcile fails closed (503) when no database is configured', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
   const response = await app.inject({
     method: 'POST',
@@ -98,7 +100,7 @@ test('POST /internal/metrics/reconcile fails closed (503) when no database is co
 });
 
 test('POST /internal/metrics/reconcile runs the checks and the gauges show up on the next scrape', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   const metrics = createApiMetrics();
   const sql = mockSql([
     [{ count: '4' }],
@@ -127,7 +129,7 @@ test('POST /internal/metrics/reconcile runs the checks and the gauges show up on
 });
 
 test('POST /internal/metrics/reconcile fails closed (503), not silently zero, when a query throws', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   const metrics = createApiMetrics();
   const throwingSql = (() => { throw new Error('connection reset'); }) as unknown as Sql;
   await registerMetricsRoutes(app, { metrics, serviceIdentity: identity, sql: throwingSql });
@@ -146,7 +148,7 @@ test('POST /internal/metrics/reconcile fails closed (503), not silently zero, wh
 // shape. It now declares `window` explicitly rather than relying on Fastify
 // silently dropping it.
 test('POST /internal/metrics/reconcile accepts the scheduler body shape, window included', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
   const response = await app.inject({
     method: 'POST',
@@ -161,15 +163,19 @@ test('POST /internal/metrics/reconcile accepts the scheduler body shape, window 
   await app.close();
 });
 
-// Documents a Fastify behaviour that is easy to get wrong and that this
-// codebase's `additionalProperties: false` schemas depend on: Fastify
-// configures AJV with `removeAdditional: true`, so an unknown field is
-// STRIPPED, not rejected. This route therefore never 400s on an extra field
-// — it reaches the handler with that field removed. Asserted so nobody
-// (including a future reviewer reasoning about the scheduler contract)
-// concludes from the schema alone that an unexpected field is refused.
-test('an unknown body field is stripped by Fastify, not rejected', async () => {
-  const app = Fastify();
+// CORRECTED 2026-09-16 (review: 2026-09-16-api-test-harness-validation-divergence).
+// This test previously ran on a bare `Fastify()` and asserted the OPPOSITE of
+// what this API does. It was titled "an unknown body field is stripped by
+// Fastify, not rejected" and asserted `statusCode === 503`, i.e. that the
+// request reached the handler with the extra field silently removed. That is
+// true only of Fastify's AJV DEFAULT (`removeAdditional: true`), which this
+// application does not use: `src/fastify-ajv-options.ts` sets
+// `removeAdditional: false`, so an undeclared field under
+// `additionalProperties: false` is REJECTED with 400 FST_ERR_VALIDATION and
+// the handler never runs. The old assertion documented the harness, not the
+// server, and would have misled exactly the reviewer it was written for.
+test('an unknown body field is rejected with 400, not silently stripped', async () => {
+  const app = createTestFastify();
   await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
   const response = await app.inject({
     method: 'POST',
@@ -177,8 +183,9 @@ test('an unknown body field is stripped by Fastify, not rejected', async () => {
     headers: { authorization: 'Bearer worker-token' },
     payload: { idempotencyKey: 'synthetic-reconcile-key-0001', unexpectedField: 'no' },
   });
-  // 503 = reached the handler (no database in this harness). Not 400.
-  assert.equal(response.statusCode, 503);
-  assert.equal(response.json().errorCode, 'reconciliation_unavailable');
+  // 400 = refused at the schema layer. Never 503, which would mean the body
+  // was accepted and the handler ran.
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json().code, 'FST_ERR_VALIDATION');
   await app.close();
 });

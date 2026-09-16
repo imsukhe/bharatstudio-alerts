@@ -16,14 +16,15 @@
     "dev:web": "pnpm --filter @bharatstudio/alerts-web dev",
     "test": "pnpm --filter @bharatstudio/alerts-api test && pnpm --filter @bharatstudio/alerts-web test && pnpm measurement:test",
     "measurement:test": "node --test scripts/measurement/run_local_measurement.test.mjs && python3 scripts/measurement/runner_seam_test.py",
-    "verify:local": "pnpm contracts:validate && pnpm explain:check && pnpm deployment:test && pnpm db:test:all && pnpm db:test:l03 && sh scripts/load/run-l09-load-self-test.sh && sh scripts/load/run-l09-fault-self-test.sh && pnpm test && pnpm build && (cd services/alert-worker-go && go test -race ./... && go vet ./...) && (cd services/payment-webhook-go && go test -race ./... && go vet ./...) && (cd services/youtube-poller-go && go test -race ./... && go vet ./...) && docker build --file apps/api/Dockerfile --tag bharatstudio-alerts-api:qa-local . && docker build --tag bharatstudio-alerts-payment:qa-local services/payment-webhook-go && docker build --tag bharatstudio-alerts-worker:qa-local services/alert-worker-go",
+    "verify:local": "pnpm contracts:validate && pnpm explain:check && pnpm harness:check && pnpm deployment:test && pnpm db:test:all && pnpm db:test:l03 && sh scripts/load/run-l09-load-self-test.sh && sh scripts/load/run-l09-fault-self-test.sh && pnpm test && pnpm build && (cd services/alert-worker-go && go test -race ./... && go vet ./...) && (cd services/payment-webhook-go && go test -race ./... && go vet ./...) && (cd services/youtube-poller-go && go test -race ./... && go vet ./...) && docker build --file apps/api/Dockerfile --tag bharatstudio-alerts-api:qa-local . && docker build --tag bharatstudio-alerts-payment:qa-local services/payment-webhook-go && docker build --tag bharatstudio-alerts-worker:qa-local services/alert-worker-go",
     "db:test:all": "sh packages/db/tests/run-sql-suite.sh",
     "db:test:l03": "sh packages/db/tests/run-l03-application-behavior.sh",
     "deployment:validate": "sh deployment/validate-manifests.sh",
     "deployment:test": "sh deployment/test-validate-manifests.sh",
     "contracts:validate": "node contracts/validate-fixtures.mjs && node contracts/validate-openapi.mjs && node contracts/test-openapi-validator.mjs",
     "contracts:route-inventory": "node contracts/runtime-route-inventory.mjs",
-    "explain:check": "node packages/db/explain-plans/scan-required-queries.mjs && node packages/db/explain-plans/check-plans.mjs"
+    "explain:check": "node packages/db/explain-plans/scan-required-queries.mjs && node packages/db/explain-plans/check-plans.mjs",
+    "harness:check": "node .github/scripts/api-test-harness-check.mjs"
   },
   "devDependencies": {
     "ajv": "8.20.0",

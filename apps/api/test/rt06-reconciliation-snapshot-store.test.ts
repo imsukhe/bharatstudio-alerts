@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import type { Sql } from 'postgres';
 import { registerMetricsRoutes } from '../src/routes/metrics.js';
 import { createApiMetrics } from '../src/observability/metrics.js';
@@ -101,7 +101,7 @@ test('RT-06.8: GET /internal/metrics on an instance with no in-memory snapshot s
 
   // A brand-new app + brand-new in-process ApiMetrics — this instance never
   // ran POST /internal/metrics/reconcile itself.
-  const app = Fastify();
+  const app = createTestFastify();
   const metrics = createApiMetrics();
   await registerMetricsRoutes(app, { metrics, serviceIdentity: identity, sql: mockSqlOverTable(table) });
 
@@ -113,7 +113,7 @@ test('RT-06.8: GET /internal/metrics on an instance with no in-memory snapshot s
 });
 
 test('RT-06.6/RT-06.8: a durable-read failure never fails the scrape — falls back to whatever this instance already holds', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   const metrics = createApiMetrics();
   const throwingSql = (() => { throw new Error('connection reset'); }) as unknown as Sql;
   await registerMetricsRoutes(app, { metrics, serviceIdentity: identity, sql: throwingSql });

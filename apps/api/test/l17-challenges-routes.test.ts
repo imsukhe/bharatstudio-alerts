@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerChallengeRoutes } from '../src/routes/challenges.js';
 import { CHALLENGE_FAILURE_COPY } from '../src/domain/challenge-store.js';
@@ -8,7 +8,7 @@ import type { SessionStore } from '../src/auth/session-store.js';
 import type { AccountStore } from '../src/domain/account-store.js';
 import type { Challenge, ChallengeStore, CreateChallengeResult, OverlayChallengeStore, TransitionChallengeResult } from '../src/domain/challenge-store.js';
 
-// registerChallengeRoutes is tested directly against a bare Fastify
+// registerChallengeRoutes is tested directly against a standalone `createTestFastify()`
 // instance rather than through buildApp/app.ts — this lane owns
 // routes/challenges.ts but deliberately does not edit app.ts (see the
 // task's ownership boundary); app.ts wiring is applied at review, exactly
@@ -41,7 +41,7 @@ function fakeChallenge(overrides: Partial<Challenge> = {}): Challenge {
 }
 
 async function buildTestApp(store?: Partial<ChallengeStore>, overlayChallenges?: OverlayChallengeStore) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerChallengeRoutes(app, sessions, store as ChallengeStore | undefined, account, overlayChallenges);
   return app;

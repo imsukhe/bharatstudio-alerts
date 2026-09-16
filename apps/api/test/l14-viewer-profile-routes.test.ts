@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { registerViewerRoutes } from '../src/routes/viewer.js';
 import type { ViewerSessionPrincipal, ViewerStore } from '../src/domain/viewer-store.js';
 import type { ViewerProfileStore } from '../src/domain/viewer-profile-store.js';
@@ -70,7 +70,7 @@ function fakeStore(profile?: ViewerProfileStore): ViewerStore {
 }
 
 async function buildApp(viewer: ViewerStore, platformIdentityVerifier?: ViewerPlatformIdentityVerifier) {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerViewerRoutes(app, { viewer, platformIdentityVerifier });
   return app;
 }
@@ -143,13 +143,25 @@ test('platform claim requires viewer auth, ignores browser identity fields, and 
   const noAuth = await app.inject({ method: 'POST', url: '/v1/viewer/platform-claims', payload: { provider: 'youtube' } });
   assert.equal(noAuth.statusCode, 401);
 
+  // CORRECTED 2026-09-16 (review: 2026-09-16-api-test-harness-validation-divergence).
+  // This block previously asserted `statusCode === 201` here: that a browser-
+  // injected `providerUserId` was ACCEPTED and silently dropped before the
+  // handler. That was the bare-`Fastify()` harness default
+  // (`removeAdditional: true`) talking, not this API. The route's body schema
+  // is `additionalProperties: false` and this app sets
+  // `removeAdditional: false` (src/fastify-ajv-options.ts), so the injected
+  // field is REJECTED outright with 400 and the handler never runs. The
+  // security property the test exists to prove is unchanged and in fact
+  // stricter — the attacker-controlled value still never reaches
+  // claimPlatformIdentity — but the status code and the mechanism were wrong.
   const injectedIdentity = await app.inject({
     method: 'POST', url: '/v1/viewer/platform-claims',
     headers: { authorization: `Bearer ${TOKEN_A}` },
     payload: { provider: 'youtube', providerUserId: 'UC_ATTACKER_CONTROLLED' },
   });
-  assert.equal(injectedIdentity.statusCode, 201);
-  assert.deepEqual(seenProviderIds, ['UC_SERVER_VERIFIED']);
+  assert.equal(injectedIdentity.statusCode, 400);
+  assert.equal(JSON.parse(injectedIdentity.payload).code, 'FST_ERR_VALIDATION');
+  assert.deepEqual(seenProviderIds, []);
 
   const claimed = await app.inject({
     method: 'POST',
@@ -159,7 +171,7 @@ test('platform claim requires viewer auth, ignores browser identity fields, and 
   });
   assert.equal(claimed.statusCode, 201);
   assert.equal(JSON.parse(claimed.payload).result, 'claimed');
-  assert.deepEqual(seenProviderIds, ['UC_SERVER_VERIFIED', 'UC_SERVER_VERIFIED']);
+  assert.deepEqual(seenProviderIds, ['UC_SERVER_VERIFIED']);
 });
 
 test('platform claim fails closed while no trusted L15 verifier is wired', async () => {

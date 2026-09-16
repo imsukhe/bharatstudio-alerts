@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerMasterCanvasRoutes } from '../src/routes/master-canvas.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -10,7 +10,7 @@ import type { MasterCanvasModule, MasterCanvasOverlayStore, MasterCanvasStore, U
 
 // PRF-02.8/PRF-02.9: the server-owned §30.3 module cap and the durable,
 // never-deleted configuration it gates. registerMasterCanvasRoutes is
-// tested directly against a bare Fastify instance, matching
+// tested directly against a standalone `createTestFastify()` instance, matching
 // l16-goals-routes.test.ts's own convention for a routes file that does
 // not itself own app.ts.
 
@@ -39,7 +39,7 @@ function fakeModule(overrides: Partial<MasterCanvasModule> = {}): MasterCanvasMo
 }
 
 async function buildTestApp(store?: Partial<MasterCanvasStore>, overlayModules?: MasterCanvasOverlayStore) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerMasterCanvasRoutes(app, sessions, store as MasterCanvasStore | undefined, account, overlayModules);
   return app;

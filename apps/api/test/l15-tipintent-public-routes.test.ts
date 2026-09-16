@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import rateLimit from '@fastify/rate-limit';
 import { registerPublicRoutes } from '../src/routes/public.js';
 import { generateTipIntentToken, hashTipIntentToken } from '../src/db/tipintent-store.js';
@@ -83,12 +83,12 @@ async function buildTestApp(opts: {
   paymentOrders?: PaymentOrderService;
   rateLimited?: boolean;
 }) {
-  // Mirrors app.ts's ajv config exactly: removeAdditional: false, so an
-  // unknown property in a request body is REJECTED (400), not silently
-  // stripped — this is what makes the tamper-resistance test below
-  // meaningful (fastify's own default otherwise strips unknown fields
-  // instead of rejecting them).
-  const app = Fastify({ ajv: { customOptions: { removeAdditional: false } } });
+  // `createTestFastify` imports app.ts's ajv config rather than restating
+  // it: removeAdditional: false, so an unknown property in a request body is
+  // REJECTED (400), not silently stripped — this is what makes the
+  // tamper-resistance test below meaningful (fastify's own default otherwise
+  // strips unknown fields instead of rejecting them).
+  const app = createTestFastify();
   if (opts.rateLimited) {
     // Deliberately NOT allow-listing 127.0.0.1 (unlike app.ts's test
     // config) so the per-route rate-limit config actually engages here.

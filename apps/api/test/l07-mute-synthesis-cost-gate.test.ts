@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { registerTtsRoutes } from '../src/routes/tts.js';
 import type { TtsStore } from '../src/domain/tts-store.js';
 import type { TtsQuotaMeter } from '../src/domain/tts-quota.js';
@@ -32,7 +32,7 @@ function storeWithEligibility(eligible: boolean): TtsStore {
 }
 
 async function buildTtsApp(store: TtsStore, service: TtsService, quotaMeter?: TtsQuotaMeter) {
-  const app = Fastify();
+  const app = createTestFastify();
   await registerTtsRoutes(app, identity, store, service, quotaMeter);
   return app;
 }

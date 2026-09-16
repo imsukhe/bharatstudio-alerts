@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerStickerRoutes } from '../src/routes/stickers.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -46,7 +46,7 @@ async function buildTestApp(
   publicCreatorPack?: Partial<PublicCreatorPackStore>,
   creatorPackSelections?: Partial<CreatorPackSelectionStore>,
 ) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerStickerRoutes(
     app, sessions, undefined, account, undefined, undefined,

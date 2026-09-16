@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerAdminRoutes } from '../src/routes/admin.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore } from '../src/domain/admin.js';
 import type { IngestFailureAdminStore, IngestFailureEntry } from '../src/domain/ingest-failure-admin.js';
 
-// This suite builds its own minimal Fastify instance (rather than
+// This suite builds its own minimal `createTestFastify()` instance (rather than
 // apps/api/src/app.ts's buildApp, as admin-routes.test.ts does) because
 // app.ts's `dependencies` bag has no `ingestFailureStore` field and this
 // pass may not add one there — see routes/admin.ts's header comment on
@@ -15,7 +15,7 @@ import type { IngestFailureAdminStore, IngestFailureEntry } from '../src/domain/
 // test either way; this only skips the unrelated cors/helmet/rate-limit
 // wiring buildApp also does.
 function buildTestApp(sessions: SessionStore, store: AdminStore | undefined, ingestFailureStore: IngestFailureAdminStore | undefined) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   return registerAdminRoutes(app, sessions, store, ingestFailureStore).then(() => app);
 }

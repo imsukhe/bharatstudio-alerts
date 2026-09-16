@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Fastify from 'fastify';
+import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerCompanionRoutes } from '../src/routes/companion.js';
 import type { SessionStore } from '../src/auth/session-store.js';
@@ -9,7 +9,7 @@ import type { CompanionEntitlementStore, CompanionGrantPolicy } from '../src/dom
 
 // L24 Companion separation (migration 0100, master plan 3.7): the /actions
 // route's Layer-1 gate, wired against the new CompanionEntitlementStore.
-// This suite uses a bare Fastify instance to isolate policy precedence. The
+// This suite uses a standalone `createTestFastify()` instance to isolate policy precedence. The
 // normal `buildApp`/production composition now wires the SQL entitlement
 // store; this test deliberately supplies a fake live policy and exercises
 // the same HTTP route handler.
@@ -72,7 +72,7 @@ function policy(overrides: Partial<CompanionGrantPolicy>): CompanionGrantPolicy 
 }
 
 async function buildTestApp(entitlementValues: Record<string, unknown> | null, entitlementStore: CompanionEntitlementStore | undefined) {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   await registerCompanionRoutes(app, fakeSessions(), fakeAlerts(entitlementValues), undefined, undefined, entitlementStore);
   await app.ready();
@@ -139,7 +139,7 @@ test('with no CompanionEntitlementStore wired, behavior is identical to before t
 
 // === Two-layer gate still intact: entitled but not active is a distinct failure ===
 test('entitled via the live policy but not activated still 409s, distinct from the 403 not-entitled case', async () => {
-  const app = Fastify();
+  const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
   const alerts: AlertStore = {
     ...fakeAlerts({}),

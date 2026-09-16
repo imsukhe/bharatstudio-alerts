@@ -18,6 +18,7 @@ import { createSqlReadiness } from './db/readiness.js';
 import { createSqlNotificationStore } from './db/notification-store.js';
 import { createNotificationTokenProtector } from './notifications/token-crypto.js';
 import { createSqlPaymentAccountStore } from './db/payment-account-store.js';
+import { createSqlInsightsStore } from './db/insights-store.js';
 import { createSqlPaymentLedgerStore } from './db/payment-ledger.js';
 import { createSqlAdminStore } from './db/admin-store.js';
 import { createSqlEmailOutboxStore } from './db/email-store.js';
@@ -116,6 +117,9 @@ const app = await buildApp(config, {
   notificationTokenProtector: sharedTokenProtector,
   paymentAccounts: sql ? createSqlPaymentAccountStore(sql) : undefined,
   paymentLedger: sql ? createSqlPaymentLedgerStore(derivedReadSql!) : undefined,
+  // OPS-08 / OPS-11 (derivable subset). Dashboard-facing derived reads --
+  // same RT-10/RT-11 pool as paymentLedger, not the main request pool.
+  insights: sql ? createSqlInsightsStore(derivedReadSql!) : undefined,
   admin: sql ? createSqlAdminStore(sql) : undefined,
   emailOutbox: sql ? createSqlEmailOutboxStore(sql) : undefined,
   emailSender: config.resendApiKey && config.resendFromAddress

@@ -79,3 +79,29 @@ test('renderPrometheus never emits a value that looks like a UUID/payment identi
   const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   assert.equal(uuidPattern.test(output), false, 'metrics output must never contain a UUID-shaped identifier');
 });
+
+// OPS-08/OPS-11: durable creator records (activation state, revenue KPIs)
+// must never reach Prometheus -- §12.6 makes them a durable, creator-
+// reachable record with no retention policy an ops metric would carry, and
+// they would need identifier-shaped labels (a channel id) to mean anything
+// as a metric, which RT-06/§12.4 already forbid. This is a structural
+// assertion, not a render-and-grep one: ApiMetrics exposes a closed set of
+// methods, and none of them is (or could plausibly become, by name) a
+// revenue or activation surface. If OPS-08/OPS-11 numbers were ever wired
+// into this type, this test names the offending method instead of relying
+// on a human to notice a new Observe call site.
+test('ApiMetrics exposes no revenue or activation method -- OPS-08/OPS-11 numbers never reach Prometheus', () => {
+  const metrics = createApiMetrics();
+  const methodNames = Object.keys(metrics);
+  const forbiddenSubstrings = ['revenue', 'activation', 'kpi', 'tip', 'supporter', 'payout', 'average', 'repeat'];
+  for (const name of methodNames) {
+    const lower = name.toLowerCase();
+    for (const forbidden of forbiddenSubstrings) {
+      assert.equal(
+        lower.includes(forbidden),
+        false,
+        `ApiMetrics.${name} looks revenue/activation-shaped (matches "${forbidden}") -- OPS-08/OPS-11 durable creator records must never reach Prometheus (§12.6, §12.7)`,
+      );
+    }
+  }
+});

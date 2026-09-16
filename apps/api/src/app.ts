@@ -87,6 +87,8 @@ import { registerBrandingRoutes } from './routes/branding.js';
 import { registerOverlayLottieRoutes } from './routes/overlay-lottie.js';
 import type { AssistStore } from './domain/assist-types.js';
 import { registerAssistRoutes } from './routes/assist.js';
+import type { InsightsStore } from './domain/insights-store.js';
+import { registerInsightsRoutes } from './routes/insights.js';
 
 export type AppDependencies = {
   publicChannels?: PublicChannelRepository;
@@ -173,6 +175,9 @@ export type AppDependencies = {
   overlayBranding?: OverlayBrandingStore;
   companionPairing?: CompanionPairingStore;
   assist?: AssistStore;
+  // OPS-08 / OPS-11 (derivable subset). Both pure derived reads (§19.6) --
+  // see domain/insights-store.ts.
+  insights?: InsightsStore;
 };
 
 export async function buildApp(
@@ -326,6 +331,7 @@ export async function buildApp(
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account, dependencies.companionFeatures, dependencies.companionEntitlement);
   await registerCompanionPairingRoutes(app, dependencies.sessions, dependencies.companionPairing);
   await registerAssistRoutes(app, dependencies.sessions, dependencies.assist, dependencies.account);
+  await registerInsightsRoutes(app, dependencies.sessions, dependencies.insights);
   await registerMaintenanceRoutes(app, dependencies.maintenance, dependencies.serviceIdentity);
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });

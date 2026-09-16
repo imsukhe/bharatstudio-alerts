@@ -907,6 +907,66 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/channels/{channelId}/activation-state:
+    get:
+      tags: [Creator]
+      operationId: getChannelActivationState
+      summary: OPS-08 activation instrumentation (payout + overlay/OBS + first alert)
+      description: >-
+        Three activation milestones derived live from durable records --
+        never a stored counter (§19.6). Readable by any active channel
+        member; carries no financial amount.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Derived activation state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivationState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
+  /v1/channels/{channelId}/revenue-kpis:
+    get:
+      tags: [Creator]
+      operationId: getChannelRevenueKpis
+      summary: OPS-11 revenue KPIs (derivable subset only)
+      description: >-
+        Average tip, repeat-supporter rate, challenge revenue and vote
+        revenue, derived live from payments minus refunds and existing
+        relations (§19.6) -- never a stored counter. Owner/admin only, per
+        the role-scoped financial-visibility rule; a caller without that
+        role receives the same 404 as an unknown channel.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: windowStart
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: windowEnd
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Derived revenue KPIs for the requested window (or all time).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueKpis'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
   /v1/channels/{channelId}/billing/subscription:
     post:
       tags: [Billing]
@@ -2639,6 +2699,34 @@ components:
         source: { type: string, enum: [individual_plan] }
         entitlementVersion: { type: integer, minimum: 1 }
         values: { type: object, additionalProperties: true }
+    ActivationState:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, payoutConnected, payoutConnectedAt, overlayConnected, overlayConnectedAt, firstAlertFired, firstAlertFiredAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        payoutConnected: { type: boolean }
+        payoutConnectedAt: { type: [string, 'null'], format: date-time }
+        overlayConnected: { type: boolean }
+        overlayConnectedAt: { type: [string, 'null'], format: date-time }
+        firstAlertFired: { type: boolean }
+        firstAlertFiredAt: { type: [string, 'null'], format: date-time }
+    RevenueKpis:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, windowStart, windowEnd, averageNetTipPaise, netTipCount, totalNetTipPaise, supporterCount, repeatSupporterCount, repeatSupporterRate, challengeRevenuePaise, voteRevenuePaise]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        windowStart: { type: [string, 'null'], format: date-time }
+        windowEnd: { type: [string, 'null'], format: date-time }
+        averageNetTipPaise: { type: string, description: Decimal string (paise). }
+        netTipCount: { type: string, description: Integer string. }
+        totalNetTipPaise: { type: string, description: Integer string (paise). }
+        supporterCount: { type: string, description: Integer string. }
+        repeatSupporterCount: { type: string, description: Integer string. }
+        repeatSupporterRate: { type: string, description: Decimal string, 0-1. }
+        challengeRevenuePaise: { type: string, description: Integer string (paise). }
+        voteRevenuePaise: { type: string, description: Integer string (paise). }
     OverlaySession:
       type: object
       additionalProperties: false

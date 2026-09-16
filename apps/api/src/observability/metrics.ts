@@ -45,6 +45,11 @@ export type ApiMetrics = {
   recordOverlayNotification(outcome: 'routed' | 'unroutable'): void;
   recordOverlayAdmissionRejection(): void;
   recordOverlayReplay(outcome: 'shared' | 'leader'): void;
+  // RT-10 §3.4 / RT-11 §3.3 counters. Outcome labels only, same bounded
+  // shape as every counter above — never a route, channel, overlay or
+  // payment identifier.
+  recordDerivedReadAdmission(outcome: 'admitted' | 'shed'): void;
+  recordDerivedReadTimeout(): void;
   // Reconciliation-time gauges, refreshed wholesale by the periodic check.
   setReconciliationSnapshot(snapshot: ReconciliationSnapshot): void;
   renderPrometheus(): string;
@@ -222,6 +227,8 @@ export function createApiMetrics(): ApiMetrics {
   const overlayNotifications = { routed: 0, unroutable: 0 };
   const overlayReplay = { shared: 0, leader: 0 };
   let overlayAdmissionRejections = 0;
+  const derivedReadAdmission = { admitted: 0, shed: 0 };
+  let derivedReadTimeouts = 0;
   let reconciliation: ReconciliationSnapshot | undefined;
   const readDuration = createHistogram(READ_DURATION_BUCKETS_MS);
   const tipOrderDuration = createHistogram(TIP_ORDER_DURATION_BUCKETS_MS);
@@ -259,6 +266,12 @@ export function createApiMetrics(): ApiMetrics {
     },
     recordOverlayReplay(outcome) {
       overlayReplay[outcome] += 1;
+    },
+    recordDerivedReadAdmission(outcome) {
+      derivedReadAdmission[outcome] += 1;
+    },
+    recordDerivedReadTimeout() {
+      derivedReadTimeouts += 1;
     },
     setReconciliationSnapshot(snapshot) {
       reconciliation = snapshot;
@@ -301,6 +314,15 @@ export function createApiMetrics(): ApiMetrics {
       lines.push('# TYPE bsa_overlay_replay_total counter');
       lines.push(`bsa_overlay_replay_total{outcome="shared"} ${overlayReplay.shared}`);
       lines.push(`bsa_overlay_replay_total{outcome="leader"} ${overlayReplay.leader}`);
+
+      lines.push('# HELP bsa_derived_read_admission_total Widget/dashboard/analytics read admissions by outcome — shed means a configured concurrency ceiling was at capacity (RT-10).');
+      lines.push('# TYPE bsa_derived_read_admission_total counter');
+      lines.push(`bsa_derived_read_admission_total{outcome="admitted"} ${derivedReadAdmission.admitted}`);
+      lines.push(`bsa_derived_read_admission_total{outcome="shed"} ${derivedReadAdmission.shed}`);
+
+      lines.push('# HELP bsa_derived_read_timeout_total Widget/dashboard/analytics reads cancelled by a configured statement_timeout (RT-11). Never applied to a payment write, webhook commit or migration.');
+      lines.push('# TYPE bsa_derived_read_timeout_total counter');
+      lines.push(`bsa_derived_read_timeout_total ${derivedReadTimeouts}`);
 
       // RT-06: bucketed histograms for the two §19.4-budgeted paths this
       // process observes, plus a bucket-interpolated p95/p99 read-out. The

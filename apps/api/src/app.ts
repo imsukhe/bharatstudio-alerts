@@ -39,6 +39,8 @@ import { registerAccountRoutes } from './routes/account.js';
 import { registerMaintenanceRoutes } from './routes/maintenance.js';
 import { createApiMetrics, type ApiMetrics } from './observability/metrics.js';
 import { logSafeError } from './observability/safe-log.js';
+import { classifyReadPriority } from './domain/read-priority.js';
+import { createReadBackpressureGovernor, type ReadBackpressureGovernor } from './domain/read-backpressure.js';
 import { channelConfigSchema } from './domain/channel-config-schema.js';
 import type { PublicAbuseGuard } from './domain/public-abuse.js';
 import type { TtsService } from './tts/provider.js';
@@ -101,6 +103,9 @@ export type AppDependencies = {
   maintenance?: MaintenanceStore;
   serviceIdentity?: ServiceIdentityVerifier;
   metrics?: ApiMetrics;
+  // RT-10. Overridable for tests; defaults to one built from `config`
+  // (`derivedReadMaxConcurrent`, unset by default — see read-backpressure.ts).
+  readBackpressureGovernor?: ReadBackpressureGovernor;
   readiness?: () => Promise<boolean>;
   notifications?: NotificationStore;
   notificationTokenProtector?: NotificationTokenProtector;
@@ -151,6 +156,11 @@ export type AppDependencies = {
   // L09 reconciliation queries read across payments/refunds/outbox, so the
   // metrics route needs the raw client rather than a narrow store.
   sql?: Sql;
+  // RT-10/RT-11. The `Sql` handle used for widget/dashboard/analytics reads
+  // (`db/derived-read-pool.ts`'s `createDerivedReadSql`). Defaults to `sql`
+  // when not given, so an omitted value is the RT-10/RT-11 kill switch —
+  // identical behaviour to today, on the same pool, with no timeout.
+  derivedReadSql?: Sql;
   overlayAudio?: OverlayAudioStore;
   referrals?: ReferralStore;
   branding?: BrandingStore;
@@ -177,6 +187,11 @@ export async function buildApp(
       : { logger: { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.url', 'req.raw.url'] } }),
   });
   const metrics = dependencies.metrics ?? createApiMetrics();
+  const readBackpressureGovernor = dependencies.readBackpressureGovernor
+    ?? createReadBackpressureGovernor(
+      { maxConcurrentDerivedReads: config.derivedReadMaxConcurrent },
+      (outcome) => metrics.recordDerivedReadAdmission(outcome),
+    );
   app.addSchema(channelConfigSchema);
 
   await app.register(helmet, {
@@ -199,8 +214,34 @@ export async function buildApp(
     allowList: config.nodeEnv === 'test' ? ['127.0.0.1'] : [],
   });
 
+  // RT-10 (§19.0, §31.18.0): admission control for widget/dashboard/analytics
+  // reads, first in the chain so a shed request is rejected before auth
+  // state, body parsing or any handler work runs. `classifyReadPriority`
+  // (domain/read-priority.ts) is the single chokepoint RT-10 and RT-11
+  // share; a request outside the `derived_read` class (every write, every
+  // exempt durable-path read) is untouched here — admission is a no-op, not
+  // merely "usually admitted" (RT-10.4). Released in `onResponse` below,
+  // via a WeakMap keyed by request rather than mutating the request object.
+  const derivedReadReleases = new WeakMap<object, () => void>();
+  app.addHook('onRequest', async (request, reply) => {
+    const route = request.routeOptions.url ?? 'unknown';
+    if (classifyReadPriority(request.method, route) !== 'derived_read') return;
+    const admission = readBackpressureGovernor.tryAdmit();
+    if (!admission.admitted) {
+      reply.header('retry-after', '1');
+      return reply.code(503).send({
+        schemaVersion: 'v1',
+        errorCode: 'derived_read_shed',
+        message: 'Too many widget, dashboard or analytics reads in flight. Retry shortly.',
+        traceId: request.id,
+        retryable: true,
+      });
+    }
+    derivedReadReleases.set(request, admission.release);
+  });
   app.addHook('onRequest', async (request) => installAuthState(request));
   app.addHook('onResponse', async (request, reply) => {
+    derivedReadReleases.get(request)?.();
     metrics.observe(request.method, request.routeOptions.url ?? 'unknown', reply.statusCode, reply.elapsedTime);
   });
 
@@ -287,7 +328,7 @@ export async function buildApp(
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);
   await registerStickerRoutes(app, dependencies.sessions, dependencies.stickers, dependencies.account, dependencies.publicStickers, dependencies.stickerSelections, dependencies.creatorPack, dependencies.publicCreatorPack, dependencies.creatorPackSelections);
-  await registerInteractionRoutes(app, dependencies.sessions, dependencies.account, dependencies.interactionDefinitions, dependencies.interactionVotes, dependencies.interactionPublicVotes, dependencies.interactionHype, dependencies.interactionWidgets, dependencies.interactionLeaderboard, dependencies.interactionOverlay, dependencies.paidVotes, dependencies.paidVoteOverlay, dependencies.sql);
+  await registerInteractionRoutes(app, dependencies.sessions, dependencies.account, dependencies.interactionDefinitions, dependencies.interactionVotes, dependencies.interactionPublicVotes, dependencies.interactionHype, dependencies.interactionWidgets, dependencies.interactionLeaderboard, dependencies.interactionOverlay, dependencies.paidVotes, dependencies.paidVoteOverlay, dependencies.derivedReadSql ?? dependencies.sql);
   await registerYoutubeRoutes(app, dependencies.sessions, dependencies.youtubeConnections, dependencies.account, dependencies.youtubeOAuthClient);
   await registerOverlayAudioRoutes(app, dependencies.overlayAudio);
   await registerOverlayLottieRoutes(app, dependencies.overlayBranding);

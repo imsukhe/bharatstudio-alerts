@@ -55,6 +55,7 @@ import { createSqlAssistStore } from './db/assist-sql-store.js';
 import { createSqlOverlayAudioStore } from './db/overlay-audio-store.js';
 import { createSqlTtsCache } from './db/tts-cache.js';
 import { createSarvamTtsProvider, createTtsService } from './tts/provider.js';
+import { createDerivedReadSql } from './db/derived-read-pool.js';
 
 const config = loadConfig();
 const sql = config.databaseUrlApp ? createSqlClient(config.databaseUrlApp) : undefined;
@@ -76,6 +77,18 @@ const youtubeOAuthConfig = loadYoutubeOAuthConfig();
 // counters (routed vs unroutable) and buildApp's request/replay/admission
 // counters are the SAME instance rather than two independent counter sets.
 const metrics = createApiMetrics();
+// RT-10/RT-11 (§19.0, §31.18.0): the derived-read `Sql` handle for
+// widget/dashboard/analytics reads only — see db/derived-read-pool.ts.
+// Unset config (both fields undefined) makes this literally `sql`, the same
+// instance every other store already uses; that is the kill switch.
+const derivedReadSql = sql
+  ? createDerivedReadSql(
+    sql,
+    config.databaseUrlApp,
+    { poolMax: config.derivedReadPoolMax, statementTimeoutMs: config.derivedReadStatementTimeoutMs },
+    () => metrics.recordDerivedReadTimeout(),
+  )
+  : undefined;
 const app = await buildApp(config, {
   publicChannels: sql ? createPublicChannelRepository(sql) : undefined,
   google: config.googleClientId ? createGoogleIdentityVerifier(config.googleClientId) : undefined,
@@ -101,7 +114,7 @@ const app = await buildApp(config, {
   notifications: sql ? createSqlNotificationStore(sql) : undefined,
   notificationTokenProtector: sharedTokenProtector,
   paymentAccounts: sql ? createSqlPaymentAccountStore(sql) : undefined,
-  paymentLedger: sql ? createSqlPaymentLedgerStore(sql) : undefined,
+  paymentLedger: sql ? createSqlPaymentLedgerStore(derivedReadSql!) : undefined,
   admin: sql ? createSqlAdminStore(sql) : undefined,
   emailOutbox: sql ? createSqlEmailOutboxStore(sql) : undefined,
   emailSender: config.resendApiKey && config.resendFromAddress
@@ -121,22 +134,22 @@ const app = await buildApp(config, {
   companionEntitlement: sql ? createSqlCompanionEntitlementStore(sql) : undefined,
   seats: sql ? createSqlSeatStore(sql) : undefined,
   goals: sql ? createSqlGoalStore(sql) : undefined,
-  overlayGoals: sql ? createSqlGoalOverlayStore(sql) : undefined,
+  overlayGoals: sql ? createSqlGoalOverlayStore(derivedReadSql!) : undefined,
   reputation: sql ? createSqlReputationStore(sql) : undefined,
   capabilitySnapshots: sql ? createSqlProviderCapabilitySnapshotStore(sql) : undefined,
   challenges: sql ? createSqlChallengeStore(sql) : undefined,
-  overlayChallenges: sql ? createSqlChallengeOverlayStore(sql) : undefined,
+  overlayChallenges: sql ? createSqlChallengeOverlayStore(derivedReadSql!) : undefined,
   interactionDefinitions: sql ? createSqlInteractionDefinitionStore(sql) : undefined,
   interactionVotes: sql ? createSqlSupportVoteStore(sql) : undefined,
   interactionPublicVotes: sql ? createSqlPublicVoteStore(sql) : undefined,
   interactionHype: sql ? createSqlHypeModeStore(sql) : undefined,
   interactionWidgets: sql ? createSqlWidgetConfigStore(sql) : undefined,
   interactionLeaderboard: sql ? createSqlLeaderboardStore(sql) : undefined,
-  interactionOverlay: sql ? createSqlInteractionOverlayStore(sql) : undefined,
+  interactionOverlay: sql ? createSqlInteractionOverlayStore(derivedReadSql!) : undefined,
   votePaymentTags: sql ? createSqlVotePaymentTagStore(sql) : undefined,
   publicPaidVotes: sql ? createSqlPublicPaidVoteStore(sql) : undefined,
   paidVotes: sql ? createSqlPaidSupportVoteStore(sql) : undefined,
-  paidVoteOverlay: sql ? createSqlPaidVoteOverlayStore(sql) : undefined,
+  paidVoteOverlay: sql ? createSqlPaidVoteOverlayStore(derivedReadSql!) : undefined,
   templates: sql ? createSqlTemplateCatalogueStore(sql) : undefined,
   stickers: sql ? createSqlStickerCatalogueStore(sql) : undefined,
   publicStickers: sql ? createSqlPublicStickerCatalogueStore(sql) : undefined,
@@ -148,6 +161,7 @@ const app = await buildApp(config, {
   staffCreatorPackReview: sql ? createSqlStaffCreatorPackReviewStore(sql) : undefined,
   assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,
+  derivedReadSql,
   paymentMethodUpdates: sql && config.paymentServiceOrigin && config.paymentServiceAudience
     ? createBillingPaymentMethodService(sql, config.paymentServiceOrigin, config.paymentServiceAudience, config.nodeEnv)
     : undefined,

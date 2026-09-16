@@ -18,6 +18,18 @@ export type RuntimeConfig = {
   // codebase invents; set only by deployment configuration.
   overlayMaxInstanceSubscribers?: number;
   overlayMaxChannelSubscribers?: number;
+  // RT-10 §3.1 (FULL-PRODUCT-DEFINITION.md §19.0, §31.18.0). Unset means no
+  // admission ceiling on widget/dashboard/analytics reads — every derived
+  // read is admitted exactly as today, bounded only by the platform's own
+  // Cloud Run request-concurrency cap. Never a value this codebase invents.
+  derivedReadMaxConcurrent?: number;
+  // RT-10 §3.1. Unset means widget/dashboard/analytics reads keep sharing
+  // the main pool — no isolated pool is created.
+  derivedReadPoolMax?: number;
+  // RT-11 §3.1. Unset means no statement_timeout — today's behaviour,
+  // unchanged. When set, validated against §19.4's own API-read budget
+  // (p99 < 200ms) so a misconfiguration cannot kill compliant queries.
+  derivedReadStatementTimeoutMs?: number;
   notificationTokenEncryptionKey?: string;
   publicPaymentTurnstileRequired?: boolean;
   publicPaymentTurnstileSecret?: string;
@@ -165,6 +177,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   }
   const overlayMaxInstanceSubscribers = optionalPositiveInt('OVERLAY_MAX_INSTANCE_SUBSCRIBERS');
   const overlayMaxChannelSubscribers = optionalPositiveInt('OVERLAY_MAX_CHANNEL_SUBSCRIBERS');
+  const derivedReadMaxConcurrent = optionalPositiveInt('WIDGET_ANALYTICS_MAX_CONCURRENT_READS');
+  const derivedReadPoolMax = optionalPositiveInt('WIDGET_ANALYTICS_POOL_MAX');
+  const derivedReadStatementTimeoutMs = optionalPositiveInt('WIDGET_ANALYTICS_STATEMENT_TIMEOUT_MS');
+  // RT-11.4: a configured timeout below the path's own §19.4 budget would
+  // cancel a query that is still within budget — reject it at startup
+  // rather than silently degrading correctness for compliant reads. 200ms
+  // is not invented here; it is §19.4's own stated "API p99 < 200ms for
+  // reads" boundary, the same number `observability/metrics.ts`'s
+  // `READ_DURATION_BUCKETS_MS` already uses as its RT-06 bucket boundary.
+  const READ_PATH_BUDGET_MS = 200;
+  if (derivedReadStatementTimeoutMs !== undefined && derivedReadStatementTimeoutMs < READ_PATH_BUDGET_MS) {
+    throw new Error(`WIDGET_ANALYTICS_STATEMENT_TIMEOUT_MS must be at least ${READ_PATH_BUDGET_MS} (FULL-PRODUCT-DEFINITION.md §19.4 API read p99 budget) when set`);
+  }
 
   const sarvamApiKey = env.SARVAM_API_KEY;
   const sarvamTtsEndpoint = env.SARVAM_TTS_ENDPOINT;
@@ -196,6 +221,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     databaseUrlDirect,
     overlayMaxInstanceSubscribers,
     overlayMaxChannelSubscribers,
+    derivedReadMaxConcurrent,
+    derivedReadPoolMax,
+    derivedReadStatementTimeoutMs,
     googleClientId,
     paymentEnvironment,
     paymentServiceOrigin,

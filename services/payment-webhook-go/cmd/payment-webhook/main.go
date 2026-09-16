@@ -115,6 +115,19 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure worker pump: %w", err)
 	}
+	// One coalescer for the one dispatcher this process wakes up. Sharing it
+	// across every webhook request is the whole point: a burst collapses into
+	// a bounded number of wake-ups instead of one goroutine per webhook.
+	// Closed on every return path below, which for the graceful path is after
+	// server.Shutdown has drained in-flight requests, so no accepted webhook
+	// is still owed a wake-up it will not get. A wake-up already in flight
+	// finishes on WorkerPumpClient's own timeout; one merely owed is abandoned.
+	// Either way nothing is lost: the durable commit already happened and the
+	// scheduled outbox-recovery sweep re-enqueues whatever a missed wake-up
+	// delayed. Close is idempotent and writes to no channel, so it can never
+	// panic or write after close against a racing request.
+	wakeups := ingress.NewWakeupCoalescer()
+	defer wakeups.Close()
 	checkoutService := checkout.NewService(store, orders)
 	qrService := qr.NewService(store, store, orders)
 	subscriptionCatalog := subscription.EnvironmentCatalog(environment)
@@ -148,7 +161,7 @@ func run() error {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/webhooks/razorpay", ingress.Handler{Secret: webhookSecret, Store: store, Pumper: workerPumper, Metrics: metrics, Logger: logger})
+	mux.Handle("/v1/webhooks/razorpay", ingress.Handler{Secret: webhookSecret, Store: store, Pumper: workerPumper, Metrics: metrics, Logger: logger, Wakeups: wakeups})
 	mux.Handle("/internal/v1/tips/orders", checkout.HTTPHandler{Authorizer: privateAuthorizer, Service: checkoutService, Environment: environment, Metrics: metrics})
 	mux.Handle("/internal/v1/tips/qr", qr.HTTPHandler{Authorizer: privateAuthorizer, Service: qrService, Environment: environment, Metrics: metrics})
 	mux.Handle("/internal/v1/subscriptions", subscription.HTTPHandler{Authorizer: privateAuthorizer, Service: subscriptionService, Environment: environment})

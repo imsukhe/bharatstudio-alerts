@@ -137,18 +137,18 @@ func (p *blockingPumper) Pump(context.Context) error {
 	return nil
 }
 
-// countingPumper records how many wake-ups ran and lets a test block until
-// every expected wake-up in a burst has completed, without any wall-clock
-// guess at how long a burst of goroutines takes to drain.
+// countingPumper records how many wake-ups ran. It no longer counts down a
+// WaitGroup sized to the number of webhooks: since the 2026-09-16 coalescing
+// correction a burst of N webhooks deliberately produces fewer than N
+// wake-ups, so "wait for N wake-ups" would never complete. Tests wait for the
+// coalescer to go idle instead.
 type countingPumper struct {
-	wg    sync.WaitGroup
 	mu    sync.Mutex
 	calls int
 	err   error
 }
 
 func (p *countingPumper) Pump(context.Context) error {
-	defer p.wg.Done()
 	p.mu.Lock()
 	p.calls++
 	p.mu.Unlock()
@@ -244,7 +244,7 @@ func TestHandlerPersistsBeforeAcknowledging(t *testing.T) {
 	store := &fakeStore{}
 	pumper := newFakePumper(nil)
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{"event":"payment.captured"}`, "secret", "event_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{"event":"payment.captured"}`, "secret", "event_1"))
 
 	if recorder.Code != http.StatusOK || store.calls != 1 {
 		t.Fatalf("status=%d store_calls=%d", recorder.Code, store.calls)
@@ -275,7 +275,7 @@ func TestWebhookToWorkerPumpHTTPBoundaryPreservesTraceAndIsNeverGatedByDispatch(
 	}
 	store := &fakeStore{}
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_http_boundary"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_http_boundary"))
 
 	if recorder.Code != http.StatusOK || store.calls != 1 {
 		t.Fatalf("status=%d store_calls=%d", recorder.Code, store.calls)
@@ -306,7 +306,7 @@ func TestWebhookToWorkerPumpHTTPFailureStillAcknowledgesTheCommit(t *testing.T) 
 		t.Fatalf("configure worker pump: %v", err)
 	}
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: &fakeStore{}, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_http_failure"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: &fakeStore{}, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_http_failure"))
 
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "{\"status\":\"accepted\"}\n" {
 		t.Fatalf("status=%d body=%q", recorder.Code, recorder.Body.String())
@@ -321,7 +321,7 @@ func TestWebhookToWorkerPumpHTTPFailureStillAcknowledgesTheCommit(t *testing.T) 
 func TestHandlerFailsClosedWhenWorkerPumpIsMissing(t *testing.T) {
 	store := &fakeStore{}
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store}.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store}.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
 
 	if recorder.Code != http.StatusServiceUnavailable || store.calls != 0 {
 		t.Fatalf("status=%d store_calls=%d", recorder.Code, store.calls)
@@ -332,7 +332,7 @@ func TestHandlerReturnsDuplicateAfterDurableDeduplication(t *testing.T) {
 	store := &fakeStore{duplicate: true}
 	pumper := newFakePumper(nil)
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
 
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "{\"status\":\"duplicate\"}\n" {
 		t.Fatalf("status=%d body=%q", recorder.Code, recorder.Body.String())
@@ -353,7 +353,7 @@ func TestHandlerAcknowledgesEvenWhenDeliveryWakeupFails(t *testing.T) {
 	pumper := newFakePumper(errors.New("worker unavailable"))
 	logOutput := &syncBuffer{}
 	metrics := observability.New()
-	handler := Handler{Secret: "secret", Store: store, Pumper: pumper, Metrics: metrics, Logger: observability.NewStructuredLogger(logOutput)}
+	handler := Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper, Metrics: metrics, Logger: observability.NewStructuredLogger(logOutput)}
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
 
@@ -395,14 +395,14 @@ func TestHandlerAcknowledgesRepeatedDeliveryRegardlessOfEitherWakeupOutcome(t *t
 	pumper := newRetryPumper([]error{errors.New("worker unavailable"), nil})
 
 	first := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(first, request(`{}`, "secret", "event_retry_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(first, request(`{}`, "secret", "event_retry_1"))
 	if first.Code != http.StatusOK || first.Body.String() != "{\"status\":\"accepted\"}\n" {
 		t.Fatalf("first status=%d body=%q", first.Code, first.Body.String())
 	}
 	pumper.waitForCall(t)
 
 	second := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(second, request(`{}`, "secret", "event_retry_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(second, request(`{}`, "secret", "event_retry_1"))
 	if second.Code != http.StatusOK || second.Body.String() != "{\"status\":\"duplicate\"}\n" {
 		t.Fatalf("second status=%d body=%q", second.Code, second.Body.String())
 	}
@@ -422,7 +422,7 @@ func TestWakeupIsNeverAwaitedOnTheAcknowledgementPath(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	handlerDone := make(chan struct{})
 	go func() {
-		Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_never_awaited"))
+		Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request(`{}`, "secret", "event_never_awaited"))
 		close(handlerDone)
 	}()
 
@@ -448,15 +448,19 @@ func TestWakeupIsNeverAwaitedOnTheAcknowledgementPath(t *testing.T) {
 }
 
 // RT-04.10: a burst of webhooks must not leak a goroutine per request. Every
-// fire-and-forget wake-up is bounded (WorkerPumpClient's own timeout in
-// production; the fake pumper returns immediately here) and this proves the
-// goroutine count returns to baseline once every wake-up has run.
+// wake-up is bounded (WorkerPumpClient's own timeout in production; the fake
+// pumper returns immediately here) and this proves the goroutine count returns
+// to baseline once the burst has drained.
+//
+// Updated for the 2026-09-16 coalescing correction. It previously asserted
+// that a burst of n webhooks produced exactly n wake-ups; that was the defect,
+// and the assertion now reads the other way. Every webhook is still persisted
+// -- coalescing collapses the hint, never the commit.
 func TestBurstOfWebhooksDoesNotLeakWakeupGoroutines(t *testing.T) {
 	const n = 200
 	pumper := &countingPumper{}
-	pumper.wg.Add(n)
 	store := &concurrentStore{}
-	handler := Handler{Secret: "secret", Store: store, Pumper: pumper}
+	handler := Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}
 
 	before := runtime.NumGoroutine()
 	var requests sync.WaitGroup
@@ -470,16 +474,7 @@ func TestBurstOfWebhooksDoesNotLeakWakeupGoroutines(t *testing.T) {
 	}
 	requests.Wait()
 
-	completed := make(chan struct{})
-	go func() {
-		pumper.wg.Wait()
-		close(completed)
-	}()
-	select {
-	case <-completed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("not every burst wake-up completed -- suspected stuck goroutine")
-	}
+	waitForCondition(t, 5*time.Second, handler.Wakeups.idle)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -492,8 +487,8 @@ func TestBurstOfWebhooksDoesNotLeakWakeupGoroutines(t *testing.T) {
 	if after := runtime.NumGoroutine(); after > before+4 {
 		t.Fatalf("goroutines grew from %d to %d after a burst of %d webhooks -- suspected leak", before, after, n)
 	}
-	if pumper.callCount() != n {
-		t.Fatalf("wakeup calls=%d, want %d", pumper.callCount(), n)
+	if calls := pumper.callCount(); calls < 1 || calls >= n {
+		t.Fatalf("wakeup calls=%d, want at least 1 and fewer than %d (coalesced)", calls, n)
 	}
 	if calls := atomic.LoadInt64(&store.calls); calls != n {
 		t.Fatalf("store_calls=%d, want %d", calls, n)
@@ -506,7 +501,7 @@ func TestHandlerDoesNotCallStoreForInvalidSignature(t *testing.T) {
 	req := request(`{}`, "secret", "event_1")
 	req.Header.Set("X-Razorpay-Signature", "bad")
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, req)
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusUnauthorized || store.calls != 0 {
 		t.Fatalf("status=%d store_calls=%d", recorder.Code, store.calls)
@@ -518,7 +513,7 @@ func TestHandlerDoesNotCallStoreForInvalidSignature(t *testing.T) {
 func TestHandlerRequestsProviderRetryWhenStoreFails(t *testing.T) {
 	store := &fakeStore{err: errors.New("db down")}
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store}.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store}.ServeHTTP(recorder, request(`{}`, "secret", "event_1"))
 
 	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Retry-After") != "5" {
 		t.Fatalf("status=%d retry-after=%q", recorder.Code, recorder.Header().Get("Retry-After"))
@@ -531,7 +526,7 @@ func TestHandlerRejectsPermanentlyInvalidVerifiedPayloadWithoutWakingWorker(t *t
 	store := &fakeStore{err: ErrInvalidWebhookPayload}
 	pumper := newFakePumper(nil)
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request("{}", "secret", "event_invalid_payload"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request("{}", "secret", "event_invalid_payload"))
 
 	if recorder.Code != http.StatusBadRequest || strings.TrimSpace(recorder.Body.String()) != `{"error":"invalid_webhook_payload"}` {
 		t.Fatalf("status=%d body=%q", recorder.Code, recorder.Body.String())
@@ -545,7 +540,7 @@ func TestHandlerAcknowledgesDurableQuarantineWithoutWakingWorker(t *testing.T) {
 	store := &fakeStore{err: ErrQuarantinedWebhook}
 	pumper := newFakePumper(nil)
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request("{}", "secret", "event_quarantined"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(recorder, request("{}", "secret", "event_quarantined"))
 
 	if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != `{"status":"quarantined"}` {
 		t.Fatalf("status=%d body=%q", recorder.Code, recorder.Body.String())
@@ -559,7 +554,7 @@ func TestHandlerRejectsOversizedBody(t *testing.T) {
 	store := &fakeStore{}
 	pumper := newFakePumper(nil)
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper, MaxBodyBytes: 2}.ServeHTTP(recorder, request(`{"x":1}`, "secret", "event_1"))
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper, MaxBodyBytes: 2}.ServeHTTP(recorder, request(`{"x":1}`, "secret", "event_1"))
 
 	if recorder.Code != http.StatusRequestEntityTooLarge || store.calls != 0 {
 		t.Fatalf("status=%d store_calls=%d", recorder.Code, store.calls)

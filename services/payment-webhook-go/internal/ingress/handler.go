@@ -39,6 +39,12 @@ type Handler struct {
 	MaxBodyBytes int64
 	Metrics      *observability.Metrics
 	Logger       *observability.StructuredLogger
+	// Wakeups collapses a burst of post-commit wake-ups into a bounded number
+	// of actual wake-up calls (see wakeup_coalescer.go). It must be shared
+	// across every request the handler serves, so it is a pointer: Handler is
+	// used as a value and copied into the mux. cmd/payment-webhook/main.go is
+	// the only production construction site and always sets it.
+	Wakeups *WakeupCoalescer
 }
 
 func (h Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -131,26 +137,44 @@ func (h Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 
 // wakeUpDispatcher fires the post-commit dispatcher wake-up without
 // blocking, or being able to affect, the acknowledgement already decided
-// above (RT-04). It deliberately does not derive from request.Context():
-// that context is cancelled once ServeHTTP returns and the response has
-// been written, and a wake-up that is meant to outlive the request must not
-// be cancelled along with it. WorkerPumpClient bounds every call to its own
-// configured timeout (5s by default, see worker_pump.go), so this goroutine
-// always exits on its own and never leaks past that bound, however many
-// webhooks arrive concurrently in a burst.
+// above (RT-04). Correction of 2026-09-16: it no longer starts a goroutine
+// per webhook. It hands the demand to the shared WakeupCoalescer, which
+// keeps at most one wake-up goroutine alive and one wake-up in flight, and
+// still guarantees that one more wake-up begins after this webhook. A burst
+// of N webhooks therefore produces a bounded number of wake-ups, not N,
+// while the last webhook of the burst still gets a wake-up after it.
+// Handing over the demand takes only a mutex, so the 2xx never waits on it.
+//
+// A handler built without a coalescer is not the production path -- only
+// unit tests can reach it -- and it degrades to the pre-correction
+// one-goroutine-per-webhook behaviour rather than silently dropping the
+// wake-up, because dropping it would be the worse failure.
 func (h Handler) wakeUpDispatcher(traceID string) {
 	if h.Pumper == nil {
 		return
 	}
-	go func() {
-		ctx := withTraceID(context.Background(), traceID)
-		if err := h.Pumper.Pump(ctx); err != nil {
-			h.Metrics.ObserveWakeupOutcome("failed")
-			h.Logger.Event("webhook_wakeup", "failed", traceID)
-			return
-		}
-		h.Metrics.ObserveWakeupOutcome("succeeded")
-	}()
+	if h.Wakeups == nil {
+		go h.runWakeup(traceID)
+		return
+	}
+	h.Wakeups.request(traceID, h.runWakeup)
+}
+
+// runWakeup performs one wake-up call and records its outcome. It
+// deliberately does not derive from request.Context(): that context is
+// cancelled once ServeHTTP returns and the response has been written, and a
+// wake-up that is meant to outlive the request must not be cancelled along
+// with it. WorkerPumpClient bounds every call to its own configured timeout
+// (5s by default, see worker_pump.go), so the coalescer's single goroutine
+// always makes progress and never leaks past that bound.
+func (h Handler) runWakeup(traceID string) {
+	ctx := withTraceID(context.Background(), traceID)
+	if err := h.Pumper.Pump(ctx); err != nil {
+		h.Metrics.ObserveWakeupOutcome("failed")
+		h.Logger.Event("webhook_wakeup", "failed", traceID)
+		return
+	}
+	h.Metrics.ObserveWakeupOutcome("succeeded")
 }
 
 func writeRetryable(response http.ResponseWriter) {

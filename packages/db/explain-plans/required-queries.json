@@ -37,7 +37,25 @@
     "for these seven files: it requires every app_private call inside them, any name, to be either here",
     "or in \"exemptions\" below. See reviews/2026-09-16-rt-12-scan-convention-independence.md and",
     "tests/TC-RT-12-explain-plans.md (both in bharatstudio-requirements) for the full classification",
-    "reasoning and what still can slip past the scan."
+    "reasoning and what still can slip past the scan.",
+    "",
+    "2026-09-16, scan blind-spot closure (second correction, same day). The two rules above are BOTH",
+    "naming rules -- rule 1 keys on the function name (list_overlay_*), rule 2 on the file name",
+    "(overlay / master-canvas). A store file matching NEITHER that added an overlay-facing read was",
+    "invisible to both: a green check blind to what it was never told about, which is the exact defect",
+    "RT-12 exists to prevent. scan-required-queries.mjs now also runs rule 3, which consults no name at",
+    "all. It starts at apps/api/src/index.ts and apps/api/src/app.ts, finds every call whose argument",
+    "list contains the derivedReadSql token -- the single handle to RT-10/RT-11's bounded, statement-",
+    "timeout-bearing derived-read pool, which every widget/dashboard/analytics read is required to run",
+    "on -- resolves each callee through that file's own import statements, brace-matches the named",
+    "export's body, and requires every app_private call inside that body to be here or in exemptions.",
+    "A rename cannot defeat it: the file name lives in the import specifier rule 3 follows, and the",
+    "factory name lives in both the call site and the export it matches. Rule 3 newly surfaced three",
+    "calls, all three creator-dashboard reads on the same derived-read pool, none overlay-facing:",
+    "list_channel_payments, get_channel_revenue_kpis and get_creator_activation_state -- each exempted",
+    "below with the routing and function-body evidence for that judgement, not the bare assertion. See",
+    "reviews/2026-09-16-rt-12-scan-convention-independence.md's 'Correction' section and",
+    "active/tasks/RT-12.md (both in bharatstudio-requirements)."
   ],
   "queries": [
     { "function": "app_private.list_overlay_goal", "artifact": "goal.explain.md" },
@@ -81,6 +99,18 @@
     {
       "function": "app_private.get_overlay_lottie_asset",
       "reason": "single-row byte-serving fetch by artifact primary key (packages/db/migrations/0077_v1_l03_lottie_branding_upload.sql), same shape and same reason as get_overlay_tts_audio above -- its own comment in the migration calls it out explicitly as 'the byte-serving path ... fetches by artifact id' distinct from the enumerating list. The enumerating list it complements, app_private.list_overlay_lottie_assets, already has its own manifest entry (lottie-assets.explain.md)."
+    },
+    {
+      "function": "app_private.list_channel_payments",
+      "reason": "creator-dashboard payment-ledger read, not an overlay read -- and 'not overlay-facing' here is a determination, not an assertion. How it was determined, three independent checks: (1) ROUTING -- apps/api/src/app.ts registers it only through registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger) (apps/api/src/routes/payments.ts:9), which takes the creator SessionStore; the dependency field paymentLedger is passed to no overlay registrar (registerOverlayRoutes / registerOverlayAudioRoutes / registerOverlayLottieRoutes) and to no widget route. (2) SIGNATURE AND BODY -- packages/db/migrations/0071_v1_l03_payment_ledger_read.sql:21 defines it as (target_channel_id uuid, target_cursor_created_at timestamptz, target_cursor_id uuid, target_limit integer) guarded by app_private.has_channel_role(target_channel_id, array['owner','admin']); it neither accepts an overlay id nor a token fingerprint and never joins public.overlay_sessions, which every manifested overlay read does (compare app_private.list_overlay_goal(target_overlay_id uuid, target_token_fingerprint text), 0102:365). (3) SCOPE -- active/tasks/RT-12.md's Boundaries section already excluded the payments ledger by name and assigned the dashboard/history EXPLAIN inventory to PRF-11 (FULL-PRODUCT-DEFINITION.md S31.18.1), a separate register row; manifesting it here would be the scope creep that record forbids, not extra rigour. It is visible to rule 3 only because it shares RT-10/RT-11's derived-read pool, which is what that pool is for. PRF-11, not RT-12, is where its plan artefact belongs."
+    },
+    {
+      "function": "app_private.get_channel_revenue_kpis",
+      "reason": "creator-dashboard revenue KPI aggregate, not an overlay read -- determined the same three ways as list_channel_payments above. (1) ROUTING -- reached only via registerInsightsRoutes(app, dependencies.sessions, dependencies.insights) (apps/api/src/app.ts) serving GET /v1/channels/:channelId/revenue-kpis (apps/api/src/routes/insights.ts:49), a creator-session route; dependencies.insights reaches no overlay registrar. (2) SIGNATURE AND BODY -- packages/db/migrations/0133_v1_ops08_ops11_activation_and_revenue_kpis.sql:154 defines it as (target_channel_id uuid, window_start timestamptz, window_end timestamptz) with the migration's own ACCESS note 'financial amounts, so owner/admin only'; no overlay id, no token fingerprint, no overlay_sessions join. (3) SCOPE -- OPS-11 dashboard analytics, the surface active/tasks/RT-12.md's Boundaries assign to PRF-11 (S31.18.1). Rule 3 sees it because OPS-08/OPS-11 correctly wired it to RT-10/RT-11's derived-read pool rather than the main request pool."
+    },
+    {
+      "function": "app_private.get_creator_activation_state",
+      "reason": "creator-dashboard activation-checklist read, not an overlay read -- determined the same three ways. (1) ROUTING -- reached only via registerInsightsRoutes serving GET /v1/channels/:channelId/activation-state (apps/api/src/routes/insights.ts:30), a creator-session route; no overlay registrar receives dependencies.insights. (2) SIGNATURE AND BODY -- packages/db/migrations/0133_v1_ops08_ops11_activation_and_revenue_kpis.sql:46 defines it as (target_channel_id uuid) returning six booleans/timestamps guarded by app_private.can_access_channel; it takes no overlay id and no token fingerprint. Note it does READ overlay_connected state, which is why it must be judged rather than dismissed on its name: it reports to the CREATOR whether an overlay has ever connected, it does not serve bytes or rows to an overlay session. (3) SCOPE -- OPS-08 dashboard analytics, PRF-11 territory per active/tasks/RT-12.md's Boundaries. Visible to rule 3 because it runs on RT-10/RT-11's derived-read pool."
     }
   ]
 }

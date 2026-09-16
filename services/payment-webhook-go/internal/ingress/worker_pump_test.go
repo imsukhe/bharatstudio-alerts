@@ -104,7 +104,7 @@ func TestPaymentHandlerAndWorkerPumpBoundary(t *testing.T) {
 	}
 	store := &fakeStore{}
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(
 		recorder,
 		request(`{"event":"payment.captured"}`, "secret", "event_boundary_1"),
 	)
@@ -137,7 +137,7 @@ func TestPaymentHandlerAcknowledgesEvenWhenWorkerBoundaryFails(t *testing.T) {
 	}
 	store := &fakeStore{}
 	recorder := httptest.NewRecorder()
-	Handler{Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(
+	Handler{Wakeups: NewWakeupCoalescer(), Secret: "secret", Store: store, Pumper: pumper}.ServeHTTP(
 		recorder,
 		request(`{"event":"payment.captured"}`, "secret", "event_boundary_2"),
 	)

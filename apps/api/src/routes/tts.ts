@@ -62,6 +62,15 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
       if (reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
       return reply.code(200).send({ schemaVersion: 'v1', mode: 'chime', reason: result.reason });
     }
+    // Owner decision 2026-09-16: cached audio costs no premium characters.
+    // createTtsService answers a cache hit out of alert_tts_cache without
+    // ever reaching the provider (tts/provider.ts), so the platform pays
+    // nothing and neither should the creator. The charge is released here
+    // rather than skipped at meter() time because the cache is only
+    // consulted inside synthesize() — the hard stop above must still run
+    // first and against the real character count, so an exhausted channel
+    // still falls to chime and cannot mine the cache for free synthesis.
+    if (result.cacheHit && reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
     const artifactId = await store.storeAudio(input.eventId, result.audio);
     return reply.code(200).send({ schemaVersion: 'v1', mode: 'audio', artifactId, cacheHit: result.cacheHit });
   });

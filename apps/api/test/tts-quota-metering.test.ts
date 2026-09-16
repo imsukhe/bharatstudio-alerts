@@ -150,3 +150,44 @@ test('a provider throw releases exactly the metered character count before the e
   assert.deepEqual(released, { eventId: EVENT_ID, characterCount: message.length });
   await app.close();
 });
+
+// Owner decision 2026-09-16: cached audio costs no premium characters. The
+// platform pays nothing for a cache hit (createTtsService answers it out of
+// alert_tts_cache without reaching the provider), so neither should the
+// creator. The hard stop still runs first and against the real character
+// count, so an exhausted channel cannot mine the cache for free synthesis.
+test('a cache hit releases the metered characters, so cached audio is free', async () => {
+  const released: Array<{ eventId: string; characters: number }> = [];
+  let metered = 0;
+  const quotaMeter: TtsQuotaMeter = {
+    async meter(_eventId, characterCount) { metered += characterCount; return { allowed: true, remaining: 1_000 }; },
+    async release(eventId, characterCount) { released.push({ eventId, characters: characterCount }); },
+  };
+  const cachedService: TtsService = { async synthesize() { return { mode: 'audio', audio, cacheHit: true }; } };
+  const app = await buildTtsApp(eligibleStore('Namaste'), cachedService, quotaMeter);
+
+  const response = await app.inject({ method: 'POST', url: `/internal/v1/tts/events/${EVENT_ID}`, headers: { authorization: 'Bearer worker-token' } });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().mode, 'audio', 'a cache hit still delivers audio');
+  assert.equal(response.json().cacheHit, true);
+  assert.equal(metered, 'Namaste'.length, 'the hard stop still meters the real character count first');
+  assert.deepEqual(released, [{ eventId: EVENT_ID, characters: 'Namaste'.length }], 'and the charge is given straight back');
+  await app.close();
+});
+
+test('a genuine synthesis (no cache hit) keeps its charge', async () => {
+  const released: string[] = [];
+  const quotaMeter: TtsQuotaMeter = {
+    async meter() { return { allowed: true, remaining: 1_000 }; },
+    async release(eventId) { released.push(eventId); },
+  };
+  const app = await buildTtsApp(eligibleStore('Namaste'), succeedingService, quotaMeter);
+
+  const response = await app.inject({ method: 'POST', url: `/internal/v1/tts/events/${EVENT_ID}`, headers: { authorization: 'Bearer worker-token' } });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().cacheHit, false);
+  assert.deepEqual(released, [], 'audio the provider actually synthesised is charged');
+  await app.close();
+});

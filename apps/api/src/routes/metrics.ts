@@ -3,6 +3,7 @@ import type { Sql } from 'postgres';
 import type { ServiceIdentityVerifier } from '../domain/maintenance.js';
 import type { ApiMetrics } from '../observability/metrics.js';
 import { runReliabilityReconciliation, defaultReconciliationThresholds, type ReconciliationThresholds } from '../observability/reconciliation.js';
+import { persistReconciliationSnapshot, loadLatestReconciliationSnapshot } from '../observability/reconciliation-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 export type OverlayWakeupHealth = { connected: boolean; reconnects: number; failures: number };
@@ -28,6 +29,22 @@ export async function registerMetricsRoutes(app: FastifyInstance, deps: MetricsR
   app.get('/internal/metrics', async (request, reply) => {
     if (!serviceIdentity || !await serviceIdentity.verify(request.headers.authorization)) {
       return reply.code(401).type('text/plain; version=0.0.4').send('unauthorized\n');
+    }
+    // RT-06 §3.4: the in-memory snapshot this process may hold (set by a
+    // POST /internal/metrics/reconcile this same process handled) is only
+    // ever correct for a single instance. When a database is configured,
+    // pull the durably recorded snapshot — written by whichever instance
+    // last ran reconciliation — so every instance's scrape agrees. A
+    // failure here is a metrics-path failure: it must never fail the
+    // scrape (RT-06.6). Fall back silently to whatever this process
+    // already holds in memory (possibly nothing yet).
+    if (deps.sql) {
+      try {
+        const durable = await loadLatestReconciliationSnapshot(deps.sql);
+        if (durable) metrics.setReconciliationSnapshot(durable);
+      } catch (error) {
+        logSafeError(request, 'reliability_reconciliation_snapshot_read_failed', error);
+      }
     }
     let output = metrics.renderPrometheus();
     const wakeupHealth = deps.overlayWakeupHealth?.();
@@ -64,6 +81,16 @@ export async function registerMetricsRoutes(app: FastifyInstance, deps: MetricsR
     try {
       const snapshot = await runReliabilityReconciliation(deps.sql, deps.reconciliationThresholds ?? defaultReconciliationThresholds);
       metrics.setReconciliationSnapshot(snapshot);
+      // RT-06 §3.4: durable, cross-instance-correct write. A failure here
+      // must not undo or fail the reconciliation run that already
+      // completed and is already visible on this instance's own scrape —
+      // it only means another instance's scrape may still be stale until a
+      // later run succeeds. Logged, not fatal.
+      try {
+        await persistReconciliationSnapshot(deps.sql, snapshot);
+      } catch (persistError) {
+        logSafeError(request, 'reliability_reconciliation_snapshot_persist_failed', persistError);
+      }
       return reply.code(200).send({ schemaVersion: 'v1', ...snapshot });
     } catch (error) {
       logSafeError(request, 'reliability_reconciliation_failed', error);

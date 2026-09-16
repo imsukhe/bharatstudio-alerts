@@ -103,6 +103,7 @@ run_sql_test rt02_overlay_events_artifact_column.sql
 run_sql_test l03_tts_usage_metering.sql
 run_sql_test rt03_tts_quota_reservation_release.sql
 run_sql_test rt04_outbox_dispatch_lease.sql
+run_sql_test rt06_reliability_reconciliation_snapshot.sql
 run_sql_test l03_entitlement_retier_and_dimensions.sql
 run_sql_test l03_queue_mode_ladder.sql
 run_sql_test l05_queue_policy_enforcement.sql

@@ -10,30 +10,69 @@ import (
 	"time"
 )
 
+// RT-06 (section 19.0, section 19.4): "API p99 | < 200ms for reads, < 500ms
+// for the tip-order path." /internal/v1/tips/orders is this service's own
+// leg of the tip-order path (the public API's POST .../tips/orders calls
+// straight through to this handler to create the Razorpay order) -- so 500
+// is the exact budget boundary there, not an equivalence judgment. The
+// remaining values are measurement resolution around it -- see
+// apps/api/src/observability/metrics.ts's TIP_ORDER_DURATION_BUCKETS_MS
+// comment for the identical reasoning on the TS leg of this same path.
+//
+// /v1/webhooks/razorpay (the payment webhook acknowledgement path, RT-04)
+// carries no explicit section-19.4 duration number of its own -- only the
+// ordering rule "2xx after the durable commit, never after a dispatch
+// call." It is measured under this same tip-order-class 500ms bucket set
+// because both are payment-commit HTTP paths, and RT-06's own scope
+// (section 3.5) explicitly names the webhook acknowledgement path as
+// somewhere this task may "add measurement... beyond" RT-04/RT-05's
+// existing behaviour. This is a reasoned classification, not an invented
+// number -- both boundaries are still the one 500ms figure section 19.4
+// states -- and it is recorded, not asserted quietly, in
+// bharatstudio-requirements/reviews/2026-09-16-rt-06-budget-histograms.md.
+var tipOrderClassBucketsMs = []float64{50, 100, 200, 300, 400, 500, 750, 1000, 2000}
+
 // Metrics is an in-process, bounded-by-route Prometheus text emitter. It is
 // intentionally dependency-free at the service boundary; scraping and
 // retention belong to the deployment platform.
 type Metrics struct {
-	mu        sync.Mutex
-	requests  map[string]uint64
-	durations map[string]time.Duration
-	business  map[string]uint64
+	mu                 sync.Mutex
+	requests           map[string]uint64
+	durations          map[string]time.Duration
+	business           map[string]uint64
+	tipOrderDuration   *Histogram
+	webhookAckDuration *Histogram
 }
 
 func New() *Metrics {
-	return &Metrics{requests: make(map[string]uint64), durations: make(map[string]time.Duration), business: make(map[string]uint64)}
+	return &Metrics{
+		requests:           make(map[string]uint64),
+		durations:          make(map[string]time.Duration),
+		business:           make(map[string]uint64),
+		tipOrderDuration:   NewHistogram(tipOrderClassBucketsMs),
+		webhookAckDuration: NewHistogram(tipOrderClassBucketsMs),
+	}
 }
 
 func (m *Metrics) Observe(method, route string, status int, duration time.Duration) {
 	if m == nil {
 		return
 	}
-	key := method + "|" + normalizePath(route) + "|" + strconv.Itoa(status)
+	normalized := normalizePath(route)
+	key := method + "|" + normalized + "|" + strconv.Itoa(status)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requests[key]++
 	if duration > 0 {
 		m.durations[key] += duration
+	}
+	// RT-06: supplement, never replace, the counters above (RT-06.7).
+	durationMs := float64(duration) / float64(time.Millisecond)
+	switch normalized {
+	case "/internal/v1/tips/orders":
+		m.tipOrderDuration.Observe(durationMs)
+	case "/v1/webhooks/razorpay":
+		m.webhookAckDuration.Observe(durationMs)
 	}
 }
 
@@ -114,6 +153,19 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		labels := fmt.Sprintf(`kind="%s",outcome="%s"`, escape(parts[0]), escape(parts[1]))
 		_, _ = fmt.Fprintf(w, "bsa_payment_business_total{%s} %d\n", labels, count)
 	}
+
+	// RT-06: bucketed histograms for the budgeted paths this service
+	// observes, plus a bucket-interpolated p95/p99 read-out. No label of
+	// any kind -- an order id, payment id, event id or channel id must
+	// never reach a metric label (RT-06.5); the metric name alone already
+	// identifies the path.
+	m.tipOrderDuration.WritePrometheus(w, "bsa_payment_tip_order_duration_ms",
+		"Tip-order creation request duration in milliseconds (POST /internal/v1/tips/orders, this service's leg of the tip-order path). Budget: p99 < 500ms (FULL-PRODUCT-DEFINITION.md section 19.4).")
+	writeQuantileGauge(w, "bsa_payment_tip_order_duration_ms", m.tipOrderDuration)
+
+	m.webhookAckDuration.WritePrometheus(w, "bsa_payment_webhook_ack_duration_ms",
+		"Payment webhook acknowledgement request duration in milliseconds (POST /v1/webhooks/razorpay, commit-then-2xx per RT-04). No section-19.4 row names this path with its own duration number; measured under the same 500ms tip-order-class budget because both are payment-commit HTTP paths -- see bharatstudio-requirements/reviews/2026-09-16-rt-06-budget-histograms.md. Passive measurement only: never gates the response (RT-04 is unchanged by this).")
+	writeQuantileGauge(w, "bsa_payment_webhook_ack_duration_ms", m.webhookAckDuration)
 }
 
 func (m *Metrics) Endpoint(authorize func(*http.Request) error) http.Handler {

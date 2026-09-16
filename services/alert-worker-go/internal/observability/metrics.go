@@ -10,27 +10,52 @@ import (
 	"time"
 )
 
+// RT-06 (section 19.0, section 19.4): no row in section 19.4's budget table
+// names this service's own paths with an explicit duration number --
+// /internal/v1/tasks/pump is the leased outbox dispatcher's own HTTP
+// trigger (RT-04/RT-05), invoked both by the payment webhook's fire-and-
+// forget post-commit wake-up and by the scheduled "outbox-recovery" cron,
+// and it never gates a response any external actor is waiting on. Measured
+// here under the "API reads" read-class bucket set (200ms boundary) because
+// it is the closer analogue of the two budgeted classes: a bounded,
+// internal, no-external-provider-call operation, unlike the tip-order
+// path's live outbound call to Razorpay. This is a reasoned classification,
+// not an invented number -- recorded, not asserted quietly, in
+// bharatstudio-requirements/reviews/2026-09-16-rt-06-budget-histograms.md.
+var readClassBucketsMs = []float64{10, 25, 50, 75, 100, 150, 200, 300, 500, 1000}
+
 type Metrics struct {
-	mu        sync.Mutex
-	requests  map[string]uint64
-	durations map[string]time.Duration
-	business  map[string]uint64
+	mu           sync.Mutex
+	requests     map[string]uint64
+	durations    map[string]time.Duration
+	business     map[string]uint64
+	pumpDuration *Histogram
 }
 
 func New() *Metrics {
-	return &Metrics{requests: make(map[string]uint64), durations: make(map[string]time.Duration), business: make(map[string]uint64)}
+	return &Metrics{
+		requests:     make(map[string]uint64),
+		durations:    make(map[string]time.Duration),
+		business:     make(map[string]uint64),
+		pumpDuration: NewHistogram(readClassBucketsMs),
+	}
 }
 
 func (m *Metrics) Observe(method, route string, status int, duration time.Duration) {
 	if m == nil {
 		return
 	}
-	key := method + "|" + normalizePath(route) + "|" + strconv.Itoa(status)
+	normalized := normalizePath(route)
+	key := method + "|" + normalized + "|" + strconv.Itoa(status)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requests[key]++
 	if duration > 0 {
 		m.durations[key] += duration
+	}
+	// RT-06: supplement, never replace, the counters above (RT-06.7).
+	if normalized == "/internal/v1/tasks/pump" {
+		m.pumpDuration.Observe(float64(duration) / float64(time.Millisecond))
 	}
 }
 
@@ -90,6 +115,14 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		labels := fmt.Sprintf(`kind="%s",outcome="%s"`, escape(parts[0]), escape(parts[1]))
 		_, _ = fmt.Fprintf(w, "bsa_worker_business_total{%s} %d\n", labels, count)
 	}
+
+	// RT-06: bucketed histogram for the dispatcher's own HTTP trigger, plus
+	// a bucket-interpolated p95/p99 read-out. No label of any kind -- a
+	// delivery, event, channel or payment identifier must never reach a
+	// metric label (RT-06.5).
+	m.pumpDuration.WritePrometheus(w, "bsa_worker_pump_duration_ms",
+		"Outbox dispatcher pump request duration in milliseconds (POST /internal/v1/tasks/pump, RT-04/RT-05's leased dispatcher trigger). No section-19.4 row names this path with its own duration number; measured under the read-class 200ms budget as the closer analogue -- see bharatstudio-requirements/reviews/2026-09-16-rt-06-budget-histograms.md. Never gates the webhook's response: this path is always fire-and-forget or scheduled, never awaited by an external caller.")
+	writeQuantileGauge(w, "bsa_worker_pump_duration_ms", m.pumpDuration)
 }
 
 func (m *Metrics) Endpoint(authorize func(*http.Request) error) http.Handler {

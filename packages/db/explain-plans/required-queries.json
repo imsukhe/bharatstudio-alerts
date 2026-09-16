@@ -20,7 +20,24 @@
     "two functions this task's authors already knew about would be the exact same failure pattern RT-12",
     "itself exists to prevent, so all five gaps the honest general-purpose scan found are captured, not",
     "only the two originally named. See reviews/2026-09-16-prf-02-slice-2-implementation.md and",
-    "tests/TC-RT-12-explain-plans.md (both in bharatstudio-requirements) for the full account."
+    "tests/TC-RT-12-explain-plans.md (both in bharatstudio-requirements) for the full account.",
+    "",
+    "2026-09-16, scan-convention-independence closure: the scan above (and this manifest) only ever",
+    "keyed on the list_overlay_* naming convention, so a same-file call to an app_private function under",
+    "any other name was invisible to it. Opus enumerated every app_private.* call in the seven dedicated",
+    "overlay-facing store files (challenge-overlay-store.ts, goal-overlay-store.ts,",
+    "master-canvas-sql-store.ts, overlay-audio-store.ts, overlay-branding-store.ts, overlay-store.ts,",
+    "overlay-wakeup.ts) and found 7 of 12 distinct functions missing -- most importantly",
+    "app_private.get_overlay_events, the alert stream itself and the single hottest overlay read in the",
+    "product, added below with its own artefact. The other six",
+    "(ack_overlay_cursor, can_access_channel, get_overlay_lottie_asset, get_overlay_tts_audio,",
+    "lookup_overlay_token, upsert_master_canvas_module) are writes, auth/predicate lookups, or",
+    "single-row byte-serving fetches by primary key -- each judged individually and exempted below with",
+    "its own reason, not swept in as a group. scan-required-queries.mjs is now convention-independent",
+    "for these seven files: it requires every app_private call inside them, any name, to be either here",
+    "or in \"exemptions\" below. See reviews/2026-09-16-rt-12-scan-convention-independence.md and",
+    "tests/TC-RT-12-explain-plans.md (both in bharatstudio-requirements) for the full classification",
+    "reasoning and what still can slip past the scan."
   ],
   "queries": [
     { "function": "app_private.list_overlay_goal", "artifact": "goal.explain.md" },
@@ -37,6 +54,33 @@
     { "function": "app_private.list_channel_master_canvas_modules", "artifact": "master-canvas-modules-channel.explain.md", "note": "creator-facing, not overlay_sessions-gated -- included because this task's own command names it explicitly, not because it matches the list_overlay_* convention the scan otherwise keys on" },
     { "function": "app_private.list_overlay_lottie_assets", "artifact": "lottie-assets.explain.md", "note": "pre-existing gap (migration 0077), found by the honest scan while closing this task's two named gaps -- see required-queries.json's own top-level comment" },
     { "function": "app_private.list_overlay_widget_config", "artifact": "widget-config.explain.md", "note": "pre-existing gap (migration 0105), found by the honest scan while closing this task's two named gaps -- see required-queries.json's own top-level comment" },
-    { "function": "app_private.list_overlay_tug_of_war_vote", "artifact": "tug-of-war-vote.explain.md", "note": "new in this slice, migration 0132 -- module #3 (Tug-of-War Vote)" }
+    { "function": "app_private.list_overlay_tug_of_war_vote", "artifact": "tug-of-war-vote.explain.md", "note": "new in this slice, migration 0132 -- module #3 (Tug-of-War Vote)" },
+    { "function": "app_private.get_overlay_events", "artifact": "overlay-events.explain.md", "note": "does not follow the list_overlay_* convention (dropped and recreated as a plain function in migration 0127 to add an OUT column, which is why it was invisible to the old convention-only scan) -- the alert stream itself, read on every overlay wake; see reviews/2026-09-16-rt-12-scan-convention-independence.md" }
+  ],
+  "exemptions": [
+    {
+      "function": "app_private.lookup_overlay_token",
+      "reason": "auth lookup, not a widget read -- validates the bearer token fingerprint against overlay_sessions and returns session/channel identity only (packages/db/migrations/0003_v1_l03_application.sql). Runs before every overlay read as an admission check (RT-02 S3.2(a)); it never returns widget-facing rows itself."
+    },
+    {
+      "function": "app_private.can_access_channel",
+      "reason": "auth predicate (boolean), not a widget read -- used in the WHERE clause of creator-facing overlay-session revoke/rotate mutations in apps/api/src/db/overlay-store.ts, gating a write rather than serving overlay content."
+    },
+    {
+      "function": "app_private.ack_overlay_cursor",
+      "reason": "write -- marks a delivery acknowledged and upserts the overlay's cursor row (packages/db/migrations/0022_v1_l05_overlay_ack_release.sql); returns a boolean, not widget-facing data."
+    },
+    {
+      "function": "app_private.upsert_master_canvas_module",
+      "reason": "write -- creator-facing module enable/disable toggle (packages/db/migrations/0131_v1_prf02_master_canvas_modules.sql), owner/admin authorized; returns the module id, not widget-facing data. The read that renders from this state, app_private.list_overlay_master_canvas_modules, already has its own manifest entry (master-canvas-modules-overlay.explain.md)."
+    },
+    {
+      "function": "app_private.get_overlay_tts_audio",
+      "reason": "single-row byte-serving fetch by artifact primary key (packages/db/migrations/0067_v1_l03_tts_event_enrichment.sql) -- returns one TTS artifact's audio bytes for the overlay's own separate playback fetch, keyed on target_artifact_id plus a session/token re-check, not an aggregate or list a widget renders from. The read that surfaces which artifact to fetch, app_private.get_overlay_events, is manifested above."
+    },
+    {
+      "function": "app_private.get_overlay_lottie_asset",
+      "reason": "single-row byte-serving fetch by artifact primary key (packages/db/migrations/0077_v1_l03_lottie_branding_upload.sql), same shape and same reason as get_overlay_tts_audio above -- its own comment in the migration calls it out explicitly as 'the byte-serving path ... fetches by artifact id' distinct from the enumerating list. The enumerating list it complements, app_private.list_overlay_lottie_assets, already has its own manifest entry (lottie-assets.explain.md)."
+    }
   ]
 }

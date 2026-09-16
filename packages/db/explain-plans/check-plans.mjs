@@ -39,15 +39,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, '..', 'migrations');
 
 // Same extraction method used to compute query_hash when each artifact was
-// written: the text from the `create or replace function <fn>(` line
-// through the terminating `$$;` line, inclusive, exactly as it appears in
-// the migration file (original newlines/whitespace preserved), hashed with
-// sha256 over the UTF-8 bytes. Keep this in lockstep with how the artifacts
-// were generated — if this changes, every artifact's query_hash must be
-// recomputed and rewritten to match, or the check will always fail.
+// written: the text from the `create or replace function <fn>(` line (or,
+// for a function whose OUT columns changed -- PostgreSQL requires a plain
+// `create function` after a `drop function` for that, it cannot be done
+// with `create or replace`, e.g. get_overlay_events in migration 0127 --
+// the `create function <fn>(` line) through the terminating `$$;` line,
+// inclusive, exactly as it appears in the migration file (original
+// newlines/whitespace preserved), hashed with sha256 over the UTF-8 bytes.
+// Keep this in lockstep with how the artifacts were generated — if this
+// changes, every artifact's query_hash must be recomputed and rewritten to
+// match, or the check will always fail.
 function extractFunctionBlock(fileText, fnName) {
   const lines = fileText.split('\n');
-  const startRe = new RegExp('^create or replace function ' + fnName.replace(/\./g, '\\.') + '\\(');
+  const startRe = new RegExp('^create (?:or replace )?function ' + fnName.replace(/\./g, '\\.') + '\\(');
   let startIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     if (startRe.test(lines[i])) {

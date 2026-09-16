@@ -6,6 +6,7 @@ import { createSupporterTickerModule, DEFAULT_TICKER_ROW_POOL_SIZE } from './mod
 import { createGoalLadderModule } from './modules/goal-ladder-module';
 import { createTugOfWarVoteModule } from './modules/tug-of-war-vote-module';
 import { createBossFightModule } from './modules/boss-fight-module';
+import { createSupportTheaterModule } from './modules/support-theater-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -243,4 +244,72 @@ test('a throwing tug_of_war_vote module does not blank the canvas; the three rea
   assert.equal(runtime.getModuleStatus('supporter_ticker'), 'active');
   assert.equal(runtime.getModuleStatus('community_goal_ladder'), 'active');
   assert.equal(runtime.getModuleStatus('boss_fight'), 'active');
+});
+
+/*
+ * PRF-02 slice 3, CORRECTED 2026-09-16: Support Theater (§6 #1) is the
+ * fifth module, and it shares the SAME MasterCanvasConnection the other
+ * four use — an earlier version of this slice gave it a second, dedicated
+ * session and transport, which this test file's own history no longer
+ * reflects (see support-theater-module.ts's and master-canvas-
+ * connection.ts's own "CORRECTION" headers, and
+ * reviews/2026-09-16-prf-02-slice-3-implementation.md, for why: inside
+ * one Canvas there is exactly one acknowledging consumer, so there was no
+ * session-sharing race to defend against by adding a second session, only
+ * a second connection PRF-02 exists specifically to not need). This test
+ * proves PRF-02.1/S2.8's "one transport" claim now covers all FIVE built
+ * modules, not four — one connection, one rAF chain, adding the fifth
+ * module adds zero connections — with `support_theater` entitled FIRST,
+ * matching the real host page's own registration/entitlement order (see
+ * `canvas/[overlayId]/page.tsx`'s header for why that order matters: it
+ * keeps this the ordinary "everyone starts together" case rather than the
+ * connection's forced-resync backstop case, which is tested directly in
+ * master-canvas-connection.test.ts instead).
+ */
+
+test('with all five built modules registered (Support Theater included): still exactly one connection and one rAF chain — PRF-02.1 restored to cover all five, not four', async () => {
+  let fetchCalls = 0;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const goalContainer = document.createElement('div');
+  const voteContainer = document.createElement('div');
+  const bossFightContainer = document.createElement('div');
+  const theaterContainer = document.createElement('div');
+  // Support Theater is registered FIRST here too, mirroring the host
+  // page's own ordering (canvas/[overlayId]/page.tsx).
+  runtime.registerModule(createSupportTheaterModule({
+    container: theaterContainer, connection, overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    reducedMotion: () => false,
+  }));
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createTugOfWarVoteModule({
+    container: voteContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createBossFightModule({
+    container: bossFightContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  // support_theater entitled FIRST — see this test's own header comment.
+  runtime.setModuleEntitled('support_theater', true);
+  runtime.setModuleEntitled('supporter_ticker', true);
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('tug_of_war_vote', true);
+  runtime.setModuleEntitled('boss_fight', true);
+  await flush();
+
+  assert.equal(fetchCalls, 1, 'five entitled modules, Support Theater included, must still open exactly one transport connection');
+  assert.equal(connection.getSubscriberCount(), 5, 'all five modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all five active modules still share exactly one pending frame handle on the one rAF scheduler');
 });

@@ -12,37 +12,110 @@
  * widgets on one Master Canvas therefore meant N connections. This class
  * is the fix: exactly one canvas mounts exactly one MasterCanvasConnection,
  * and every module subscribes to IT rather than opening its own stream.
- * Adding a module calls `subscribe()`, never `start()` — zero new
- * connections (PRF-02.1).
+ * Adding a module calls `subscribe()`/`subscribeToEvents()`, never
+ * `start()` — zero new connections (PRF-02.1), now covering all five
+ * built modules including Support Theater (PRF-02 slice 3), not only the
+ * four snapshot-reading ones.
  *
- * PHILOSOPHY, unchanged from overlay-transport.ts: the stream is never a
- * source of state, only a "something may have changed, go re-read" signal.
- * A module's own REST snapshot read (the same endpoints
- * useOverlayTransport-based widgets already call —
- * /v1/overlay-widgets/:overlayId/supporter-ticker,
- * /v1/overlay-goals/:overlayId) remains the only source of a displayed
- * value. This class only tells a module WHEN to re-read: on every
- * subscribe (so a freshly-activated module gets its first read), on every
- * stream (re)connect (closes the "replay resent nothing" gap the same way
- * overlay-transport.ts's own comment explains), and on every event frame
- * (debounced).
+ * PRF-02 SLICE 3 CORRECTION, 2026-09-16 — read this before changing
+ * subscribeToEvents/acknowledge. The first cut of slice 3 gave Support
+ * Theater its OWN overlay session and its own separate SSE+acknowledgement
+ * transport, on the theory that acknowledgement is session-bound
+ * (migration 0022's `ack_overlay_cursor`) and any two consumers sharing a
+ * session race to acknowledge the same delivery. That theory was right in
+ * general but wrongly applied here: it is a race between the STANDALONE
+ * page and this Canvas, not between modules inside ONE Canvas. Inside one
+ * Canvas there is exactly one acknowledging consumer — Support Theater —
+ * so there is no session-sharing race to defend against by giving it a
+ * second session, and doing so cost the thing this whole runtime exists
+ * for: one connection, adding a module adds zero connections. Corrected,
+ * per the coordinator's own instruction (not this implementer's judgement
+ * — see `reviews/2026-09-16-prf-02-slice-3-implementation.md`'s
+ * "Correction" section for the full account): Support Theater now
+ * acknowledges through THIS connection, using the Canvas's own single
+ * overlay session — the same session/token the other four modules already
+ * share. The Canvas's session is still distinct from the standalone
+ * page's own session (they are separate browser sources with separate
+ * session tokens by construction — that is the real boundary the race
+ * lives at), so the risk the original design was reacting to is still
+ * avoided, just not by adding a second session to the Canvas itself.
  *
- * BOUNDED DATA (§12.7, PRF-02.10): this class holds no history. It keeps
- * only the current SSE line-buffer tail (bounded by one in-flight frame's
- * size, exactly like overlay-transport.ts) and the current replay cursor
- * string. It never accumulates a queue of past events — a frame's content
- * is never inspected beyond whether it carries a `data:` line and an
- * `id:` cursor; the payload itself is discarded immediately.
+ * PHILOSOPHY, extended but not abandoned: for the four snapshot modules
+ * this remains "never a source of state, only a 'something may have
+ * changed, go re-read' signal" — `subscribe()` is unchanged, costs a
+ * listener callback and nothing else, and a module that never calls
+ * `subscribeToEvents` never pays for event-payload parsing (see
+ * `streamOnce`: the JSON.parse of a data frame's body only runs when at
+ * least one event-payload subscriber exists). Support Theater is
+ * different in kind — its delivery is once-only and durable, not a
+ * disposable snapshot — so `subscribeToEvents()` additionally hands it
+ * the actual parsed event payload once per delivery, and `acknowledge()`
+ * lets it durably consume that delivery through this same connection's
+ * own session/token, never a second one.
+ *
+ * REPLAY CORRECTNESS WITH A SHARED CURSOR (the part that needed real
+ * care, not just plumbing): `get_overlay_events` (migrations 0022/0127,
+ * both unchanged) returns deliveries with `status in ('ready','displayed')`
+ * — an item stays replay-eligible until ACKNOWLEDGED, regardless of
+ * whether some consumer has merely SEEN it on the wire. The four snapshot
+ * modules never call `acknowledge()`, so for them "last cursor seen on
+ * the wire" (`rawCursor`, tracked from every event's `id:` line) is a
+ * perfectly fine `last-event-id` to send on reconnect — they do not care
+ * if a reconnect re-sends something they already saw, because they only
+ * ever treat any event as "something changed, re-fetch your own
+ * snapshot." Support Theater cannot tolerate the opposite failure mode:
+ * if reconnect ever sent a cursor AHEAD of what Support Theater has
+ * actually acknowledged, an unacknowledged, still-undisplayed delivery
+ * could be silently skipped by the server's own `created_at >` filter —
+ * a paid alert that never appears again. So once ANY event-payload
+ * subscriber exists, reconnect uses `ackCursor` (advanced ONLY by a
+ * successful `acknowledge()` call) instead of `rawCursor` — see
+ * `streamOnce`'s `resumeCursor` selection below. This is the exact same
+ * "acknowledgedCursor, not last-seen" rule the original standalone page
+ * (`../[overlayId]/page.tsx`) already enforced for itself; this
+ * connection now enforces it centrally for whichever module needs it.
+ *
+ * FORCED RESYNC ON A LATE EVENT-SUBSCRIBER (the other part that needed
+ * care): if the stream is ALREADY running because snapshot modules
+ * started it first, and Support Theater's `subscribeToEvents()` joins
+ * afterward, simply attaching a listener to the ALREADY-OPEN stream would
+ * only hand it FUTURE frames — any delivery that arrived and is still
+ * unacknowledged before it joined would never reach it, because the
+ * connection does not replay history to a late subscriber, only the wire
+ * going forward. So `subscribeToEvents()` detects exactly this transition
+ * (stream running, no event-payload subscriber existed yet) and forces
+ * one deliberate, immediate reconnect (`forceReconnect`, bypassing the
+ * normal backoff) so the fresh connect's `last-event-id` (the current
+ * `ackCursor`) triggers a correct replay of everything not yet
+ * acknowledged. In THIS codebase's actual host page
+ * (`canvas/[overlayId]/page.tsx`), Support Theater is registered AND
+ * entitled first, specifically so this path is never exercised during
+ * ordinary startup or an ordinary hide/show cycle (all modules there
+ * always reconcile in an order where the event-payload subscriber attaches
+ * before any snapshot subscriber can start the stream without it) — see
+ * that file's own header. It exists as the correctness backstop for
+ * whenever that ordering assumption stops holding (e.g. a future
+ * independent per-module entitlement refresh), not as a path this
+ * codebase's tests need to avoid triggering by accident.
+ *
+ * BOUNDED DATA (§12.7, PRF-02.10): this class holds no history beyond
+ * the current SSE line-buffer tail (bounded by one in-flight frame's
+ * size) and two short cursor strings. It never accumulates a queue of
+ * past events, and it hands each parsed event payload to a subscriber
+ * exactly once, synchronously, without retaining it afterward.
  *
  * LIFECYCLE HYGIENE: the underlying stream is opened only while at least
- * one module is subscribed, and closed the instant the last one
- * unsubscribes (e.g. every module deactivated because the OBS source went
- * hidden — see master-canvas-runtime.ts's visibility handling). A fresh
- * subscribe reopens it. This is PRF-05 ("idle modules cost nothing")
+ * one subscriber (of either kind) exists, and closed the instant the last
+ * one unsubscribes (e.g. every module deactivated because the OBS source
+ * went hidden — see master-canvas-runtime.ts's visibility handling). A
+ * fresh subscribe reopens it. This is PRF-05 ("idle modules cost nothing")
  * carried all the way down to the network, not just to rendering.
  */
 
 export type MasterCanvasConnectionListener = () => void;
+export type MasterCanvasConnectionEvent = { type: 'connected' } | { type: 'data'; payload: unknown };
+export type MasterCanvasConnectionEventListener = (event: MasterCanvasConnectionEvent) => void;
+export type MasterCanvasAcknowledgeResult = { ok: boolean; status?: number };
 
 export interface MasterCanvasConnectionConfig {
   overlayId: string;
@@ -61,14 +134,38 @@ export interface MasterCanvasConnection {
    * module should re-read its own snapshot (on subscribe, on every
    * (re)connect, and on every event frame, debounced). Returns an
    * unsubscribe function. The underlying stream opens on the first
-   * subscribe and closes on the last unsubscribe.
+   * subscriber (of either kind) and closes on the last.
    */
   subscribe(listener: MasterCanvasConnectionListener): () => void;
+  /**
+   * Registers a listener that additionally receives each event's parsed
+   * payload exactly once, plus a `{type:'connected'}` marker on every
+   * (re)connect — for the one kind of module whose delivery is once-only
+   * rather than a disposable snapshot (Support Theater). See this file's
+   * header for the reconnect-cursor and forced-resync guarantees this
+   * requires. Only subscribe here if your module genuinely needs the
+   * payload; every other module should keep using `subscribe()`.
+   */
+  subscribeToEvents(listener: MasterCanvasConnectionEventListener): () => void;
+  /**
+   * Sends the acknowledgement POST (`/v1/overlays/:overlayId/cursor`,
+   * migration 0022's `ack_overlay_cursor`, unchanged) using THIS
+   * connection's own overlayId/token — never a second session — and, on
+   * success, advances the connection's ack-aware reconnect cursor so a
+   * future reconnect can never skip this or an earlier delivery. Performs
+   * exactly one attempt; retry policy belongs to the caller (Support
+   * Theater's own module owns that, gated by its own invalidation token,
+   * since only it knows when a retry is still worth attempting).
+   */
+  acknowledge(cursor: string, eventId: string): Promise<MasterCanvasAcknowledgeResult>;
   /** Number of times the underlying events fetch has actually been
    * initiated — the PRF-02.1 test hook. This must stay 1 no matter how
-   * many modules subscribe, as long as the stream itself never drops. */
+   * many modules subscribe (of either kind), as long as the stream itself
+   * never drops and no event-payload subscriber joins after the stream
+   * was already running without one (see file header). */
   getOpenAttemptCount(): number;
-  /** Current subscriber count — 0 means the stream is fully torn down. */
+  /** Current subscriber count across both subscribe() and
+   * subscribeToEvents() — 0 means the stream is fully torn down. */
   getSubscriberCount(): number;
 }
 
@@ -82,13 +179,17 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
   const clearTimeoutImpl = config.clearTimeoutImpl ?? globalThis.clearTimeout.bind(globalThis);
 
   const listeners = new Set<MasterCanvasConnectionListener>();
+  const eventListeners = new Set<MasterCanvasConnectionEventListener>();
   let openAttemptCount = 0;
   let running = false; // true from the moment start() decides to run through to full teardown
   let cancelled = false; // set on stop(); makes the in-flight stream loop exit at its next check
-  let cursor: string | undefined;
+  let rawCursor: string | undefined; // last cursor SEEN on the wire — fine for snapshot-only reconnect
+  let ackCursor: string | undefined; // last cursor ACKNOWLEDGED via acknowledge() — required once any event-payload subscriber exists; see file header
   let debounceTimer: ReturnType<typeof setTimeoutImpl> | undefined;
   let reconnectTimer: ReturnType<typeof setTimeoutImpl> | undefined;
   let streamAbort: AbortController | undefined;
+  let reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+  let forceImmediateReconnect = false;
 
   function notifyAll() {
     for (const listener of listeners) {
@@ -99,6 +200,16 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
         // break the shared connection for every other module — the
         // runtime's own per-module error boundary is the real handler for
         // a module misbehaving; this is belt-and-braces.
+      }
+    }
+  }
+
+  function notifyEvent(event: MasterCanvasConnectionEvent) {
+    for (const listener of eventListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Same belt-and-braces rule as notifyAll() above.
       }
     }
   }
@@ -115,15 +226,24 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
     const abort = new AbortController();
     streamAbort = abort;
     openAttemptCount += 1;
+    // See file header, "REPLAY CORRECTNESS WITH A SHARED CURSOR": once any
+    // event-payload subscriber exists, reconnect must resume from the
+    // ack-aware cursor, never the merely-seen one, or an unacknowledged
+    // delivery could be silently skipped.
+    const resumeCursor = eventListeners.size > 0 ? ackCursor : rawCursor;
     const response = await fetchImpl(`${config.apiOrigin}/v1/overlays/${encodeURIComponent(config.overlayId)}/events`, {
-      headers: { authorization: `Bearer ${config.token}`, ...(cursor ? { 'last-event-id': cursor } : {}) },
+      headers: { authorization: `Bearer ${config.token}`, ...(resumeCursor ? { 'last-event-id': resumeCursor } : {}) },
       cache: 'no-store',
       signal: abort.signal,
     });
     if (!response.ok || !response.body) throw new Error('master_canvas_stream_unavailable');
     // Snapshot-on-connect part 2 (see file header): a (re)connect always
-    // triggers one immediate re-read for every subscribed module.
+    // triggers one immediate re-read for every subscribed module, and an
+    // explicit "connected" marker for every event-payload subscriber so
+    // it can resume its own pump/state-machine the way it used to on its
+    // own dedicated stream's connect.
     notifyAll();
+    notifyEvent({ type: 'connected' });
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = ''; // bounded to one in-flight frame's tail — never a history
@@ -135,12 +255,25 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
         const frames = buffer.split(/\r?\n\r?\n/);
         buffer = frames.pop() ?? '';
         for (const frame of frames) {
-          let sawData = false;
+          const dataLines: string[] = [];
           for (const line of frame.split(/\r?\n/)) {
-            if (line.startsWith('id:')) cursor = line.slice(3).trim();
-            if (line.startsWith('data:')) sawData = true;
+            if (line.startsWith('id:')) rawCursor = line.slice(3).trim();
+            if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
           }
-          if (sawData) scheduleNotify();
+          if (dataLines.length === 0) continue;
+          scheduleNotify();
+          // Payload parsing only happens when someone actually wants the
+          // payload — see file header, "do not make every module pay for
+          // payload delivery it does not want."
+          if (eventListeners.size > 0) {
+            try {
+              notifyEvent({ type: 'data', payload: JSON.parse(dataLines.join('\n')) });
+            } catch {
+              // A malformed frame is dropped here, exactly as the
+              // consuming module's own parseOverlayItem-style guard would
+              // have dropped it anyway — never thrown past this point.
+            }
+          }
         }
       }
     } finally {
@@ -149,7 +282,6 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
   }
 
   async function run(): Promise<void> {
-    let reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
     while (!cancelled) {
       try {
         await streamOnce();
@@ -160,17 +292,22 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
         // not this connection's) while this loop retries with backoff.
       }
       if (cancelled) break;
-      await new Promise<void>((resolve) => {
-        reconnectTimer = setTimeoutImpl(() => { reconnectTimer = undefined; resolve(); }, reconnectDelay);
-      });
+      const delay = forceImmediateReconnect ? 0 : reconnectDelay;
+      forceImmediateReconnect = false;
+      if (delay > 0) {
+        await new Promise<void>((resolve) => {
+          reconnectTimer = setTimeoutImpl(() => { reconnectTimer = undefined; resolve(); }, delay);
+        });
+      }
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
     }
   }
 
   function start() {
-    if (running) return; // idempotent — a second subscribe() must add zero connections
+    if (running) return; // idempotent — a second/later subscriber must add zero connections
     running = true;
     cancelled = false;
+    reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
     void run();
   }
 
@@ -182,22 +319,59 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
     if (reconnectTimer !== undefined) { clearTimeoutImpl(reconnectTimer); reconnectTimer = undefined; }
     streamAbort?.abort();
     streamAbort = undefined;
-    cursor = undefined; // a fresh connection later starts replay from the server's own bounded window, not a stale cursor from a torn-down session
+    // A fresh connection later starts replay from the server's own bounded
+    // window, not a stale cursor from a torn-down session.
+    rawCursor = undefined;
+    ackCursor = undefined;
+  }
+
+  // See file header, "FORCED RESYNC ON A LATE EVENT-SUBSCRIBER". Bypasses
+  // the normal backoff entirely — this is a deliberate, immediate resync,
+  // not a failure recovery.
+  function forceReconnect() {
+    if (!running) return;
+    forceImmediateReconnect = true;
+    reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
+    streamAbort?.abort();
   }
 
   return {
     subscribe(listener) {
       listeners.add(listener);
-      if (listeners.size === 1) start();
+      start(); // idempotent
       // Snapshot-on-connect part 1: a freshly-subscribed module gets an
       // immediate re-read signal even before any (re)connect happens.
       scheduleNotify();
       return () => {
         listeners.delete(listener);
-        if (listeners.size === 0) stop();
+        if (listeners.size === 0 && eventListeners.size === 0) stop();
       };
     },
+    subscribeToEvents(listener) {
+      const wasRunningWithoutEventListener = running && eventListeners.size === 0;
+      eventListeners.add(listener);
+      start(); // idempotent — starts fresh only if nothing was running yet
+      if (wasRunningWithoutEventListener) forceReconnect();
+      return () => {
+        eventListeners.delete(listener);
+        if (listeners.size === 0 && eventListeners.size === 0) stop();
+      };
+    },
+    async acknowledge(cursor, eventId) {
+      try {
+        const response = await fetchImpl(`${config.apiOrigin}/v1/overlays/${encodeURIComponent(config.overlayId)}/cursor`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ cursor, eventId }),
+          keepalive: true,
+        });
+        if (response.ok) ackCursor = cursor;
+        return { ok: response.ok, status: response.status };
+      } catch {
+        return { ok: false };
+      }
+    },
     getOpenAttemptCount() { return openAttemptCount; },
-    getSubscriberCount() { return listeners.size; },
+    getSubscriberCount() { return listeners.size + eventListeners.size; },
   };
 }

@@ -5,11 +5,12 @@
  * (`/overlay/canvas/{overlayId}#token=...`) a creator points OBS at
  * instead of the individual widget sources. Slice 1 mounted two modules
  * (Supporter Ticker, Community Goal Ladder); slice 2 adds two more
- * (Tug-of-War Vote, Boss Fight) — all four on the SAME ONE shared
- * connection and ONE shared scheduler — see master-canvas-connection.ts
- * and master-canvas-runtime.ts for where those properties actually live,
- * and master-canvas-integration.test.ts for the four-modules-still-one-
- * connection/one-loop proof. This file only wires DOM containers and
+ * (Tug-of-War Vote, Boss Fight); slice 3 adds Support Theater — all FIVE
+ * on the SAME ONE shared connection and ONE shared scheduler — see
+ * master-canvas-connection.ts and master-canvas-runtime.ts for where
+ * those properties actually live, and master-canvas-integration.test.ts
+ * for the five-modules-still-one-connection/one-loop proof. This file
+ * only wires DOM containers and
  * REST snapshot endpoints to them: the two slice-1 endpoints
  * (`/v1/overlay-widgets/:overlayId/supporter-ticker`,
  * `/v1/overlay-goals/:overlayId` — untouched), one new endpoint
@@ -37,6 +38,44 @@
  * containers below, with its own fixed z-index and no dependency on any
  * module's error-boundary state — it is not added here because §30.6 is
  * out of scope, but nothing in this page's structure blocks adding it.
+ *
+ * PRF-02 SLICE 3 — SUPPORT THEATER SHARES THIS CANVAS'S ONE SESSION,
+ * CORRECTED 2026-09-16: an earlier version of this slice gave Support
+ * Theater a SECOND, dedicated overlay session (`stOverlayId`/`stToken`
+ * hash params) on the theory that acknowledgement being session-bound
+ * (migration 0022's `ack_overlay_cursor`) meant any shared session would
+ * race. That was a literal reading of an instruction whose actual intent
+ * was narrower — see `reviews/2026-09-16-prf-02-slice-3-implementation.md`'s
+ * "Correction" section for the full account, attributed there to the
+ * coordinator, not this implementer's own revision. Inside ONE Canvas
+ * there is exactly one acknowledging consumer (Support Theater); the
+ * other four modules are stateless snapshot readers that never call
+ * `/cursor`, so there is no session-sharing race *inside* a Canvas to
+ * defend against. The real race the original scope review found is
+ * between this Canvas and the SEPARATE standalone page
+ * (`../../[overlayId]/page.tsx`) — which already has its own, different
+ * session, because it is a different browser source with its own session
+ * token by construction. So Support Theater now registers with the SAME
+ * `overlayId`/`token`/`connection` every other module here uses — see
+ * `master-canvas-connection.ts`'s own header for how that shared
+ * connection was extended (an event-payload subscription and an
+ * `acknowledge()` method alongside its existing signal-only design) to
+ * make this safe without a second session. `BUILT_MODULE_KEYS` lists
+ * `support_theater` FIRST, and it is registered/entitled first below, so
+ * its event-payload subscription always attaches before any snapshot
+ * module can start the shared stream without one — see the connection
+ * file's own header for why that ordering matters for a correct replay
+ * cursor and for keeping this the ordinary case, not the forced-resync
+ * backstop case.
+ *
+ * A SAME-SESSION MISMATCH WITH THE STANDALONE PAGE IS NOT DETECTED HERE,
+ * AND THAT IS STATED RATHER THAN LEFT IMPLICIT: this page's own
+ * JavaScript has no way to observe what session a *different* OBS browser
+ * source (the standalone page, in its own separate process) happens to be
+ * configured with. Building a server-side signal for that would be an
+ * L3 API/data change, outside this task's authority — recorded as a
+ * referred item rather than guessed at with a client-side heuristic that
+ * cannot actually see the other consumer.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -48,11 +87,16 @@ import { createSupporterTickerModule, type SupporterTickerEntry } from '../modul
 import { createGoalLadderModule } from '../modules/goal-ladder-module';
 import { createTugOfWarVoteModule } from '../modules/tug-of-war-vote-module';
 import { createBossFightModule } from '../modules/boss-fight-module';
+import { createSupportTheaterModule } from '../modules/support-theater-module';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
 
-const BUILT_MODULE_KEYS = ['supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight'] as const;
+// support_theater is listed FIRST deliberately — see this file's header,
+// "BUILT_MODULE_KEYS lists support_theater FIRST" — so its event-payload
+// subscription to the shared connection always attaches before any
+// snapshot module can start the stream without one.
+const BUILT_MODULE_KEYS = ['support_theater', 'supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight'] as const;
 
 function reducedMotionPreferred(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
@@ -69,6 +113,7 @@ export default function MasterCanvasPage() {
   const goalContainerRef = useRef<HTMLDivElement>(null);
   const voteContainerRef = useRef<HTMLDivElement>(null);
   const bossFightContainerRef = useRef<HTMLDivElement>(null);
+  const supportTheaterContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -134,6 +179,19 @@ export default function MasterCanvasPage() {
       return isTugOfWarVoteTally(body.tally) ? body.tally : null;
     }
 
+    // Support Theater registers FIRST — see this file's header — using the
+    // SAME shared `connection`/`overlayId`/`token` as every other module,
+    // never a second session.
+    if (supportTheaterContainerRef.current) {
+      runtime.registerModule(createSupportTheaterModule({
+        container: supportTheaterContainerRef.current,
+        connection,
+        overlayId,
+        token,
+        apiOrigin,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     if (tickerContainerRef.current) {
       runtime.registerModule(createSupporterTickerModule({
         container: tickerContainerRef.current,
@@ -166,7 +224,6 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
-
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -216,11 +273,19 @@ export default function MasterCanvasPage() {
         .master-canvas-boss [data-role="boss-fight-health"] { background: linear-gradient(90deg, #ff5c5c, #ffb85c); }
         .master-canvas-boss [data-role="boss-fight-amounts"] { margin-top: 6px; font-size: 13px; opacity: .9; }
         .master-canvas-note { position: absolute; top: 0; right: 0; padding: 8px 12px; background: rgba(120,20,20,.7); color: #fff; font-size: 12px; }
+        .master-canvas-theater { position: absolute; bottom: 90px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; color: #fff; text-align: center; }
+        .master-canvas-theater [data-role="support-theater-current"] { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+        .master-canvas-theater [data-role="support-theater-kicker"] { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .8; }
+        .master-canvas-theater [data-role="support-theater-name"] { font-size: 20px; font-weight: 700; }
+        .master-canvas-theater [data-role="support-theater-message"] { font-size: 14px; opacity: .92; max-width: 480px; }
+        .master-canvas-theater [data-role="support-theater-aggregate-line"] { font-size: 13px; opacity: .92; margin: 0; }
+        .master-canvas-theater [data-role="support-theater-next"] { margin-top: 8px; font-size: 12px; opacity: .75; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
       <div ref={voteContainerRef} className="master-canvas-module master-canvas-vote" aria-live="polite" />
       <div ref={tickerContainerRef} className="master-canvas-module master-canvas-ticker" aria-live="polite" />
+      <div ref={supportTheaterContainerRef} className="master-canvas-module master-canvas-theater" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

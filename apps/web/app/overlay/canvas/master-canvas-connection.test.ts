@@ -230,3 +230,182 @@ test('bounded data (§12.7/PRF-02.10): the connection retains no event history, 
   }
   assert.equal(notifyCallArgCount, 0, 'the change signal carries no payload — a module always re-reads its own bounded snapshot, never receives event history');
 });
+
+/*
+ * PRF-02 slice 3, CORRECTED 2026-09-16: these tests cover the connection's
+ * extension for Support Theater — subscribeToEvents/acknowledge and the
+ * ack-aware reconnect cursor — added when the module's original,
+ * separate-session design was corrected to share this ONE connection
+ * instead (see this file's own header for the full account). "Adding a
+ * module adds zero connections" now needs to hold for an event-payload
+ * subscriber too, not only a signal-only one — these tests prove the
+ * specific mechanics that make that true and safe, not just the module-
+ * level end-to-end count already covered in master-canvas-integration.test.ts.
+ */
+
+/** Like scriptedStreamFetch, but also records each call's request init
+ * (headers, signal) so a test can assert on the reconnect cursor sent. */
+function scriptedStreamFetchRecordingInit(frames: string[], calls: RequestInit[]) {
+  return (async (_input: unknown, init?: RequestInit) => {
+    calls.push(init ?? {});
+    let index = 0;
+    const encoder = new TextEncoder();
+    return {
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (index < frames.length) {
+              const value = encoder.encode(frames[index]);
+              index += 1;
+              return { done: false, value };
+            }
+            return { done: true, value: undefined };
+          },
+          cancel: async () => {},
+        }),
+      },
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+}
+
+/** A stream whose read() rejects the moment its request's AbortSignal
+ * fires — models a real fetch/ReadableStream's abort behaviour, which
+ * every other stub in this file deliberately does not, so forceReconnect
+ * can be proven to actually unstick the read loop rather than merely
+ * being called. */
+function abortAwareHangingStreamFetch(calls: RequestInit[]) {
+  return (async (_input: unknown, init?: RequestInit) => {
+    calls.push(init ?? {});
+    const signal = init?.signal;
+    return {
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: () => new Promise<{ done: boolean }>((_resolve, reject) => {
+            if (!signal) return;
+            if (signal.aborted) { reject(new Error('aborted')); return; }
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          }),
+          cancel: async () => {},
+        }),
+      },
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+}
+
+test('subscribeToEvents receives a connected marker on (re)connect and each event frame\'s parsed payload exactly once', async () => {
+  const timers = createManualTimers();
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: scriptedStreamFetch(['data: {"a":1}\nid: cursor-1\n\n'], () => {}),
+    setTimeoutImpl: timers.setTimeoutImpl, clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  const events: unknown[] = [];
+  connection.subscribeToEvents((event) => events.push(event));
+  await flush(20);
+
+  assert.deepEqual(events[0], { type: 'connected' });
+  assert.deepEqual(events[1], { type: 'data', payload: { a: 1 } });
+  assert.equal(events.length, 2, 'exactly one connected marker and one data event for one frame — no duplication');
+});
+
+test('a plain subscribe() listener pays nothing extra: with no event-payload subscriber, a malformed data frame is never even parsed', async () => {
+  const timers = createManualTimers();
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: scriptedStreamFetch(['data: {not valid json\nid: cursor-1\n\n'], () => {}),
+    setTimeoutImpl: timers.setTimeoutImpl, clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  let notifyCount = 0;
+  connection.subscribe(() => { notifyCount += 1; });
+  timers.flushAll();
+  await flush(20);
+  timers.flushAll(); // the data-frame debounce
+  await flush(20);
+  assert.ok(notifyCount >= 1, 'the signal-only subscriber still gets its re-read signal regardless of the frame body being unparseable JSON');
+});
+
+test('once an event-payload subscriber exists, reconnect uses the ack-aware cursor — never the merely-seen one — so an unacknowledged delivery is never skipped', async () => {
+  const timers = createManualTimers();
+  const calls: RequestInit[] = [];
+  // First connect: one frame arrives (cursor-1) and is SEEN but never
+  // acknowledged, then the stream ends (done:true), forcing a reconnect.
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: scriptedStreamFetchRecordingInit(['data: {"a":1}\nid: cursor-1\n\n'], calls),
+    setTimeoutImpl: timers.setTimeoutImpl, clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  connection.subscribeToEvents(() => {});
+  await flush(20);
+
+  let waited = 0;
+  while (timers.pendingCount() === 0 && waited < 50) { await flush(1); waited += 1; }
+  timers.flushAll(); // reconnect backoff fires
+  await flush(20);
+
+  assert.equal(calls.length, 2, 'the stream reconnected once');
+  const secondCallHeaders = calls[1]?.headers as Record<string, string> | undefined;
+  assert.equal(secondCallHeaders?.['last-event-id'], undefined, 'the reconnect must NOT send cursor-1 as last-event-id — it was seen but never acknowledged, so sending it would let the server skip re-sending it');
+});
+
+test('acknowledge() success advances the reconnect cursor, so a LATER reconnect resumes from exactly the acknowledged point', async () => {
+  const timers = createManualTimers();
+  const calls: RequestInit[] = [];
+  let ackFetchCalls = 0;
+  const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/cursor')) { ackFetchCalls += 1; return { ok: true, status: 204 } as unknown as Response; }
+    calls.push(init ?? {});
+    return {
+      ok: true,
+      body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }), cancel: async () => {} }) },
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test', fetchImpl,
+    setTimeoutImpl: timers.setTimeoutImpl, clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  connection.subscribeToEvents(() => {});
+  await flush(20);
+  assert.equal(calls.length, 1, 'first connect, no cursor yet');
+
+  const result = await connection.acknowledge('cursor-9', '00000000-0000-4000-8000-000000000001');
+  assert.equal(result.ok, true);
+  assert.equal(ackFetchCalls, 1);
+
+  let waited = 0;
+  while (timers.pendingCount() === 0 && waited < 50) { await flush(1); waited += 1; }
+  timers.flushAll(); // reconnect backoff fires (the first connect ended immediately, done:true)
+  await flush(20);
+
+  assert.equal(calls.length, 2, 'reconnected once after the ack');
+  const secondCallHeaders = calls[1]?.headers as Record<string, string> | undefined;
+  assert.equal(secondCallHeaders?.['last-event-id'], 'cursor-9', 'the reconnect resumes exactly from the acknowledged cursor');
+});
+
+test('a late event-payload subscriber joining an already-running signal-only stream forces an IMMEDIATE reconnect — not the backed-off delay', async () => {
+  const timers = createManualTimers();
+  const calls: RequestInit[] = [];
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: abortAwareHangingStreamFetch(calls),
+    setTimeoutImpl: timers.setTimeoutImpl, clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  // A plain, signal-only subscriber starts the stream first — exactly the
+  // "wrong order" case this mechanism exists to correct.
+  connection.subscribe(() => {});
+  await flush(20);
+  assert.equal(calls.length, 1, 'the stream is running for the plain subscriber, with no event-payload subscriber yet');
+
+  const events: unknown[] = [];
+  connection.subscribeToEvents((event) => events.push(event));
+  // No timers.flushAll() here on purpose: forceReconnect bypasses the
+  // backoff entirely (delay reset to 0), so the fresh connect must happen
+  // on its own, from aborting the in-flight read, without this test ever
+  // touching the manual timer queue.
+  await flush(30);
+
+  assert.equal(calls.length, 2, 'the late event-payload subscriber forced a second, immediate connect attempt — required for correct ack-aware replay, not a silent stall');
+  assert.ok(events.some((e) => (e as { type: string }).type === 'connected'), 'the new event-payload subscriber received its own connected marker from the forced reconnect');
+});

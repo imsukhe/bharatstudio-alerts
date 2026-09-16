@@ -9,6 +9,8 @@ function fakeConnection(): MasterCanvasConnection & { fireChange(): void } {
   const listeners = new Set<() => void>();
   return {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    subscribeToEvents: () => () => {},
+    acknowledge: async () => ({ ok: false }),
     getOpenAttemptCount: () => 0,
     getSubscriberCount: () => listeners.size,
     fireChange() { for (const l of listeners) l(); },

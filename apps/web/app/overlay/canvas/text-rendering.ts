@@ -22,7 +22,7 @@
  * only the source of the value changes.
  */
 
-export type CanvasTextRole = 'name' | 'title' | 'amount' | 'label';
+export type CanvasTextRole = 'name' | 'title' | 'amount' | 'label' | 'message';
 
 export interface CanvasTextStyle {
   fontFamily: string;
@@ -42,5 +42,6 @@ export function defaultCanvasTextStyles(): Record<CanvasTextRole, CanvasTextStyl
     title: { fontFamily: DEFAULT_FONT_STACK },
     amount: { fontFamily: DEFAULT_FONT_STACK },
     label: { fontFamily: DEFAULT_FONT_STACK },
+    message: { fontFamily: DEFAULT_FONT_STACK },
   };
 }

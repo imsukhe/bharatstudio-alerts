@@ -44,7 +44,7 @@ async function buildTestApp(store?: Partial<ModeratorStatusOverlayStore>) {
   return app;
 }
 
-const heldThree: ModeratorStatus = { schemaVersion: 'v1', heldCount: 3 };
+const heldThree: ModeratorStatus = { schemaVersion: 'v1', heldCount: 3, safeMode: false };
 
 // --- S5.7: no bearer token, and malformed ones ----------------------------
 
@@ -79,7 +79,7 @@ test('overlay moderator-status forwards the exact token to the store and returns
     method: 'GET', url, headers: { authorization: 'Bearer overlay-token-mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm' },
   });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { schemaVersion: 'v1', moderatorStatus: { schemaVersion: 'v1', heldCount: 3 } });
+  assert.deepEqual(response.json(), { schemaVersion: 'v1', moderatorStatus: { schemaVersion: 'v1', heldCount: 3, safeMode: false } });
   assert.equal(seenToken, 'overlay-token-mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm');
   assert.equal(seenOverlayId, overlayId);
   await app.close();
@@ -92,10 +92,10 @@ test('overlay moderator-status: a valid session with nothing held answers 200 wi
   // the card as "nothing is stuck", whereas null means the read did not
   // answer at all. Collapsing the two would make the Canvas unable to
   // tell a quiet queue from a broken read.
-  const app = await buildTestApp({ async getForOverlay() { return { schemaVersion: 'v1', heldCount: 0 } as ModeratorStatus; } });
+  const app = await buildTestApp({ async getForOverlay() { return { schemaVersion: 'v1', heldCount: 0, safeMode: false } as ModeratorStatus; } });
   const response = await app.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn' } });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json().moderatorStatus, { schemaVersion: 'v1', heldCount: 0 });
+  assert.deepEqual(response.json().moderatorStatus, { schemaVersion: 'v1', heldCount: 0, safeMode: false });
   await app.close();
 });
 
@@ -109,7 +109,7 @@ test('overlay moderator-status: a token the store does not recognise yields null
   assert.equal(foreign.json().moderatorStatus, null);
   const good = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${recognised}` } });
   assert.equal(good.statusCode, 200);
-  assert.deepEqual(good.json().moderatorStatus, { schemaVersion: 'v1', heldCount: 3 });
+  assert.deepEqual(good.json().moderatorStatus, { schemaVersion: 'v1', heldCount: 3, safeMode: false });
   await app.close();
 });
 
@@ -134,16 +134,17 @@ test('overlay moderator-status reports an unwired or failed store as a retryable
 
 // --- S5.11: THE PRIVACY NARROWING, at the route boundary ------------------
 
-test('overlay moderator-status strips every field the store hands up beyond the count (§6: never private content)', async () => {
+test('overlay moderator-status strips every field the store hands up beyond the count and the flag (§6: never private content)', async () => {
   // A deliberately polluted store answer. The SQL function cannot
   // actually produce any of this -- its returned column set is asserted
-  // to be exactly {held_count} in
+  // to be exactly {held_count, safe_mode} in
   // packages/db/tests/prf02_slice5_moderator_status.sql -- so this case
   // exists precisely because the guarantee must not depend on ONE layer
   // holding. Two independent narrowings, not one.
   const polluted = {
     schemaVersion: 'v1',
     heldCount: 4,
+    safeMode: true,
     supporterName: 'Riya',
     message: 'a private supporter message',
     amountPaise: 300000,
@@ -152,20 +153,58 @@ test('overlay moderator-status strips every field the store hands up beyond the 
     queueId: '00000000-0000-4000-8000-000000005521',
     channelId: '00000000-0000-4000-8000-000000005511',
     viewerIdentityId: '00000000-0000-4000-8000-0000000000a1',
-    // Safe mode is NOT built (owner decision, 2026-09-16). Even if a
-    // store invented one, it must not reach an overlay under any label.
-    safeMode: true,
+    // Safe mode being real did NOT make the queue-paused flag
+    // publishable: it remains a different thing (owner decision,
+    // 2026-09-16) and must not reach an overlay under any label.
     isPaused: true,
+    paused: true,
   } as unknown as ModeratorStatus;
 
   const app = await buildTestApp({ async getForOverlay() { return polluted; } });
   const response = await app.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' } });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { schemaVersion: 'v1', moderatorStatus: { schemaVersion: 'v1', heldCount: 4 } });
+  assert.deepEqual(response.json(), { schemaVersion: 'v1', moderatorStatus: { schemaVersion: 'v1', heldCount: 4, safeMode: true } });
 
   const body = JSON.stringify(response.json());
-  for (const forbidden of ['Riya', 'private supporter message', '300000', '5561', '5541', '5521', '5511', '00a1', 'safeMode', 'isPaused']) {
+  for (const forbidden of ['Riya', 'private supporter message', '300000', '5561', '5541', '5521', '5511', '00a1', 'isPaused', '"paused"']) {
     assert.equal(body.includes(forbidden), false, `${forbidden} must never appear in an overlay moderator-status response`);
+  }
+  await app.close();
+});
+
+// --- S5.13: safe mode travels, and is never coerced ------------------------
+
+test('overlay moderator-status carries safeMode through, and refuses a non-boolean rather than coercing it', async () => {
+  const on = await buildTestApp({ async getForOverlay() { return { schemaVersion: 'v1', heldCount: 0, safeMode: true } as ModeratorStatus; } });
+  const onResponse = await on.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-tttttttttttttttttttttttttttttttt' } });
+  assert.equal(onResponse.statusCode, 200);
+  assert.deepEqual(onResponse.json().moderatorStatus, { schemaVersion: 'v1', heldCount: 0, safeMode: true },
+    'safe mode on with nothing held is a real answer -- it is the state right after the creator throws the switch');
+  await on.close();
+
+  // A truthy string must NOT become "safe mode on". Painting that label
+  // over a value nothing verified is a claim about moderation state this
+  // layer has no authority to make, so the whole answer is discarded.
+  for (const bad of ['true' as unknown as boolean, 1 as unknown as boolean, null as unknown as boolean, undefined as unknown as boolean]) {
+    const app = await buildTestApp({ async getForOverlay() { return { schemaVersion: 'v1', heldCount: 2, safeMode: bad } as ModeratorStatus; } });
+    const response = await app.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu' } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().moderatorStatus, null, `safeMode ${String(bad)} must not be rendered`);
+    await app.close();
+  }
+});
+
+// --- The overlay route is read-only: no write surface for the switch ------
+
+test('the overlay moderator-status path offers no way to change safe mode — an overlay token can read it and never set it', async () => {
+  const app = await buildTestApp({ async getForOverlay() { return heldThree; } });
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+    const response = await app.inject({
+      method, url,
+      headers: { authorization: 'Bearer overlay-token-vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' },
+      payload: { safeMode: true },
+    });
+    assert.equal(response.statusCode, 404, `${method} on the overlay read must not exist — the switch is the creator's session-authenticated surface alone`);
   }
   await app.close();
 });
@@ -174,7 +213,7 @@ test('overlay moderator-status strips every field the store hands up beyond the 
 
 test('overlay moderator-status: a negative, fractional or non-numeric count is projected to null rather than rendered', async () => {
   for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '3' as unknown as number, null as unknown as number]) {
-    const app = await buildTestApp({ async getForOverlay() { return { schemaVersion: 'v1', heldCount: bad } as ModeratorStatus; } });
+    const app = await buildTestApp({ async getForOverlay() { return { schemaVersion: 'v1', heldCount: bad, safeMode: false } as ModeratorStatus; } });
     const response = await app.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-ssssssssssssssssssssssssssssssss' } });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().moderatorStatus, null, `heldCount ${String(bad)} must not be rendered`);
@@ -184,35 +223,39 @@ test('overlay moderator-status: a negative, fractional or non-numeric count is p
 
 // --- projectModeratorStatus, directly -------------------------------------
 
-test('projectModeratorStatus keeps only schemaVersion and heldCount, and rejects an absent or invalid count', async () => {
+test('projectModeratorStatus keeps only schemaVersion, heldCount and safeMode, and rejects an absent or invalid value', async () => {
   assert.equal(projectModeratorStatus(null), null);
-  assert.deepEqual(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 0 }), { schemaVersion: 'v1', heldCount: 0 });
-  assert.deepEqual(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 12 }), { schemaVersion: 'v1', heldCount: 12 });
-  assert.equal(projectModeratorStatus({ schemaVersion: 'v1', heldCount: -1 }), null);
-  assert.equal(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 0.5 }), null);
+  assert.deepEqual(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 0, safeMode: false }), { schemaVersion: 'v1', heldCount: 0, safeMode: false });
+  assert.deepEqual(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 12, safeMode: true }), { schemaVersion: 'v1', heldCount: 12, safeMode: true });
+  assert.equal(projectModeratorStatus({ schemaVersion: 'v1', heldCount: -1, safeMode: false }), null);
+  assert.equal(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 0.5, safeMode: false }), null);
+  assert.equal(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 1 } as unknown as ModeratorStatus), null,
+    'an answer with no safe-mode flag is no answer -- it is half of module #12');
+  assert.equal(projectModeratorStatus({ schemaVersion: 'v1', heldCount: 1, safeMode: 'true' } as unknown as ModeratorStatus), null,
+    'safeMode is never coerced');
 
-  const projected = projectModeratorStatus({ schemaVersion: 'v1', heldCount: 2, message: 'private' } as unknown as ModeratorStatus);
-  assert.deepEqual(Object.keys(projected ?? {}), ['schemaVersion', 'heldCount'], 'the projection must emit exactly two keys');
+  const projected = projectModeratorStatus({ schemaVersion: 'v1', heldCount: 2, safeMode: true, message: 'private' } as unknown as ModeratorStatus);
+  assert.deepEqual(Object.keys(projected ?? {}), ['schemaVersion', 'heldCount', 'safeMode'], 'the projection must emit exactly three keys');
 });
 
-// --- The type itself carries no safe-mode field ---------------------------
+// --- The type carries the flag, and still no queue-lifecycle field --------
 
-test('ModeratorStatus has no safe-mode/paused field of any kind — a compile-time check, not a comment', async () => {
-  // Safe mode is NOT the queue-paused flag (owner decision, 2026-09-16);
-  // it is a separate moderation control that does not exist in the
-  // schema and needs its own record and decision. If a field for it is
-  // ever added to ModeratorStatus, this assignment stops compiling and
+test('ModeratorStatus carries safeMode and no queue-paused field of any kind — a compile-time check, not a comment', async () => {
+  // Safe mode is the creator's own switch (owner decision, 2026-09-16)
+  // and is NOT alert_queues.is_paused, which remains a queue lifecycle
+  // state no overlay projection may carry. If a field for the latter is
+  // ever added to ModeratorStatus, these assignments stop compiling and
   // the suite fails to run at all.
   type HasKey<K extends string> = K extends keyof ModeratorStatus ? true : false;
-  const safeModeAbsent: HasKey<'safeMode'> = false;
+  const safeModePresent: HasKey<'safeMode'> = true;
   const isPausedAbsent: HasKey<'isPaused'> = false;
   const pausedAbsent: HasKey<'paused'> = false;
-  assert.equal(safeModeAbsent, false);
+  assert.equal(safeModePresent, true);
   assert.equal(isPausedAbsent, false);
   assert.equal(pausedAbsent, false);
 
-  // And exactly two keys exist on the shape, so nothing private can be
+  // And exactly three keys exist on the shape, so nothing private can be
   // carried alongside the count either.
-  const sample: ModeratorStatus = { schemaVersion: 'v1', heldCount: 1 };
-  assert.deepEqual(Object.keys(sample), ['schemaVersion', 'heldCount']);
+  const sample: ModeratorStatus = { schemaVersion: 'v1', heldCount: 1, safeMode: false };
+  assert.deepEqual(Object.keys(sample), ['schemaVersion', 'heldCount', 'safeMode']);
 });

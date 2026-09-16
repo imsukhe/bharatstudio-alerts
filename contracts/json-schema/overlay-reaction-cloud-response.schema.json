@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-reaction-cloud-response.schema.json",
+  "title": "Overlay reaction cloud response (PRF-02 slice 6 / PRF-06, catalogue module #5)",
+  "description": "The overlay-facing projection of viewer reactions, scoped to one channel by the overlay session token. It is ALREADY the server-side sample: the read aggregates every reaction into one row per curated-catalogue entry and applies the configured display ceiling inside the database, so a client never receives the reaction stream and is never asked to drop part of it. Each entry carries a catalogue entry id, that entry's already-public display name, and a count -- no viewer id, anonymous identity token, session id, IP address, or timestamp of any precision. An unrecognised, expired, revoked or foreign overlay token returns an empty entries array, which is also what a quiet channel returns: an empty cloud and an unauthorised read both mean paint nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "entries"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entrySource", "entryId", "displayName", "reactionCount"],
+        "properties": {
+          "entrySource": {
+            "type": "string",
+            "enum": ["catalogue", "creator_pack"],
+            "description": "Which half of the existing curated sticker catalogue the entry came from: the first-party platform catalogue, or a staff-reviewed creator pack. There is no third value, and no value that denotes an asset supplied by a viewer -- a viewer can only ever send an entry that was already approved."
+          },
+          "entryId": { "type": "string", "format": "uuid" },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "The catalogue entry's own display name -- a sticker's name, not a person's. The same field the unauthenticated tip-page sticker reads already return."
+          },
+          "reactionCount": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many reactions this entry received inside the read's window. Aggregated in the database; an entry with no reactions is absent rather than present with a zero."
+          }
+        }
+      }
+    }
+  }
+}

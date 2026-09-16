@@ -1,5 +1,5 @@
 {
   "$schema": "https://bharatstudio.in/contracts/v1/overlay-moderator-status-response.schema.json",
   "schemaVersion": "v1",
-  "moderatorStatus": { "schemaVersion": "v1", "heldCount": 3 }
+  "moderatorStatus": { "schemaVersion": "v1", "heldCount": 3, "safeMode": true }
 }

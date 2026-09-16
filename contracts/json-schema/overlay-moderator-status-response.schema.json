@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bharatstudio.in/contracts/v1/overlay-moderator-status-response.schema.json",
-  "title": "Overlay moderator status response (PRF-02 slice 5, catalogue module #12, held half only)",
-  "description": "The overlay-facing projection of held alert deliveries awaiting a moderator, scoped to one channel by the overlay session token. It carries a COUNT and nothing else: no supporter name, message text, amount, delivery id, event id, queue id, payment reference or viewer identifier. There is deliberately no safe-mode field -- safe mode is not the queue-paused flag, it is a separate moderation control that does not exist in the schema and needs its own record and decision. `moderatorStatus` is null when the overlay token is not recognised; a recognised token with nothing held returns heldCount 0.",
+  "title": "Overlay moderator status response (PRF-02, catalogue module #12)",
+  "description": "The overlay-facing projection of held alert deliveries awaiting a moderator plus the channel's safe-mode state, scoped to one channel by the overlay session token. It carries a COUNT and a BOOLEAN and nothing else: no supporter name, message text, amount, delivery id, event id, queue id, payment reference or viewer identifier. `safeMode` is the creator's own per-channel switch (owner decision, 2026-09-16) -- while it is on, incoming alerts route to held rather than ready. It is never automatic and it is NOT alert_queues.is_paused, which remains a different thing and is still refused by this schema under every spelling. `moderatorStatus` is null when the overlay token is not recognised; a recognised token with nothing held and safe mode off returns heldCount 0 and safeMode false.",
   "type": "object",
   "additionalProperties": false,
   "required": ["$schema", "schemaVersion", "moderatorStatus"],
@@ -15,10 +15,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["schemaVersion", "heldCount"],
+          "required": ["schemaVersion", "heldCount", "safeMode"],
           "properties": {
             "schemaVersion": { "const": "v1" },
-            "heldCount": { "type": "integer", "minimum": 0 }
+            "heldCount": { "type": "integer", "minimum": 0 },
+            "safeMode": { "type": "boolean" }
           }
         }
       ]

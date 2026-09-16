@@ -73,10 +73,14 @@ import { registerReputationRoutes } from './routes/reputation.js';
 import { registerGoalRoutes } from './routes/goals.js';
 import type { MasterCanvasOverlayStore, MasterCanvasStore } from './domain/master-canvas-store.js';
 import type { ModeratorStatusOverlayStore } from './domain/moderator-status-store.js';
+import type { ReactionCloudOverlayStore, ReactionSendStore } from './domain/reaction-cloud-store.js';
 import { registerMasterCanvasRoutes } from './routes/master-canvas.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card).
 import type { StreamMissionOverlayStore, StreamMissionStore } from './domain/stream-mission-store.js';
 import { registerStreamMissionRoutes } from './routes/stream-mission.js';
+// PRF-02, §6 module #12: safe mode, the creator's own moderation switch.
+import type { SafeModeStore } from './domain/safe-mode-store.js';
+import { registerSafeModeRoutes } from './routes/safe-mode.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -140,8 +144,18 @@ export type AppDependencies = {
   overlayGoals?: OverlayGoalStore;
   masterCanvasModules?: MasterCanvasStore;
   overlayMasterCanvasModules?: MasterCanvasOverlayStore;
-  // PRF-02 slice 5, §6 module #12 (held half only).
+  // PRF-02, §6 module #12. The overlay read (held count + safe-mode
+  // flag); the creator's own switch is `safeMode` below.
   overlayModeratorStatus?: ModeratorStatusOverlayStore;
+  // PRF-02 slice 6 / PRF-06, §6 module #5 (Reaction Cloud). The overlay
+  // store is a derived read on RT-10/RT-11's derivedReadSql pool and is
+  // where the SERVER-SIDE sample is applied; the send store is a write on
+  // the main pool and is deliberately not on the derived-read pool.
+  overlayReactionCloud?: ReactionCloudOverlayStore;
+  reactionSends?: ReactionSendStore;
+  // PRF-02, §6 module #12: safe mode. A creator write/read surface on
+  // the main pool, never on derivedReadSql.
+  safeMode?: SafeModeStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -332,6 +346,8 @@ export async function buildApp(
     config.appOrigin,
     dependencies.votePaymentTags,
     dependencies.publicPaidVotes,
+    // PRF-02 slice 6 / PRF-06: the public reaction send path.
+    dependencies.reactionSends,
   );
   await registerAuthRoutes(app, dependencies);
   await registerMeRoutes(app, dependencies.sessions, dependencies.notifications, dependencies.notificationTokenProtector, dependencies.account);
@@ -351,8 +367,9 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
-  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
+  await registerSafeModeRoutes(app, dependencies.sessions, dependencies.safeMode, dependencies.account);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

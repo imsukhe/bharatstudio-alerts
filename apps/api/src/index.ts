@@ -42,6 +42,9 @@ import { createSqlGoalStore } from './db/goal-store.js';
 import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
 import { createSqlMasterCanvasOverlayStore, createSqlMasterCanvasStore } from './db/master-canvas-sql-store.js';
 import { createSqlModeratorStatusOverlayStore } from './db/moderator-status-overlay-store.js';
+import { createSqlReactionCloudOverlayStore } from './db/reaction-cloud-overlay-store.js';
+import { createSqlReactionSendStore } from './db/reaction-send-store.js';
+import { createSqlSafeModeStore } from './db/safe-mode-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -151,6 +154,27 @@ const app = await buildApp(config, {
   // derived-read pool like every other widget/overlay read -- which is
   // also what puts it inside rule 3 of the RT-12 required-queries scan.
   overlayModeratorStatus: sql ? createSqlModeratorStatusOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 6 / PRF-06, §6 module #5 (Reaction Cloud).
+  //
+  // The overlay read is on the RT-10/RT-11 derived-read pool like every
+  // other widget/overlay read -- which is also what puts it inside rule 3
+  // of the RT-12 required-queries scan. It is constructed with
+  // `config.reactionCloudSampleMax`, the CONFIGURED-BUT-UNSET display
+  // ceiling: unset here means unset in the SQL LIMIT, which means today's
+  // behaviour. No `??` fallback, and there must not be one.
+  //
+  // The SEND path is a WRITE and takes the MAIN pool, never derivedReadSql
+  // -- that pool exists for widget/dashboard/analytics reads, and routing
+  // a write through it would misuse both the pool and its statement
+  // timeout.
+  overlayReactionCloud: sql ? createSqlReactionCloudOverlayStore(derivedReadSql!, config.reactionCloudSampleMax) : undefined,
+  reactionSends: sql ? createSqlReactionSendStore(sql) : undefined,
+  // PRF-02, §6 module #12: safe mode, the creator's own switch. On the
+  // MAIN pool, not derivedReadSql -- it carries a write, and putting a
+  // write on the bounded derived-read pool would be wrong twice over
+  // (see db/safe-mode-store.ts's own header). That also keeps it
+  // correctly outside rule 3 of the RT-12 required-queries scan.
+  safeMode: sql ? createSqlSafeModeStore(sql) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;
   // the overlay store is a derived read and uses derivedReadSql, which is

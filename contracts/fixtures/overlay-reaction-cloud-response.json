@@ -1,0 +1,8 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-reaction-cloud-response.schema.json",
+  "schemaVersion": "v1",
+  "entries": [
+    { "entrySource": "catalogue", "entryId": "00000000-0000-4000-8000-000000005721", "displayName": "Clap", "reactionCount": 12 },
+    { "entrySource": "creator_pack", "entryId": "00000000-0000-4000-8000-000000005731", "displayName": "Pack Star", "reactionCount": 3 }
+  ]
+}

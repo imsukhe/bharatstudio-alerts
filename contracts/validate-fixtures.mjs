@@ -29,6 +29,9 @@ const fixtureToSchema = {
   'overlay-leaderboard-response.json': 'overlay-leaderboard-response.schema.json',
   'overlay-paid-vote-tally-response.json': 'overlay-paid-vote-tally-response.schema.json',
   'overlay-moderator-status-response.json': 'overlay-moderator-status-response.schema.json',
+  'overlay-reaction-cloud-response.json': 'overlay-reaction-cloud-response.schema.json',
+  'public-reaction-send-response.json': 'public-reaction-send-response.schema.json',
+  'channel-safe-mode-response.json': 'channel-safe-mode-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
   'payment-webhook-delivery.json': 'payment-webhook-delivery.schema.json',
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',
@@ -241,14 +244,14 @@ if (overlayVoteValidator(voteWithNegativeCount)) {
   failures.push('overlay-vote-tally-response.json: negative vote count was accepted');
 }
 
-// PRF-02 slice 5, catalogue module #12 (Moderator Status Card, held half
-// only). §6 requires "never private content" on this surface and the
-// owner's 2026-09-16 decision requires it to be a property of the query
-// rather than of the renderer -- migration 0136's function returns a
-// single held_count column. These negative cases are the CONTRACT's own
-// half of that guarantee: the published response schema must refuse every
-// private field outright, so a future server change cannot introduce one
-// without a visible, reviewable contract change.
+// PRF-02, catalogue module #12 (Moderator Status Card). §6 requires
+// "never private content" on this surface and the owner's 2026-09-16
+// decision requires it to be a property of the query rather than of the
+// renderer -- migration 0138's function returns exactly held_count and
+// safe_mode. These negative cases are the CONTRACT's own half of that
+// guarantee: the published response schema must refuse every private
+// field outright, so a future server change cannot introduce one without
+// a visible, reviewable contract change.
 const overlayModeratorStatusSchema = await loadSchema('overlay-moderator-status-response.schema.json');
 const overlayModeratorStatusValidator = ajv.getSchema(overlayModeratorStatusSchema.$id);
 for (const [field, value] of [
@@ -266,16 +269,42 @@ for (const [field, value] of [
     failures.push(`overlay-moderator-status-response.json: private field ${field} was accepted`);
   }
 }
-// Safe mode is NOT alert_queues.is_paused (owner decision, 2026-09-16).
-// It is a separate moderation control that does not exist in the schema
-// and needs its own record and decision, so no contract may carry a field
-// for it -- including one that merely looks like it.
-for (const field of ['safeMode', 'isPaused', 'paused']) {
-  const withSafeMode = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
-  withSafeMode.moderatorStatus[field] = true;
-  if (overlayModeratorStatusValidator(withSafeMode)) {
-    failures.push(`overlay-moderator-status-response.json: ${field} was accepted -- safe mode is not built and must not appear in any contract`);
+// Safe mode arriving did NOT make alert_queues.is_paused publishable.
+// The owner's 2026-09-16 decision says safe mode is a creator switch and
+// is explicitly NOT that flag, which remains a queue lifecycle state no
+// overlay contract may carry -- including under a name that merely looks
+// like safe mode's.
+for (const field of ['isPaused', 'paused', 'queuePaused']) {
+  const withQueueFlag = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+  withQueueFlag.moderatorStatus[field] = true;
+  if (overlayModeratorStatusValidator(withQueueFlag)) {
+    failures.push(`overlay-moderator-status-response.json: ${field} was accepted -- safe mode is NOT the queue-paused flag and that flag must not appear in any overlay contract`);
   }
+}
+// safeMode is required, and is a real boolean. A response missing it is
+// not a valid answer (the card would have nothing to say about the half
+// of module #12 this completes), and a truthy non-boolean must never be
+// coerced into "safe mode on" -- that would be a claim about moderation
+// state nothing verified.
+const moderatorStatusWithoutSafeMode = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+delete moderatorStatusWithoutSafeMode.moderatorStatus.safeMode;
+if (overlayModeratorStatusValidator(moderatorStatusWithoutSafeMode)) {
+  failures.push('overlay-moderator-status-response.json: a moderatorStatus without safeMode was accepted -- the flag is required, not optional');
+}
+for (const value of ['true', 1, 'on']) {
+  const moderatorStatusBadSafeMode = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+  moderatorStatusBadSafeMode.moderatorStatus.safeMode = value;
+  if (overlayModeratorStatusValidator(moderatorStatusBadSafeMode)) {
+    failures.push(`overlay-moderator-status-response.json: safeMode ${JSON.stringify(value)} was accepted -- it must be a boolean and must never be coerced`);
+  }
+}
+// Safe mode ON with nothing yet held is a real and important answer: the
+// creator has just switched it on. It must validate.
+const moderatorStatusSafeModeOnlyOn = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+moderatorStatusSafeModeOnlyOn.moderatorStatus.heldCount = 0;
+moderatorStatusSafeModeOnlyOn.moderatorStatus.safeMode = true;
+if (!overlayModeratorStatusValidator(moderatorStatusSafeModeOnlyOn)) {
+  failures.push('overlay-moderator-status-response.json: safe mode on with heldCount 0 must be a VALID answer -- it is the state immediately after a creator turns the switch on');
 }
 const moderatorStatusNegativeCount = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
 moderatorStatusNegativeCount.moderatorStatus.heldCount = -1;
@@ -289,8 +318,154 @@ if (overlayModeratorStatusValidator(moderatorStatusFractionalCount)) {
 }
 const moderatorStatusZero = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
 moderatorStatusZero.moderatorStatus.heldCount = 0;
+moderatorStatusZero.moderatorStatus.safeMode = false;
 if (!overlayModeratorStatusValidator(moderatorStatusZero)) {
-  failures.push('overlay-moderator-status-response.json: heldCount 0 must be a VALID answer -- a recognised overlay token with nothing held returns zero, which is different from an unrecognised token returning null');
+  failures.push('overlay-moderator-status-response.json: heldCount 0 with safeMode false must be a VALID answer -- a recognised overlay token with nothing held and safe mode off returns exactly that, which is different from an unrecognised token returning null');
+}
+
+// PRF-02, catalogue module #12: the CREATOR side of safe mode.
+//
+// Safe mode is a SWITCH, not a policy object. The owner's 2026-09-16
+// decision says it is never automatic and is engaged by no signal, so
+// the published contract must refuse every knob outright -- a threshold,
+// a window, a rate, a duration, an expiry, a reason or a trigger in this
+// response would be a product decision arriving through a schema change
+// nobody reviewed as one. These are the contract's half of that.
+const channelSafeModeSchema = await loadSchema('channel-safe-mode-response.schema.json');
+const channelSafeModeValidator = ajv.getSchema(channelSafeModeSchema.$id);
+for (const [field, value] of [
+  ['threshold', 10],
+  ['windowSeconds', 60],
+  ['rateLimitPerMinute', 30],
+  ['auto', true],
+  ['triggeredBy', 'spike'],
+  ['expiresAt', '2026-09-16T00:00:00Z'],
+  ['durationSeconds', 900],
+  ['reason', 'a spike of alerts'],
+]) {
+  const withKnob = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-safe-mode-response.json'), 'utf8'));
+  withKnob.safeMode[field] = value;
+  if (channelSafeModeValidator(withKnob)) {
+    failures.push(`channel-safe-mode-response.json: ${field} was accepted -- safe mode is a creator switch and is NEVER automatic, so it carries no threshold, window, duration or trigger of any kind`);
+  }
+}
+// It is not the queue-paused flag either, on this side of the product.
+for (const field of ['isPaused', 'paused']) {
+  const withQueueFlag = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-safe-mode-response.json'), 'utf8'));
+  withQueueFlag.safeMode[field] = true;
+  if (channelSafeModeValidator(withQueueFlag)) {
+    failures.push(`channel-safe-mode-response.json: ${field} was accepted -- safe mode is NOT alert_queues.is_paused`);
+  }
+}
+for (const value of ['true', 1, null]) {
+  const badEnabled = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-safe-mode-response.json'), 'utf8'));
+  badEnabled.safeMode.enabled = value;
+  if (channelSafeModeValidator(badEnabled)) {
+    failures.push(`channel-safe-mode-response.json: enabled ${JSON.stringify(value)} was accepted -- it must be a boolean`);
+  }
+}
+// Off is a valid, ordinary answer -- and the only one a channel that has
+// never touched the switch can give.
+const safeModeOff = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-safe-mode-response.json'), 'utf8'));
+safeModeOff.safeMode.enabled = false;
+if (!channelSafeModeValidator(safeModeOff)) {
+  failures.push('channel-safe-mode-response.json: enabled false must be a VALID answer -- it is the default state of every channel');
+}
+
+// PRF-02 slice 6 / PRF-06, catalogue module #5 (Reaction Cloud). §6 #5
+// requires this surface to be NON-IDENTIFYING and the owner's 2026-09-16
+// decision requires that to be a property of the read rather than of the
+// renderer -- migration 0139's function returns catalogue entry ids and
+// counts only. These negative cases are the CONTRACT's own half of that
+// guarantee: the published response schema must refuse every identifying
+// field outright, so a future server change cannot introduce one without a
+// visible, reviewable contract change.
+const overlayReactionCloudSchema = await loadSchema('overlay-reaction-cloud-response.schema.json');
+const overlayReactionCloudValidator = ajv.getSchema(overlayReactionCloudSchema.$id);
+async function reactionCloudFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-reaction-cloud-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  ['viewerId', '00000000-0000-4000-8000-0000000000a1'],
+  ['viewerIdentityId', '00000000-0000-4000-8000-0000000000a2'],
+  ['anonymousIdentityId', '00000000-0000-4000-8000-0000000000a3'],
+  ['anonymousIdentityTokenHash', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'],
+  ['sessionId', '00000000-0000-4000-8000-0000000000a4'],
+  ['overlaySessionId', '00000000-0000-4000-8000-0000000000a5'],
+  ['ipAddress', '203.0.113.7'],
+  ['supporterName', 'Riya'],
+  ['message', 'a private supporter message'],
+  // A timestamp is identifying on this surface even though it names nobody:
+  // per-send times are what would let one viewer's reactions be correlated
+  // with each other, which is exactly what "non-identifying" forbids.
+  ['createdAt', '2026-09-16T10:00:00.000Z'],
+  ['sentAt', '2026-09-16T10:00:00.000Z'],
+  ['lastReactionAt', '2026-09-16T10:00:00.000Z'],
+]) {
+  const polluted = await reactionCloudFixture();
+  polluted.entries[0][field] = value;
+  if (overlayReactionCloudValidator(polluted)) {
+    failures.push(`overlay-reaction-cloud-response.json: identifying field ${field} was accepted`);
+  }
+}
+// The asset itself never travels on this path either: a reaction is a send
+// of an entry that is ALREADY in the curated catalogue (owner decision,
+// 2026-09-16), so there is no bytes/url/mime surface here at all and the
+// contract must refuse one.
+for (const [field, value] of [
+  ['assetBytes', 'e30='],
+  ['assetUrl', 'https://cdn.example.invalid/sticker.json'],
+  ['renderDocument', { v: '5.7.4' }],
+  ['mimeType', 'application/json'],
+]) {
+  const polluted = await reactionCloudFixture();
+  polluted.entries[0][field] = value;
+  if (overlayReactionCloudValidator(polluted)) {
+    failures.push(`overlay-reaction-cloud-response.json: ${field} was accepted -- a reaction carries a catalogue entry id, never an asset`);
+  }
+}
+// A viewer-supplied source would be a new asset pipeline, which the owner
+// decision explicitly does not authorise.
+const reactionCloudUnknownSource = await reactionCloudFixture();
+reactionCloudUnknownSource.entries[0].entrySource = 'viewer_upload';
+if (overlayReactionCloudValidator(reactionCloudUnknownSource)) {
+  failures.push('overlay-reaction-cloud-response.json: an entry source outside the existing curated catalogue was accepted');
+}
+// An entry with no reactions is ABSENT, not present with a zero -- the read
+// is an aggregate over a window, so a zero row cannot exist.
+for (const count of [0, -1, 1.5]) {
+  const polluted = await reactionCloudFixture();
+  polluted.entries[0].reactionCount = count;
+  if (overlayReactionCloudValidator(polluted)) {
+    failures.push(`overlay-reaction-cloud-response.json: reactionCount ${count} was accepted`);
+  }
+}
+// An EMPTY cloud is a VALID answer, and it is the same answer an
+// unrecognised overlay token gets: both mean paint nothing.
+const reactionCloudEmpty = await reactionCloudFixture();
+reactionCloudEmpty.entries = [];
+if (!overlayReactionCloudValidator(reactionCloudEmpty)) {
+  failures.push('overlay-reaction-cloud-response.json: an empty entries array must be a VALID answer -- it is what both a quiet channel and an unrecognised overlay token return');
+}
+
+// The public send response carries an outcome and nothing else: a reaction
+// is not a record a viewer owns, reads back, edits or deletes, so there is
+// nothing for a viewer to address afterwards and no identifier to hand out.
+const publicReactionSendSchema = await loadSchema('public-reaction-send-response.schema.json');
+const publicReactionSendValidator = ajv.getSchema(publicReactionSendSchema.$id);
+for (const [field, value] of [
+  ['reactionId', '00000000-0000-4000-8000-0000000000b1'],
+  ['viewerId', '00000000-0000-4000-8000-0000000000b2'],
+  ['anonymousIdentityId', '00000000-0000-4000-8000-0000000000b3'],
+  ['channelId', '00000000-0000-4000-8000-000000005711'],
+  ['createdAt', '2026-09-16T10:00:00.000Z'],
+  ['remainingThisMinute', 42],
+]) {
+  const polluted = JSON.parse(await fs.readFile(path.join(fixtureDir, 'public-reaction-send-response.json'), 'utf8'));
+  polluted[field] = value;
+  if (publicReactionSendValidator(polluted)) {
+    failures.push(`public-reaction-send-response.json: ${field} was accepted -- the send response carries an outcome and nothing else`);
+  }
 }
 
 const overlayHypeSchema = await loadSchema('overlay-hype-response.schema.json');

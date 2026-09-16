@@ -15,6 +15,7 @@ tags:
   - name: Creator
   - name: Configuration
   - name: Queues
+  - name: Moderation
   - name: History
   - name: Billing
   - name: Overlay
@@ -1344,26 +1345,161 @@ paths:
     get:
       tags: [Overlay]
       operationId: getOverlayModeratorStatus
-      summary: Held alert deliveries awaiting a moderator, as a count and nothing else.
+      summary: Held alert deliveries awaiting a moderator, plus the channel's safe-mode state.
       description: >-
-        Master Canvas module #12 (Moderator Status Card), held half only. Returns the number of this
-        channel's alert deliveries currently held for a moderator's decision. It carries a COUNT and
-        nothing else - no supporter name, message text, amount, delivery id, event id, queue id,
-        payment reference or viewer identifier - and that is enforced by the read itself, whose
-        returned column set is a single integer. There is deliberately no safe-mode field: safe mode
-        is a separate moderation control that does not exist yet and needs its own decision.
-        moderatorStatus is null when the overlay token is not recognised; a recognised token with
-        nothing held returns heldCount 0.
+        Master Canvas module #12 (Moderator Status Card). Returns the number of this channel's alert
+        deliveries currently held for a moderator's decision, and whether the creator's safe-mode
+        switch is on. It carries a COUNT and a BOOLEAN and nothing else - no supporter name, message
+        text, amount, delivery id, event id, queue id, payment reference or viewer identifier - and
+        that is enforced by the read itself, whose returned column set is exactly those two values.
+        safeMode is the creator's own per-channel moderation switch: while it is on, incoming alerts
+        route to held rather than ready. It is never automatic - no spike detection, no
+        rejection-rate heuristic, no signal of any kind engages it - and it is NOT the queue-paused
+        flag, which this read still never touches. This route is read-only; the switch is changed
+        through the creator's own /v1/channels/{channelId}/safe-mode surface. moderatorStatus is
+        null when the overlay token is not recognised; a recognised token with nothing held and safe
+        mode off returns heldCount 0 and safeMode false.
       security: [{ overlayToken: [] }]
       parameters:
         - $ref: '#/components/parameters/OverlayId'
       responses:
         '200':
-          description: Token-scoped held-delivery count for this overlay, or null when unavailable for this overlay.
+          description: Token-scoped held-delivery count and safe-mode state for this overlay, or null when unavailable for this overlay.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OverlayModeratorStatusResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/reaction-cloud:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayReactionCloud
+      summary: A server-side sampled, non-identifying cloud of viewer reactions.
+      description: >-
+        Master Canvas module #5 (Reaction Cloud). A reaction is a send of an entry from the
+        EXISTING curated sticker catalogue - first-party entries plus staff-reviewed creator
+        packs - so nothing here is a new asset, a new catalogue or a viewer upload.
+
+        Sampling is server-side (19.5): the read aggregates every reaction into one row per
+        catalogue entry and applies the configured display ceiling inside the database, before
+        anything reaches this endpoint. A client is never sent the reaction stream and then
+        asked to drop part of it, and the response is a bounded projection rather than a
+        history (12.7). The ceiling ships configured but unset; unset means no ceiling beyond
+        the read's own structural bound.
+
+        Non-identifying is a property of the read, not of the renderer: the returned column set
+        is the catalogue entry's source, id and display name plus a count. No viewer id,
+        anonymous identity token, session id, IP address, or timestamp of any precision exists
+        on this path. An unrecognised, expired, revoked or foreign overlay token returns an
+        empty entries array, which is also what a quiet channel returns.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped, server-side sampled reaction cloud for this overlay, possibly empty.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayReactionCloudResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/public/channels/{handle}/reactions:
+    post:
+      tags: [Public]
+      operationId: sendPublicChannelReaction
+      summary: Send a reaction from the public tip page.
+      description: >-
+        Public and unauthenticated, like the rest of the tip page. Free reactions are available
+        at every tier (30.3), and requiring a viewer account would contradict module #5's own
+        non-identifying rule - an account is an identity. The existing public-surface bot
+        verification applies behind the same configuration flag as the public payment
+        endpoints; no new authentication model is introduced, and no viewer identity is read,
+        issued or stored.
+
+        Rate limiting is the creator's own per-channel rateLimitPerMinute (1-1000), enforced in
+        the database against a one-minute window - the same mechanism queue dispatch already
+        uses. It is per channel, not per viewer: a per-viewer figure would need a viewer
+        identifier this surface may not hold. When the limit is reached the request is refused
+        with 429 and nothing is recorded.
+
+        The entry must already exist in the channel's live, enabled, tier-eligible curated
+        catalogue at the moment of the send; existence, ownership, tier eligibility, the
+        creator's enabled set and staff-review state are all re-checked server-side and a
+        failure is an explicit rejection, never a silent drop.
+      parameters:
+        - $ref: '#/components/parameters/Handle'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublicReactionSendRequest' }
+      responses:
+        '201':
+          description: The reaction was recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicReactionSendResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/safe-mode:
+    get:
+      tags: [Moderation]
+      operationId: getChannelSafeMode
+      summary: Whether safe mode is on for this channel.
+      description: >-
+        Safe mode is a per-channel moderation state the creator turns on and off. While it is on,
+        newly created alert deliveries for the channel are written held rather than ready, for the
+        creator or a moderator to review through the existing moderation path. It is NEVER automatic
+        - no spike detection, no rejection-rate heuristic, no threshold and no signal of any kind
+        engages it - and it is NOT the queue-paused flag, which is a separate queue lifecycle state.
+        Available at every tier: storing, viewing and changing a durable creator record is never
+        tier-gated. The only gate is the owner/admin role on the channel, and a caller without it
+        receives 404 rather than 403.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's current safe-mode state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelSafeModeResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [Moderation]
+      operationId: setChannelSafeMode
+      summary: Turn safe mode on or off for this channel.
+      description: >-
+        Idempotent. The body carries the value rather than requesting a toggle, so turning safe mode
+        on and turning it off are one code path and a client that has lost track of the current
+        state cannot flip it by accident. The body declares `enabled` and nothing else: safe mode is
+        a switch, not a policy object, and a request carrying a threshold, window, duration, expiry,
+        reason or trigger is rejected with 400 - those would be automatic-engagement mechanics the
+        product deliberately does not have. TURNING SAFE MODE OFF RELEASES NOTHING - deliveries
+        already held stay held and are reviewed individually through the existing moderation path;
+        there is no bulk release, by decision.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChannelSafeModeRequest' }
+      responses:
+        '200':
+          description: The channel's safe-mode state after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelSafeModeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/channels/{channelId}/companion/state:
     get:
@@ -1856,7 +1992,7 @@ components:
     OverlayModeratorStatus:
       type: object
       additionalProperties: false
-      required: [schemaVersion, heldCount]
+      required: [schemaVersion, heldCount, safeMode]
       properties:
         schemaVersion: { type: string, const: v1 }
         heldCount:
@@ -1865,6 +2001,46 @@ components:
           description: >-
             Alert deliveries held for a moderator's decision on this channel. Held deliveries, not
             chat messages. Zero is a valid answer and means nothing is held.
+        safeMode:
+          type: boolean
+          description: >-
+            Whether the creator's safe-mode switch is on for this channel. While it is on, incoming
+            alerts route to held rather than ready. Never automatic and never engaged by any signal,
+            and NOT the queue-paused flag, which is a separate queue lifecycle state this projection
+            does not carry. True with heldCount 0 is a real state - the creator has just switched it
+            on and nothing has arrived yet.
+    ChannelSafeMode:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, enabled]
+      description: >-
+        The creator-facing safe-mode state. One boolean, deliberately: safe mode is a switch, not a
+        policy object, so there is no threshold, window, rate, duration, expiry, reason or trigger
+        field, and none may be added without a fresh owner decision.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        enabled: { type: boolean }
+    ChannelSafeModeResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, safeMode]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        safeMode: { $ref: '#/components/schemas/ChannelSafeMode' }
+    ChannelSafeModeRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      description: >-
+        The value to set, not a toggle request. additionalProperties false is load-bearing: a body
+        carrying threshold, windowSeconds, auto, triggeredBy, expiresAt, durationSeconds or reason
+        is a 400, because safe mode is never automatic. enabled declares its two allowed VALUES
+        rather than a type, so nothing is coerced into a switch position - null, "true" and 1 are
+        all 400. That is stricter than this API's other boolean fields, deliberately: enabled null
+        was measured to coerce to false under the shared validator configuration, which would have
+        silently turned safe mode off and released a channel's held alert flow.
+      properties:
+        enabled: { enum: [true, false] }
     OverlayModeratorStatusResponse:
       type: object
       additionalProperties: false
@@ -1875,6 +2051,77 @@ components:
           oneOf:
             - type: 'null'
             - $ref: '#/components/schemas/OverlayModeratorStatus'
+    OverlayReactionCloudEntry:
+      type: object
+      additionalProperties: false
+      required: [entrySource, entryId, displayName, reactionCount]
+      description: >-
+        One curated-catalogue entry and how many reactions it received inside the read's
+        window. A reaction is a send of an entry that already exists in the curated sticker
+        catalogue, so there is no asset, url, mime type or render document on this path -
+        only the entry's id and its already-public display name. No viewer id, anonymous
+        identity, session id, IP address or timestamp appears here; that is enforced by the
+        read itself, whose returned column set is exactly these four values.
+      properties:
+        entrySource:
+          type: string
+          enum: [catalogue, creator_pack]
+          description: >-
+            Which half of the EXISTING curated catalogue the entry came from - the first-party
+            platform catalogue, or a staff-reviewed creator pack. There is no value here for a
+            viewer-supplied asset, because no such path exists.
+        entryId: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        reactionCount:
+          type: integer
+          minimum: 1
+          description: >-
+            Aggregated in the database. An entry with no reactions in the window is absent
+            rather than present with a zero.
+    OverlayReactionCloudResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, entries]
+      description: >-
+        Already the server-side sample. The read aggregates every reaction into one row per
+        catalogue entry and applies the configured display ceiling inside the database, so a
+        client never receives the reaction stream and is never asked to drop part of it
+        (19.5), and the response is bounded rather than a history (12.7). An empty array is a
+        valid answer, and is also what an unrecognised, expired, revoked or foreign overlay
+        token returns - an empty cloud and an unauthorised read both mean paint nothing.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        entries: { type: array, items: { $ref: '#/components/schemas/OverlayReactionCloudEntry' } }
+    PublicReactionSendRequest:
+      type: object
+      additionalProperties: false
+      required: [entrySource, entryId]
+      description: >-
+        A send of an entry that is already in the channel's live, enabled, tier-eligible
+        curated catalogue. additionalProperties is false deliberately: a body carrying a
+        viewer id, an asset, a display name or a count is rejected before the store is
+        reached. The server re-checks existence, ownership, tier eligibility, the creator's
+        live enabled set and staff-review state; a client's claim about any of them is never
+        trusted.
+      properties:
+        entrySource: { type: string, enum: [catalogue, creator_pack] }
+        entryId: { type: string, format: uuid }
+        turnstileToken:
+          oneOf: [{ type: 'null' }, { type: string, maxLength: 2048 }]
+          description: >-
+            The same bot-verification token the public payment endpoints already take, checked
+            by the same guard behind the same configuration flag. Not a viewer identity.
+    PublicReactionSendResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, outcome]
+      description: >-
+        The outcome and nothing else - no reaction id, viewer id, channel id, timestamp or
+        remaining-quota figure. A reaction is not a record a viewer owns, reads back, edits or
+        deletes, so there is nothing for a viewer to address afterwards.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        outcome: { type: string, const: recorded }
     StreamMission:
       type: object
       additionalProperties: false

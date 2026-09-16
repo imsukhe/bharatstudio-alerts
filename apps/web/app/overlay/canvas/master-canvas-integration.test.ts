@@ -11,6 +11,7 @@ import { createChallengeBoardModule } from './modules/challenge-board-module';
 import { createMilestoneCelebrationModule } from './modules/milestone-celebration-module';
 import { createStreamMissionModule } from './modules/stream-mission-module';
 import { createModeratorStatusModule } from './modules/moderator-status-module';
+import { createReactionCloudModule } from './modules/reaction-cloud-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -570,6 +571,70 @@ test('with all nine modules registered (Moderator Status Card included): still e
   assert.equal(scheduler.pendingFrameCount(), 1, 'all nine active modules still share exactly one pending frame handle on the one rAF scheduler');
 });
 
+test('PRF-02: safe mode paints on the SAME shared connection and rAF loop — it adds a field, never a session, a read or a frame', async () => {
+  // Safe mode (migration 0138) completes §6 module #12 by adding one
+  // boolean to the Moderator Status Card's EXISTING snapshot. This case
+  // is the canvas-level proof that it cost nothing structurally: one
+  // transport connection, one subscriber, one snapshot read per
+  // activation, and one shared pending frame — the same shape the card
+  // had with the held half alone.
+  let fetchCalls = 0;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const moderatorStatusContainer = document.createElement('div');
+  let snapshotCalls = 0;
+  let safeMode = true;
+  runtime.registerModule(createModeratorStatusModule({
+    container: moderatorStatusContainer,
+    connection,
+    fetchSnapshot: async () => { snapshotCalls += 1; return { schemaVersion: 'v1', heldCount: 0, safeMode }; },
+    reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('moderator_status_card', true);
+  await flush();
+  scheduler.tick(0);
+
+  assert.equal(fetchCalls, 1, 'safe mode must not open a second transport connection');
+  assert.equal(connection.getSubscriberCount(), 1, 'safe mode must not add a second subscriber');
+  assert.equal(snapshotCalls, 1, 'safe mode travels on the EXISTING snapshot — it must not add a second read');
+  assert.equal(
+    (moderatorStatusContainer.querySelector('[data-role="moderator-status-label"]') as HTMLElement).textContent,
+    'safe mode on',
+    'safe mode on with nothing held must paint on the shared loop',
+  );
+  assert.equal(scheduler.pendingFrameCount(), 1, 'one shared pending frame, as before');
+
+  // Take the module down and back up: one fresh re-read on the same
+  // connection, now with safe mode off and nothing held, which hides the
+  // card again. No second connection, no second subscriber, no extra
+  // frame handle.
+  safeMode = false;
+  runtime.setModuleEntitled('moderator_status_card', false);
+  await flush();
+  runtime.setModuleEntitled('moderator_status_card', true);
+  await flush();
+  scheduler.tick(16);
+
+  // fetchCalls is 2 here and that is the connection's own documented
+  // behaviour, not a cost safe mode introduced: the stream closes when
+  // the LAST subscriber leaves and reopens on the next one (PRF-05,
+  // "idle modules cost nothing"). What matters is that there is never
+  // more than one stream open AT A TIME, which the subscriber count
+  // below shows.
+  assert.equal(fetchCalls, 2, 'the shared stream closed with its last subscriber and reopened with the next — one connection at a time, never two');
+  assert.equal(connection.getSubscriberCount(), 1, 'still exactly one subscriber');
+  assert.equal(snapshotCalls, 2, 'one re-read per activation, exactly as before safe mode existed');
+  assert.equal(moderatorStatusContainer.style.opacity, '0', 'safe mode off with nothing held hides the card again — it does not latch on');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'safe mode must never schedule a frame of its own');
+});
+
 test('PRF-02.10: an un-entitled moderator_status_card never subscribes, never fetches its snapshot and never builds its DOM', async () => {
   const connection = createMasterCanvasConnection({
     overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
@@ -649,6 +714,166 @@ test('a Moderator Status Card that throws twice goes down while every other modu
 
   assert.equal(runtime.getModuleStatus('moderator_status_card'), 'down', 'two failures must take the module down and keep it down');
   assert.ok(down.includes('moderator_status_card'), 'the host page is told, so it can show the creator-visible note');
+  assert.equal(runtime.getModuleStatus('community_goal_ladder'), 'active', 'a neighbour must be unaffected');
+  assert.ok(neighbourRenders >= 2, 'the neighbour keeps rendering on the same loop after the failure');
+});
+
+/*
+ * PRF-02 slice 6 / PRF-06: Reaction Cloud (§6 #5) is the tenth built
+ * module. It adds ONE endpoint and — the property this file exists to
+ * defend — ZERO connections, ZERO sessions and ZERO render loops. This is
+ * the ten-module version of the same proof the suite already carries for
+ * two, four, five, seven, eight and nine.
+ */
+
+test('with all ten modules registered (Reaction Cloud included): still exactly one connection and one rAF chain', async () => {
+  let fetchCalls = 0;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const goalContainer = document.createElement('div');
+  const voteContainer = document.createElement('div');
+  const bossFightContainer = document.createElement('div');
+  const theaterContainer = document.createElement('div');
+  const challengeContainer = document.createElement('div');
+  const milestoneContainer = document.createElement('div');
+  const missionContainer = document.createElement('div');
+  const moderatorStatusContainer = document.createElement('div');
+  const reactionCloudContainer = document.createElement('div');
+
+  const fetchGoalSnapshot = async () => null;
+  const fetchVoteSnapshot = async () => null;
+
+  runtime.registerModule(createSupportTheaterModule({
+    container: theaterContainer, connection, overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    reducedMotion: () => false,
+  }));
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: fetchGoalSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createTugOfWarVoteModule({
+    container: voteContainer, connection, fetchSnapshot: fetchVoteSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createBossFightModule({
+    container: bossFightContainer, connection, fetchSnapshot: fetchGoalSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createChallengeBoardModule({
+    container: challengeContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createMilestoneCelebrationModule({
+    container: milestoneContainer, connection, fetchGoalSnapshot, fetchVoteSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createStreamMissionModule({
+    container: missionContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createModeratorStatusModule({
+    container: moderatorStatusContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createReactionCloudModule({
+    container: reactionCloudContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('support_theater', true);
+  runtime.setModuleEntitled('supporter_ticker', true);
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('tug_of_war_vote', true);
+  runtime.setModuleEntitled('boss_fight', true);
+  runtime.setModuleEntitled('challenge_board', true);
+  runtime.setModuleEntitled('milestone_celebration', true);
+  runtime.setModuleEntitled('stream_mission_card', true);
+  runtime.setModuleEntitled('moderator_status_card', true);
+  runtime.setModuleEntitled('reaction_cloud', true);
+  await flush();
+
+  assert.equal(fetchCalls, 1, 'ten entitled modules must still open exactly one transport connection — the Reaction Cloud adds an endpoint, never a session');
+  assert.equal(connection.getSubscriberCount(), 10, 'all ten modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all ten active modules still share exactly one pending frame handle on the one rAF scheduler');
+});
+
+test('PRF-02.10: an un-entitled reaction_cloud never subscribes, never fetches its snapshot and never builds its DOM', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const reactionCloudContainer = document.createElement('div');
+  let reactionSnapshotCalls = 0;
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createReactionCloudModule({
+    container: reactionCloudContainer, connection,
+    fetchSnapshot: async () => { reactionSnapshotCalls += 1; return null; },
+    reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  // Only the ticker is entitled. §30.3's module cap governs how many
+  // modules a tier may RENDER; it never gates reactions themselves, which
+  // §30.3's own tier table makes available at every tier, nor the durable
+  // reaction record.
+  runtime.setModuleEntitled('supporter_ticker', true);
+  await flush();
+
+  assert.equal(connection.getSubscriberCount(), 1, 'the un-entitled reaction cloud never subscribes to the shared connection');
+  assert.equal(reactionSnapshotCalls, 0, 'an un-entitled module never fetches its own snapshot — it costs nothing');
+  assert.equal(reactionCloudContainer.children.length, 0, 'an un-entitled module never even builds its DOM');
+  assert.equal(runtime.getModuleStatus('reaction_cloud'), 'inactive');
+});
+
+test('a Reaction Cloud that throws twice goes down while every other module keeps rendering (PRF-14)', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const down: string[] = [];
+  const runtime = createMasterCanvasRuntime({
+    requestFrame: scheduler.requestFrame,
+    cancelFrame: scheduler.cancelFrame,
+    onModuleDown: (key) => down.push(key),
+  });
+
+  let neighbourRenders = 0;
+  const neighbour: CanvasModuleDefinition = {
+    key: 'community_goal_ladder',
+    activate() {},
+    deactivate() {},
+    render() { neighbourRenders += 1; },
+  };
+  const exploding: CanvasModuleDefinition = {
+    key: 'reaction_cloud',
+    activate() {},
+    deactivate() {},
+    render() { throw new Error('synthetic reaction cloud failure'); },
+  };
+  runtime.registerModule(neighbour);
+  runtime.registerModule(exploding);
+
+  runtime.start();
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('reaction_cloud', true);
+  await flush();
+
+  for (let frame = 0; frame < 4; frame += 1) {
+    scheduler.tick(frame * 16);
+    await flush();
+  }
+
+  assert.equal(runtime.getModuleStatus('reaction_cloud'), 'down', 'two failures must take the module down and keep it down');
+  assert.ok(down.includes('reaction_cloud'), 'the host page is told, so it can show the creator-visible note');
   assert.equal(runtime.getModuleStatus('community_goal_ladder'), 'active', 'a neighbour must be unaffected');
   assert.ok(neighbourRenders >= 2, 'the neighbour keeps rendering on the same loop after the failure');
 });

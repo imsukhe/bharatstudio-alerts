@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-safe-mode-response.schema.json",
+  "title": "Channel safe-mode response (PRF-02, catalogue module #12)",
+  "description": "The creator-facing read and write response for safe mode: a per-channel moderation state the creator turns on and off (owner decision, 2026-09-16). While it is on, newly created alert deliveries for the channel are written held rather than ready, for the creator or a moderator to review. THE WHOLE STATE IS ONE BOOLEAN, DELIBERATELY: safe mode is never automatic -- no spike detection, no rejection-rate heuristic, no signal of any kind engages it -- so this contract carries no threshold, window, rate, duration, expiry, reason or trigger field, and additionalProperties false is what keeps it that way. It is also NOT alert_queues.is_paused, which is a queue lifecycle state this contract never exposes. Turning safe mode off releases nothing: deliveries already held stay held and are reviewed individually through the existing moderation path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "safeMode"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "safeMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "enabled"],
+      "properties": {
+        "schemaVersion": { "const": "v1" },
+        "enabled": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -13,6 +13,10 @@ import { TIPINTENT_TOKEN_PATTERN } from '../db/tipintent-store.js';
 // call site below for why a tagging failure never fails the underlying
 // checkout.
 import type { PublicPaidVoteStore, VotePaymentTagStore } from '../domain/vote-payment-types.js';
+// PRF-02 slice 6 / PRF-06, §6 module #5 (Reaction Cloud): the public,
+// unauthenticated send path. See the route below for which existing
+// public-surface protection guards it and why no new one was invented.
+import { REACTION_ENTRY_SOURCES, type ReactionSendStore } from '../domain/reaction-cloud-store.js';
 
 const handlePattern = '^[A-Za-z0-9._-]+$';
 const idempotencyKeyPattern = '^[A-Za-z0-9._:-]+$';
@@ -72,6 +76,11 @@ export async function registerPublicRoutes(
   // interaction configuration. Optional preserves testable fail-closed
   // behavior if runtime wiring is missing.
   publicPaidVotes?: PublicPaidVoteStore,
+  // PRF-02 slice 6 / PRF-06. Appended at the end so every existing
+  // positional call keeps compiling unchanged; when undefined the reaction
+  // route fails closed to 503, exactly like the other optional
+  // dependencies in this file.
+  reactionSends?: ReactionSendStore,
 ): Promise<void> {
   // L19: the live money-moving tip-order path now goes through
   // CreatorPaymentProvider.createPayment rather than calling paymentOrders
@@ -660,6 +669,107 @@ export async function registerPublicRoutes(
         // report for this known tradeoff.
         logSafeError(request, 'tip_intent_order_creation_failed', error);
         return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_unavailable', message: 'Secure checkout is temporarily unavailable', traceId: request.id, retryable: true });
+      }
+    },
+  );
+
+  // =====================================================================
+  // PRF-02 slice 6 / PRF-06 -- §6 catalogue module #5 (Reaction Cloud):
+  // the public, unauthenticated reaction SEND path.
+  //
+  // WHY THIS ROUTE IS UNAUTHENTICATED, STATED RATHER THAN ASSUMED. The
+  // surface a reaction is sent from is the public tip page, which is
+  // unauthenticated by construction -- the same surface that already
+  // carries the sticker picker (GET
+  // /v1/public/channels/:channelId/stickers, whose SQL function migration
+  // 0110 documents as having "no auth/role check (the tip page is
+  // unauthenticated)"). Requiring a viewer account would contradict two
+  // already-decided things at once: §30.3 makes free reactions available
+  // at every tier, and §6 #5 requires this surface to be NON-IDENTIFYING
+  // -- an account is an identity.
+  //
+  // WHICH EXISTING PROTECTION IS REUSED, AND WHAT IS NOT INVENTED.
+  //   * The SAME PublicAbuseGuard (Cloudflare Turnstile,
+  //     domain/public-abuse.ts) behind the SAME `turnstileRequired` flag
+  //     and returning the SAME 403 bot_verification_required envelope the
+  //     two public payment POSTs above already use. No new flag, no new
+  //     secret, no new envelope, no new verifier.
+  //   * The rate limit is the creator's own per-channel
+  //     `rateLimitPerMinute`, enforced against a one-minute window in
+  //     app_private.record_channel_reaction exactly as migrations 0032 and
+  //     0063 already do (owner decision, 2026-09-16).
+  //
+  // There is deliberately NO `config.rateLimit` on this route. The sibling
+  // payment POSTs carry their own figures, but the owner decided the
+  // creator's rateLimitPerMinute is what governs reactions, and attaching
+  // a second, differently-sized limit here would be inventing a number
+  // nobody decided.
+  //
+  // NO VIEWER IDENTITY IS READ OR WRITTEN. This handler does not read the
+  // anonymous-identity cookie, does not issue one, and passes no viewer,
+  // session or address value to the store -- the rate limit is per
+  // CHANNEL and needs none. §6 #5's non-identifying rule is upheld on the
+  // write path as well as the read path.
+  app.post<{ Params: { handle: string }; Body: { entrySource: 'catalogue' | 'creator_pack'; entryId: string; turnstileToken?: string | null } }>(
+    '/v1/public/channels/:handle/reactions',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['handle'],
+          properties: { handle: { type: 'string', minLength: 1, maxLength: 64, pattern: handlePattern } },
+        },
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['entrySource', 'entryId'],
+          properties: {
+            entrySource: { type: 'string', enum: [...REACTION_ENTRY_SOURCES] },
+            entryId: { type: 'string', format: 'uuid' },
+            turnstileToken: { type: ['string', 'null'], maxLength: 2048 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!repository || !reactionSends) {
+        return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'reaction_unavailable', message: 'Reactions are temporarily unavailable', traceId: request.id, retryable: true });
+      }
+
+      if (turnstileRequired) {
+        const token = typeof request.body.turnstileToken === 'string' ? request.body.turnstileToken : '';
+        if (!abuseGuard || !(await abuseGuard.verify(token, request.ip))) {
+          return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'bot_verification_required', message: 'Please complete the security check and try again', traceId: request.id, retryable: false });
+        }
+      }
+
+      // The same released-handle fallback the tip-order route above uses,
+      // for the same reason: a stale link must not silently stop working.
+      const channel = (await repository.findByHandle(request.params.handle))
+        ?? (await repository.resolveReleasedHandle?.(request.params.handle));
+      if (!channel) {
+        return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
+      }
+
+      try {
+        const outcome = await reactionSends.record(channel.channelId, request.body.entrySource, request.body.entryId);
+        switch (outcome) {
+          case 'recorded':
+            return reply.code(201).send({ schemaVersion: 'v1', outcome: 'recorded' });
+          case 'rate_limited':
+            // The creator's own per-minute figure was reached for this
+            // channel's current one-minute window. Retryable, because it
+            // will be false again within a minute.
+            return reply.code(429).send({ schemaVersion: 'v1', errorCode: 'reaction_rate_limited', message: 'Reactions are coming in quickly right now; try again shortly', traceId: request.id, retryable: true });
+          case 'unknown_entry':
+            return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'unknown_reaction_entry', message: 'That reaction does not exist', traceId: request.id, retryable: false });
+          case 'not_available':
+            return reply.code(403).send({ schemaVersion: 'v1', errorCode: 'reaction_entry_not_available', message: 'That reaction is not available on this channel', traceId: request.id, retryable: false });
+        }
+      } catch (error) {
+        logSafeError(request, 'reaction_send_failed', error);
+        return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'reaction_unavailable', message: 'Reactions are temporarily unavailable', traceId: request.id, retryable: true });
       }
     },
   );

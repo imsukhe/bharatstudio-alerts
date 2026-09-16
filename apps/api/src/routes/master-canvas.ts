@@ -12,6 +12,10 @@ import {
   projectModeratorStatus,
   type ModeratorStatusOverlayStore,
 } from '../domain/moderator-status-store.js';
+import {
+  projectReactionCloud,
+  type ReactionCloudOverlayStore,
+} from '../domain/reaction-cloud-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -54,6 +58,11 @@ export async function registerMasterCanvasRoutes(
   account?: AccountStore,
   overlayModules?: MasterCanvasOverlayStore,
   overlayModeratorStatus?: ModeratorStatusOverlayStore,
+  // PRF-02 slice 6, §6 module #5 (Reaction Cloud). Appended at the end so
+  // every existing positional call keeps compiling and behaving unchanged;
+  // when it is undefined the new route below fails closed to 503, exactly
+  // like every other optional dependency in this file.
+  overlayReactionCloud?: ReactionCloudOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -114,33 +123,41 @@ export async function registerMasterCanvasRoutes(
     }
   });
 
-  // PRF-02 slice 5, §6 module #12 (Moderator Status Card) -- HELD HALF
-  // ONLY. Same overlay browser-source shape as the route just above, and
-  // deliberately in this file rather than interactions.ts: this is a
-  // Master Canvas module read, not an interaction, and this file already
-  // owns the bearer-token helper and the master_canvas_store_unavailable
-  // envelope.
+  // PRF-02, §6 module #12 (Moderator Status Card). Slice 5 shipped the
+  // held half; safe mode (migration 0138) completes it. Same overlay
+  // browser-source shape as the route just above, and deliberately in
+  // this file rather than interactions.ts: this is a Master Canvas
+  // module read, not an interaction, and this file already owns the
+  // bearer-token helper and the master_canvas_store_unavailable envelope.
   //
-  // THE RESPONSE CARRIES A COUNT AND NOTHING ELSE. §6: "never private
-  // content", which the owner's 2026-09-16 decision requires to be a
-  // property of the query -- app_private.list_overlay_moderator_status
-  // (migration 0136) returns a single held_count column, so no supporter
+  // THE RESPONSE CARRIES A COUNT, A BOOLEAN, AND NOTHING ELSE. §6:
+  // "never private content", which the owner's 2026-09-16 decision
+  // requires to be a property of the query --
+  // app_private.list_overlay_moderator_status (migration 0138) returns
+  // exactly `held_count bigint, safe_mode boolean`, so no supporter
   // name, message, amount, delivery id, queue id or viewer identifier
   // exists to be leaked here. projectModeratorStatus() then narrows a
   // SECOND, independent time in front of whatever the store hands up, so
   // the guarantee does not rest on a single layer.
   //
-  // NO SAFE-MODE FIELD. Safe mode is NOT the queue-paused flag (owner
-  // decision, 2026-09-16); it is a separate moderation control that does
-  // not exist in this schema and needs its own record and decision. This
-  // response has no field for it, and 0136 reads no queue-lifecycle
-  // column at all.
+  // safeMode IS THE CREATOR'S OWN SWITCH, AND STILL NOT THE QUEUE-PAUSED
+  // FLAG. Owner decision, 2026-09-16: safe mode is a per-channel
+  // moderation state the creator turns on and off, routing incoming
+  // alerts to `held` instead of `ready` while it is on. It is never
+  // automatic and is engaged by no signal. alert_queues.is_paused
+  // remains a different thing, still never read on this path, and still
+  // refused by the published response schema.
   //
-  // A VALID SESSION WITH NOTHING HELD ANSWERS 200 WITH heldCount: 0; an
-  // unrecognised/expired/revoked/foreign token answers 200 with
-  // moderatorStatus: null. The Canvas module renders those differently
-  // (a real zero hides the card; a null snapshot leaves it hidden
-  // without claiming anything), so collapsing them would be a bug.
+  // THIS ROUTE IS READ-ONLY. Turning safe mode on or off is the
+  // creator's own session-authenticated surface
+  // (routes/safe-mode.ts) -- an overlay browser-source token can read
+  // the state and can never change it.
+  //
+  // A VALID SESSION WITH NOTHING HELD AND SAFE MODE OFF ANSWERS 200 WITH
+  // heldCount: 0, safeMode: false; an unrecognised/expired/revoked/
+  // foreign token answers 200 with moderatorStatus: null. The Canvas
+  // module renders those the same (nothing), but they are not the same
+  // answer and collapsing them here would be a bug.
   app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/moderator-status', {
     schema: {
       params: overlayParams,
@@ -156,6 +173,56 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_moderator_status_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Moderator status is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+
+  // PRF-02 slice 6, §6 module #5 (Reaction Cloud) -- the SERVER-SIDE
+  // SAMPLED overlay read. Same overlay browser-source shape as the two
+  // routes above, and in this file for the same reason slice 5 recorded:
+  // it is a Master Canvas module read, not an interaction, and this file
+  // already owns the bearer-token helper and the
+  // master_canvas_store_unavailable envelope.
+  //
+  // THE SAMPLING ALREADY HAPPENED BY THE TIME CONTROL REACHES HERE, AND
+  // THIS ROUTE MUST NOT REDO IT. §19.5 requires reactions to be "sampled
+  // and rate-limited server-side BEFORE they reach the canvas" and the
+  // cloud to show "a representative sample, never every event".
+  // app_private.list_overlay_reaction_cloud (migration 0139) aggregates
+  // every event into one row per catalogue entry and then applies the
+  // configured display ceiling as its own LIMIT -- inside the database.
+  // There is deliberately NO cap, slice or filter in this handler: adding
+  // one would make it ambiguous where sampling happens, and its absence is
+  // the proof that it happens in the query.
+  //
+  // THE RESPONSE CARRIES CATALOGUE ENTRY IDS AND COUNTS, AND NOTHING
+  // ELSE. §6 #5's "non-identifying" is a property of the query (owner
+  // decision, 2026-09-16): the function returns four columns, so no viewer
+  // id, anonymous identity token, session id, IP or timestamp exists to be
+  // leaked here. projectReactionCloud() then narrows a SECOND, independent
+  // time in front of whatever the store hands up, so the guarantee does
+  // not rest on a single layer.
+  //
+  // AN UNRECOGNISED TOKEN ANSWERS 200 WITH AN EMPTY LIST, not 401. Unlike
+  // the Moderator Status Card, this read has no count whose zero the
+  // renderer must treat differently from "no answer" -- an empty cloud and
+  // an unauthorised read both mean "paint nothing" -- so collapsing them
+  // loses nothing. A MISSING bearer token is still 401: that is a
+  // malformed request, not an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/reaction-cloud', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'The reaction cloud is not available', traceId: request.id });
+    if (!overlayReactionCloud) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The reaction cloud is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const entries = await overlayReactionCloud.listForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', entries: projectReactionCloud(entries) });
+    } catch (error) {
+      logSafeError(request, 'overlay_reaction_cloud_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The reaction cloud is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

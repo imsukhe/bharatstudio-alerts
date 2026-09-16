@@ -111,6 +111,23 @@
  * `startedAt` on the shared frame loop; see
  * `modules/stream-mission-module.ts` for why that is a reading and not a
  * timer.
+ *
+ * PRF-02 SLICE 6 — REACTION CLOUD (§6 #5) AND PRF-06: module ten, on the
+ * SAME one connection and the SAME one rAF loop as the nine before it.
+ * A reaction is a send of an entry that ALREADY EXISTS in the curated
+ * sticker catalogue (owner decision, 2026-09-16), so this page gains no
+ * asset path, no upload surface and no moderation surface — only one more
+ * snapshot `fetch` closure.
+ *
+ * The property that matters most on this page is a NEGATIVE one: there is
+ * no sampling here. §19.5 requires reactions to be "sampled and
+ * rate-limited server-side before they reach the canvas", so the endpoint
+ * returns rows that are already `count(*)` per catalogue entry and already
+ * capped by the configured display ceiling inside
+ * `app_private.list_overlay_reaction_cloud` (migration 0139). Neither this
+ * file nor `modules/reaction-cloud-module.ts` caps, slices or thins
+ * anything — if a cap belongs anywhere it belongs in
+ * `REACTION_CLOUD_SAMPLE_MAX`, which ships configured but unset.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -128,6 +145,8 @@ import { createMilestoneCelebrationModule } from '../modules/milestone-celebrati
 import { createStreamMissionModule, isStreamMission, type StreamMission } from '../modules/stream-mission-module';
 import { createModeratorStatusModule } from '../modules/moderator-status-module';
 import { isModeratorStatus, type ModeratorStatus } from '../modules/moderator-status-logic';
+import { createReactionCloudModule } from '../modules/reaction-cloud-module';
+import { isReactionCloud, type ReactionCloudEntry } from '../modules/reaction-cloud-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -148,6 +167,9 @@ const BUILT_MODULE_KEYS = [
   // like the rest, so its position here carries no ordering
   // requirement -- only Support Theater's first position matters.
   'moderator_status_card',
+  // PRF-02 slice 6 / PRF-06, §6 #5 (Reaction Cloud). Also a plain
+  // snapshot module -- no ordering requirement.
+  'reaction_cloud',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -170,6 +192,7 @@ export default function MasterCanvasPage() {
   const milestoneContainerRef = useRef<HTMLDivElement>(null);
   const missionContainerRef = useRef<HTMLDivElement>(null);
   const moderatorStatusContainerRef = useRef<HTMLDivElement>(null);
+  const reactionCloudContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -263,18 +286,26 @@ export default function MasterCanvasPage() {
       return isStreamMission(body.mission) ? body.mission : null;
     }
 
-    // Moderator Status Card (§6 #12, HELD HALF ONLY). The one new
-    // endpoint this slice adds. The response carries a COUNT and nothing
-    // else -- no supporter name, message, amount, delivery id, queue id
-    // or viewer identifier exists on this path at all, because
-    // app_private.list_overlay_moderator_status (migration 0136) returns
-    // a single column. `isModeratorStatus` is the client's own last-line
-    // check on top of that, not the guarantee itself.
+    // Moderator Status Card (§6 #12). The response carries a COUNT and a
+    // BOOLEAN and nothing else -- no supporter name, message, amount,
+    // delivery id, queue id or viewer identifier exists on this path at
+    // all, because app_private.list_overlay_moderator_status (migration
+    // 0138) returns exactly those two columns. `isModeratorStatus` is
+    // the client's own last-line check on top of that, not the guarantee
+    // itself.
+    //
+    // `safeMode` is the creator's own per-channel switch (owner
+    // decision, 2026-09-16): while it is on, incoming alerts route to
+    // `held` instead of `ready`. It is never automatic, and it is NOT
+    // alert_queues.is_paused. This page only READS it -- turning it on
+    // and off is the creator's session-authenticated surface, never an
+    // overlay browser-source token's.
     //
     // `moderatorStatus: null` means the read did not answer (an
-    // unrecognised/expired/revoked token); `heldCount: 0` means it
-    // answered and nothing is held. The module renders the same nothing
-    // for both, but the distinction is real and is preserved end to end.
+    // unrecognised/expired/revoked token); `heldCount: 0, safeMode:
+    // false` means it answered, nothing is held and safe mode is off.
+    // The module renders the same nothing for both, but the distinction
+    // is real and is preserved end to end.
     async function fetchModeratorStatusSnapshot(): Promise<ModeratorStatus | null> {
       const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/moderator-status`, {
         headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
@@ -282,6 +313,30 @@ export default function MasterCanvasPage() {
       if (!response.ok) return null;
       const body = await response.json() as { moderatorStatus?: unknown };
       return isModeratorStatus(body.moderatorStatus) ? body.moderatorStatus : null;
+    }
+
+    // Reaction Cloud (§6 #5, PRF-02 slice 6 / PRF-06). The second endpoint
+    // this slice adds. What comes back is ALREADY the server-side sample:
+    // app_private.list_overlay_reaction_cloud (migration 0139) aggregates
+    // every reaction into one row per curated-catalogue entry and applies
+    // the configured display ceiling as its own SQL LIMIT. So there is
+    // deliberately no cap, slice or thinning here or in the module --
+    // §19.5 requires that the client never receive the full stream and
+    // then drop some of it, and the absence of client-side sampling is
+    // what makes that checkable rather than merely claimed.
+    //
+    // Each entry carries a catalogue entry id, that entry's already-public
+    // display name and a count -- no viewer id, anonymous identity token,
+    // session id, IP or timestamp exists on this path at all, because the
+    // function returns four columns. `isReactionCloud` is the client's own
+    // last-line check on top of that, not the guarantee itself.
+    async function fetchReactionCloudSnapshot(): Promise<ReactionCloudEntry[] | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/reaction-cloud`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { entries?: unknown };
+      return isReactionCloud(body.entries) ? body.entries : null;
     }
 
     // Support Theater registers FIRST — see this file's header — using the
@@ -361,22 +416,38 @@ export default function MasterCanvasPage() {
       }));
     }
     if (moderatorStatusContainerRef.current) {
-      // Moderator Status Card (§6 #12, HELD HALF ONLY). One more plain
-      // snapshot module on the SAME shared `connection` and the SAME
-      // shared rAF loop -- no second session, no second transport, no
-      // timer of its own. Its snapshot endpoint is the only new one this
-      // slice adds, and it returns a COUNT and nothing else (migration
-      // 0136; §6's "never private content" is a property of that query,
-      // not of this renderer).
+      // Moderator Status Card (§6 #12). One plain snapshot module on the
+      // SAME shared `connection` and the SAME shared rAF loop -- no
+      // second session, no second transport, no timer of its own. Safe
+      // mode added a FIELD to its existing snapshot, never a second
+      // endpoint, a second read or a second subscription.
       //
-      // There is no safe-mode half here and that is deliberate: safe
-      // mode is NOT the queue-paused flag (owner decision, 2026-09-16);
-      // it is a separate moderation control that does not exist in the
-      // schema and needs its own record and decision.
+      // The snapshot returns a count and a boolean and nothing else
+      // (migration 0138; §6's "never private content" is a property of
+      // that query, not of this renderer).
       runtime.registerModule(createModeratorStatusModule({
         container: moderatorStatusContainerRef.current,
         connection,
         fetchSnapshot: fetchModeratorStatusSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
+    if (reactionCloudContainerRef.current) {
+      // Reaction Cloud (§6 #5). One more plain snapshot module on the
+      // SAME shared `connection` and the SAME shared rAF loop -- no
+      // second session, no second transport, no timer of its own.
+      //
+      // Sampling and rate limiting both happen on the server (§19.5,
+      // PRF-06): the read is aggregated and capped by the configured
+      // display ceiling inside migration 0139's function, and the send
+      // path is rate-limited by the creator's own per-channel
+      // rateLimitPerMinute against a one-minute window. Nothing on this
+      // page samples, caps or limits anything, and nothing here should
+      // start to.
+      runtime.registerModule(createReactionCloudModule({
+        container: reactionCloudContainerRef.current,
+        connection,
+        fetchSnapshot: fetchReactionCloudSnapshot,
         reducedMotion: reducedMotionPreferred,
       }));
     }
@@ -454,6 +525,12 @@ export default function MasterCanvasPage() {
         .master-canvas-moderator-status { position: absolute; bottom: 56px; right: 0; color: #fff; text-align: right; }
         .master-canvas-moderator-status [data-role="moderator-status-card"] { padding: 8px 12px; border-radius: 10px; background: rgba(12,17,29,.78); font-size: 13px; font-weight: 600; }
         .master-canvas-moderator-status [data-role="moderator-status-dot"] { width: 8px; height: 8px; border-radius: 999px; background: #f59e0b; flex: none; }
+        /* Reaction Cloud (§6 #5). The BASE layout is ordinary centred
+           flex-wrap flow, declared here once. The module never writes a
+           layout property: the cloud shape is a per-glyph transform
+           (translate + scale) plus opacity, and nothing else (PRF-03). */
+        .master-canvas-reaction-cloud { position: absolute; left: 0; right: 0; top: 300px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 18px; pointer-events: none; color: #fff; }
+        .master-canvas-reaction-cloud [data-role="reaction-cloud-glyph"] { display: inline-block; padding: 6px 12px; border-radius: 999px; background: rgba(12,17,29,.72); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; will-change: transform, opacity; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -464,6 +541,7 @@ export default function MasterCanvasPage() {
       <div ref={milestoneContainerRef} className="master-canvas-module master-canvas-milestone" aria-live="polite" />
       <div ref={missionContainerRef} className="master-canvas-module master-canvas-mission" aria-live="polite" />
       <div ref={moderatorStatusContainerRef} className="master-canvas-module master-canvas-moderator-status" aria-live="polite" />
+      <div ref={reactionCloudContainerRef} className="master-canvas-module master-canvas-reaction-cloud" aria-hidden="true" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

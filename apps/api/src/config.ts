@@ -30,6 +30,27 @@ export type RuntimeConfig = {
   // unchanged. When set, validated against §19.4's own API-read budget
   // (p99 < 200ms) so a misconfiguration cannot kill compliant queries.
   derivedReadStatementTimeoutMs?: number;
+  // PRF-02 slice 6 / PRF-06, §6 module #5 and §19.5. The Master Canvas
+  // Reaction Cloud's DISPLAY CEILING -- the maximum number of distinct
+  // catalogue entries the server-side sampled overlay read will return.
+  //
+  // Unset means today's behaviour: no ceiling beyond the read's own
+  // structural bound (at most one row per catalogue entry the channel can
+  // reach, itself bounded by the sticker catalogue and by
+  // app_private.creator_pack_tier_limit) and §12.7's existing bounded-data
+  // rules. Passed to SQL as NULL, where `LIMIT NULL` is no limit.
+  //
+  // NEVER A VALUE THIS CODEBASE INVENTS. The owner's 2026-09-16 decision
+  // ships this "configured but unset": build the mechanism, read the value
+  // from configuration, and let unset mean today's behaviour rather than a
+  // guessed default. Set only by deployment configuration, by whoever can
+  // measure a real reaction rate against a real Canvas.
+  //
+  // It is NOT the rate limit. Rate limiting is the creator's own
+  // per-channel `rateLimitPerMinute` (1-1000, one-minute window), enforced
+  // in SQL exactly as migrations 0032/0063 already do; this value only
+  // caps how many aggregate rows an overlay is shown.
+  reactionCloudSampleMax?: number;
   notificationTokenEncryptionKey?: string;
   publicPaymentTurnstileRequired?: boolean;
   publicPaymentTurnstileSecret?: string;
@@ -180,6 +201,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   const derivedReadMaxConcurrent = optionalPositiveInt('WIDGET_ANALYTICS_MAX_CONCURRENT_READS');
   const derivedReadPoolMax = optionalPositiveInt('WIDGET_ANALYTICS_POOL_MAX');
   const derivedReadStatementTimeoutMs = optionalPositiveInt('WIDGET_ANALYTICS_STATEMENT_TIMEOUT_MS');
+  // PRF-02 slice 6 / PRF-06. Same helper, same posture as the five above:
+  // unset is the default and means today's behaviour. There is no `??`
+  // fallback here and there must not be one.
+  const reactionCloudSampleMax = optionalPositiveInt('REACTION_CLOUD_SAMPLE_MAX');
   // RT-11.4: a configured timeout below the path's own §19.4 budget would
   // cancel a query that is still within budget — reject it at startup
   // rather than silently degrading correctness for compliant reads. 200ms
@@ -224,6 +249,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     derivedReadMaxConcurrent,
     derivedReadPoolMax,
     derivedReadStatementTimeoutMs,
+    reactionCloudSampleMax,
     googleClientId,
     paymentEnvironment,
     paymentServiceOrigin,

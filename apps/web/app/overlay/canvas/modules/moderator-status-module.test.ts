@@ -44,7 +44,7 @@ function labelText(container: HTMLElement): string {
 // --- S5.16: a non-zero count shows the card ------------------------------
 
 test('a non-zero held count shows the card and reads "N held for review"', async () => {
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 3 }));
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 3, safeMode: false }));
   connection.fireChange();
   await flush();
   module.render(0);
@@ -53,35 +53,103 @@ test('a non-zero held count shows the card and reads "N held for review"', async
   assert.equal(labelText(container), '3 held for review');
 });
 
-test('the rendered card names held deliveries, never chat messages, and carries no safe-mode text', async () => {
+test('the rendered card names held deliveries, never chat messages, and says nothing about pausing', async () => {
   // §6's "messages held" wording predates the schema and was corrected on
-  // 2026-09-16; "safe mode on" was removed from this module's scope by
-  // the same decision (it is NOT the queue-paused flag, and it does not
-  // exist in the schema). Asserted against the whole rendered subtree,
-  // not just the label, so a decorative element cannot smuggle either
-  // word back in.
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 2 }));
+  // 2026-09-16 because the underlying state is held alert DELIVERIES.
+  // "paused" is forbidden for a different reason: safe mode is NOT
+  // alert_queues.is_paused, and a creator must never read one as the
+  // other. Asserted against the whole rendered subtree, not just the
+  // label, so a decorative element cannot smuggle either word back in.
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 2, safeMode: false }));
   connection.fireChange();
   await flush();
   module.render(0);
 
   const rendered = (container.textContent ?? '').toLowerCase();
   assert.ok(rendered.includes('2 held for review'));
-  for (const forbidden of ['message', 'chat', 'comment', 'safe mode', 'paused']) {
+  for (const forbidden of ['message', 'chat', 'comment', 'paused', 'safe mode']) {
+    assert.equal(rendered.includes(forbidden), false, `with safe mode off the rendered card must not contain "${forbidden}"`);
+  }
+});
+
+// --- SAFE MODE, the half this completes ----------------------------------
+
+test('safe mode ON with nothing held SHOWS the card and reads "safe mode on"', async () => {
+  // Slice 5 hid the card whenever the count was zero. Safe mode changes
+  // that in exactly one direction: "safe mode is on" is itself what a
+  // creator needs to see, because it is the REASON nothing is reaching
+  // the overlay. A silent canvas with no explanation is the failure this
+  // card exists to prevent.
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 0, safeMode: true }));
+  connection.fireChange();
+  await flush();
+  module.render(0);
+
+  assert.equal(container.style.opacity, '1', 'safe mode alone must be enough to show the card');
+  assert.equal(labelText(container), 'safe mode on');
+});
+
+test('safe mode ON with a held count reads both, safe mode first', async () => {
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 3, safeMode: true }));
+  connection.fireChange();
+  await flush();
+  module.render(0);
+
+  assert.equal(container.style.opacity, '1');
+  assert.equal(labelText(container), 'safe mode on · 3 held for review');
+  const rendered = (container.textContent ?? '').toLowerCase();
+  for (const forbidden of ['message', 'chat', 'comment', 'paused']) {
     assert.equal(rendered.includes(forbidden), false, `the rendered card must not contain "${forbidden}"`);
   }
 });
 
+test('safe mode switching off hides the card again when nothing is held — it does not latch on', async () => {
+  let safeMode = true;
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 0, safeMode }));
+  connection.fireChange();
+  await flush();
+  module.render(0);
+  assert.equal(container.style.opacity, '1');
+  assert.equal(labelText(container), 'safe mode on');
+
+  safeMode = false;
+  connection.fireChange();
+  await flush();
+  module.render(16);
+  assert.equal(container.style.opacity, '0', 'turning safe mode off with nothing held must hide the card again');
+  assert.equal(labelText(container), '');
+});
+
+test('safe mode switching off while alerts are still held keeps the card up, now reading only the count', async () => {
+  // This is the renderer's own view of the decision that turning safe
+  // mode off releases NOTHING: the holds survive, so the card must keep
+  // reporting them rather than implying the queue drained.
+  let safeMode = true;
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 2, safeMode }));
+  connection.fireChange();
+  await flush();
+  module.render(0);
+  assert.equal(labelText(container), 'safe mode on · 2 held for review');
+
+  safeMode = false;
+  connection.fireChange();
+  await flush();
+  module.render(16);
+  assert.equal(container.style.opacity, '1', 'alerts are still held, so the card must stay up');
+  assert.equal(labelText(container), '2 held for review');
+});
+
 // --- S5.15: THE ZERO CASE ------------------------------------------------
 
-test('a held count of ZERO renders nothing visible and writes no copy at all', async () => {
-  // Zero is a real, authorised answer from the server — it means nothing
-  // is held. This module deliberately says nothing about it: no "All
-  // clear", no "Nothing held", no tick. Recorded in
-  // bharatstudio-requirements/active/tasks/PRF-02.md's Slice 5
-  // "Decisions"; asserted here so the decision is enforced rather than
-  // merely written down.
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 0 }));
+test('a held count of ZERO with safe mode OFF renders nothing visible and writes no copy at all', async () => {
+  // Zero-and-off is a real, authorised answer from the server — nothing
+  // is held and nothing is being held back. This module deliberately
+  // says nothing about it: no "All clear", no "Nothing held", no tick.
+  // Recorded in bharatstudio-requirements/active/tasks/PRF-02.md's
+  // Slice 5 "Decisions" and preserved by
+  // active/tasks/PRF-02-safe-mode.md's D7; asserted here so the decision
+  // is enforced rather than merely written down.
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 0, safeMode: false }));
   connection.fireChange();
   await flush();
   module.render(0);
@@ -94,7 +162,7 @@ test('a held count of ZERO renders nothing visible and writes no copy at all', a
 
 test('a count falling back to zero hides the card again — it does not latch on', async () => {
   let held = 3;
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: held }));
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: held, safeMode: false }));
   connection.fireChange();
   await flush();
   module.render(0);
@@ -122,11 +190,17 @@ test('a null snapshot renders nothing visible', async () => {
 
 test('a malformed snapshot is ignored, never thrown, never rendered', async () => {
   const malformed = [
-    { schemaVersion: 'v1', heldCount: -4 },
-    { schemaVersion: 'v1', heldCount: '7' },
-    { schemaVersion: 'v1', heldCount: 3, supporterName: 'Riya' },
-    { schemaVersion: 'v1', heldCount: 3, safeMode: true },
-    { heldCount: 3 },
+    { schemaVersion: 'v1', heldCount: -4, safeMode: false },
+    { schemaVersion: 'v1', heldCount: '7', safeMode: false },
+    { schemaVersion: 'v1', heldCount: 3, safeMode: false, supporterName: 'Riya' },
+    // Safe mode is NOT the queue-paused flag (owner decision,
+    // 2026-09-16); that flag must never reach the card under any label.
+    { schemaVersion: 'v1', heldCount: 3, safeMode: false, isPaused: true },
+    // A truthy non-boolean must be refused, not coerced into "on".
+    { schemaVersion: 'v1', heldCount: 3, safeMode: 'true' },
+    // Half an answer is no answer: module #12 is the count AND the flag.
+    { schemaVersion: 'v1', heldCount: 3 },
+    { heldCount: 3, safeMode: false },
   ];
   for (const payload of malformed) {
     const { container, connection, module } = mount(async () => payload as unknown as ModeratorStatus);
@@ -150,7 +224,7 @@ test('a rejected fetch is swallowed and leaves the card hidden, never throwing o
 
 test('composite-only: render() writes only opacity and transform', async () => {
   let held = 0;
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: held }));
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: held, safeMode: false }));
   const card = () => container.querySelector('[data-role="moderator-status-card"]') as HTMLElement;
 
   for (const next of [0, 5, 0, 12]) {
@@ -167,7 +241,7 @@ test('composite-only: render() writes only opacity and transform', async () => {
 });
 
 test('prefers-reduced-motion declares no transition at all', async () => {
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 1 }), () => true);
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: 1, safeMode: false }), () => true);
   connection.fireChange();
   await flush();
   module.render(0);
@@ -199,7 +273,7 @@ test('the module opens no connection and performs no fetch of its own — every 
   globalThis.fetch = (async () => { globalFetchCalls += 1; throw new Error('the module must not use global fetch'); }) as typeof fetch;
   try {
     let injectedCalls = 0;
-    const { connection, module } = mount(async () => { injectedCalls += 1; return { schemaVersion: 'v1', heldCount: 1 }; });
+    const { connection, module } = mount(async () => { injectedCalls += 1; return { schemaVersion: 'v1', heldCount: 1, safeMode: false }; });
     connection.fireChange();
     await flush();
     module.render(0);
@@ -223,7 +297,7 @@ test('the module subscribes to the shared connection exactly once and never to i
     getSubscriberCount: () => listeners.size,
   };
   const module = createModeratorStatusModule({
-    container, connection, fetchSnapshot: async () => ({ schemaVersion: 'v1', heldCount: 1 }), reducedMotion: () => false,
+    container, connection, fetchSnapshot: async () => ({ schemaVersion: 'v1', heldCount: 1, safeMode: false }), reducedMotion: () => false,
   });
   module.activate();
   assert.equal(listeners.size, 1, 'exactly one subscription on the shared connection');
@@ -250,7 +324,7 @@ test('deactivate() unsubscribes, discards a late in-flight fetch, and is idempot
   module.deactivate();
   assert.equal(connection.getSubscriberCount(), 0, 'deactivate() must release the shared connection subscription');
 
-  release?.({ schemaVersion: 'v1', heldCount: 9 });
+  release?.({ schemaVersion: 'v1', heldCount: 9, safeMode: false });
   await flush();
   module.render(0);
   assert.equal(container.style.opacity, '0', 'a fetch resolving after deactivate() must never be rendered');
@@ -263,7 +337,7 @@ test('deactivate() unsubscribes, discards a late in-flight fetch, and is idempot
 
 test('bounded DOM: repeated snapshots and renders never grow the node count', async () => {
   let held = 1;
-  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: held }));
+  const { container, connection, module } = mount(async () => ({ schemaVersion: 'v1', heldCount: held, safeMode: false }));
   connection.fireChange();
   await flush();
   module.render(0);

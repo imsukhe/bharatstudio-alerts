@@ -1,9 +1,9 @@
 /*
- * Moderator Status Card module — §6 catalogue module #12, HELD HALF
- * ONLY (PRF-02 slice 5).
+ * Moderator Status Card module — §6 catalogue module #12. Slice 5 built
+ * the held half; safe mode (migration 0138) completes it.
  *
  * Reads the `/v1/overlay-widgets/:overlayId/moderator-status` snapshot
- * (migration 0136's `app_private.list_overlay_moderator_status`) through
+ * (migration 0138's `app_private.list_overlay_moderator_status`) through
  * the host page's injected `fetchSnapshot`, on the SAME shared
  * `MasterCanvasConnection` and the SAME shared rAF loop every other
  * module uses. It opens no connection, no session and no transport of
@@ -19,32 +19,31 @@
  * has no slot for one.
  *
  * NEVER PRIVATE CONTENT (§6), AND THIS FILE IS THE LAST LINE, NOT THE
- * FIRST. The read returns one column (`held_count`); the API route
- * narrows a second time (`projectModeratorStatus`); and
+ * FIRST. The read returns two columns (`held_count`, `safe_mode`); the
+ * API route narrows a second time (`projectModeratorStatus`); and
  * `isModeratorStatus` here rejects any payload carrying a key it does
  * not expect. Three independent narrowings, so the guarantee does not
  * rest on any one of them holding.
  *
- * THE ZERO CASE, DECIDED DELIBERATELY. A count of zero is a real,
- * authorised answer — it means nothing is held — and this module renders
- * NOTHING for it: the container stays at `opacity: 0` with empty text.
- * No "All clear", no "Nothing held", no tick. Two reasons, both recorded
- * in `bharatstudio-requirements/active/tasks/PRF-02.md`'s Slice 5
- * "Decisions" so they can be argued with later rather than rediscovered:
- * a permanent zero badge is chrome a viewer stares at for an entire
- * broadcast while carrying no information (§19.5's "idle modules cost
- * nothing" posture), and a reassuring string would be a claim about
- * moderation state this slice has no authority to make. The card's
- * absence is the answer "nothing is stuck"; its presence is "this many
- * are". It hides again the moment the count returns to zero — it does
- * not latch on.
+ * WHEN THE CARD IS VISIBLE, DECIDED DELIBERATELY. It shows when
+ * something is held OR when safe mode is on — safe mode alone is enough,
+ * because it is the REASON nothing is reaching the overlay and a creator
+ * staring at a silent canvas needs to know that. Quiet and off, it
+ * renders NOTHING: the container stays at `opacity: 0` with empty text.
+ * No "All clear", no "Nothing held", no tick. That half is slice 5's
+ * decision, preserved: a permanent zero badge is chrome a viewer stares
+ * at for an entire broadcast while carrying no information (§19.5's
+ * "idle modules cost nothing" posture), and a reassuring string would be
+ * a claim about moderation state this module has no authority to make.
+ * It hides again the moment both go quiet — it does not latch on.
  *
- * NOT CHAT, NOT SAFE MODE. The label is "held for review" — held alert
- * deliveries awaiting a moderator, not chat messages (§6's "messages
- * held" wording predates the schema and was corrected in §6 itself), and
- * there is no safe-mode indicator of any kind here because safe mode is
- * not built and is not the queue-paused flag (owner decision,
- * 2026-09-16).
+ * NOT CHAT, AND NOT THE QUEUE-PAUSED FLAG. The label reads "safe mode
+ * on" and "N held for review" — held alert deliveries awaiting a
+ * moderator, not chat messages (§6's "messages held" wording predates
+ * the schema and was corrected in §6 itself). `safeMode` is the
+ * creator's own per-channel switch (owner decision, 2026-09-16), never
+ * automatic and never `alert_queues.is_paused`, which migration 0138
+ * still does not read.
  *
  * COMPOSITE-ONLY (PRF-03). `render()` writes only `opacity` and
  * `transform`. The card's entrance is a small `translateY` plus a fade;
@@ -60,7 +59,7 @@
 import type { CanvasModuleDefinition } from '../master-canvas-runtime';
 import type { MasterCanvasConnection } from '../master-canvas-connection';
 import { defaultCanvasTextStyles, type CanvasTextStyle } from '../text-rendering';
-import { formatHeldLabel, hasSomethingHeld, isModeratorStatus, type ModeratorStatus } from './moderator-status-logic';
+import { formatModeratorStatusLabel, hasSomethingToShow, isModeratorStatus, type ModeratorStatus } from './moderator-status-logic';
 
 export interface ModeratorStatusModuleOptions {
   container: HTMLElement;
@@ -149,12 +148,12 @@ export function createModeratorStatusModule(options: ModeratorStatusModuleOption
       ensureElements();
       const status = latestStatus;
 
-      // The zero case and the no-answer case both render nothing, and
+      // Quiet-and-off, and the no-answer case, both render nothing, and
       // deliberately render the SAME nothing: neither one has anything
       // to tell a creator, and distinguishing them on a broadcast
       // overlay would mean inventing copy for a state that is not worth
       // a pixel.
-      if (!hasSomethingHeld(status)) {
+      if (!hasSomethingToShow(status)) {
         if (options.container.style.opacity !== '0') options.container.style.opacity = '0';
         if (cardEl.style.opacity !== '0') cardEl.style.opacity = '0';
         if (cardEl.style.transform !== 'translateY(-4px)') cardEl.style.transform = 'translateY(-4px)';
@@ -162,8 +161,10 @@ export function createModeratorStatusModule(options: ModeratorStatusModuleOption
         return;
       }
 
-      const heldCount = (status as ModeratorStatus).heldCount;
-      const label = formatHeldLabel(heldCount);
+      // One text node, one string, both halves of the status in it. The
+      // card does not gain an element when safe mode turns on — §19.5's
+      // bounded DOM is three elements created once, whatever the state.
+      const label = formatModeratorStatusLabel(status as ModeratorStatus);
       if (labelEl.textContent !== label) labelEl.textContent = label;
       if (options.container.style.opacity !== '1') options.container.style.opacity = '1';
       if (cardEl.style.opacity !== '1') cardEl.style.opacity = '1';

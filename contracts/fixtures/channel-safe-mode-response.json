@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-safe-mode-response.schema.json",
+  "schemaVersion": "v1",
+  "safeMode": { "schemaVersion": "v1", "enabled": true }
+}

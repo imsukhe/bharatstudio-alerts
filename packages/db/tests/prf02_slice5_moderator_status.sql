@@ -268,13 +268,21 @@ end
 $$;
 
 -- =====================================================================
--- S5.4 -- THE RETURNED COLUMN SET IS EXACTLY {held_count}, AND NOTHING
--- ELSE, EVER.
+-- S5.4 -- THE RETURNED COLUMN SET IS EXACTLY {held_count, safe_mode},
+-- AND NOTHING ELSE, EVER.
+--
+-- EXTENDED, NOT WEAKENED, 2026-09-16. Slice 5 asserted exactly
+-- {held_count}. Safe mode (migration 0138) completes §6 module #12's
+-- other half under the owner's decision 3 of that date, so the declared
+-- type is now two columns. This case was UPDATED to the new declared
+-- type rather than deleted or loosened: it still fails by name the
+-- moment a THIRD column appears, whatever it is called.
 --
 -- This is §6's "never private content" expressed as an executable
 -- assertion about the QUERY rather than a rule a reviewer has to
--- enforce on the renderer. Two independent checks, because one is a
--- single point of failure:
+-- enforce on the renderer. A boolean is not a supporter, a message or
+-- an amount; anything that is, still cannot get past here. Two
+-- independent checks, because one is a single point of failure:
 --
 --   (a) the catalogue's declared result type, which fails if the
 --       `returns table (...)` signature ever grows a column; and
@@ -283,10 +291,9 @@ $$;
 --       the select list ever emits something the signature did not
 --       declare.
 --
--- Adding any column at all -- a supporter name, a message, an amount, a
--- delivery id, a viewer identifier, or even an innocuous-looking queue
--- id -- turns this file red by name. That is the negative test recorded
--- in this slice's implementation review.
+-- Adding any further column at all -- a supporter name, a message, an
+-- amount, a delivery id, a viewer identifier, or even an
+-- innocuous-looking queue id -- turns this file red by name.
 -- =====================================================================
 do $$
 declare declared_result text;
@@ -299,8 +306,8 @@ begin
      and p.proname = 'list_overlay_moderator_status';
 
   if declared_result is null then raise exception 'app_private.list_overlay_moderator_status does not exist'; end if;
-  if declared_result <> 'TABLE(held_count bigint)' then
-    raise exception 'the overlay moderator-status read must return the held COUNT and nothing else (§6: never private content, enforced as a property of the query). Declared result is "%", expected exactly "TABLE(held_count bigint)"', declared_result;
+  if declared_result <> 'TABLE(held_count bigint, safe_mode boolean)' then
+    raise exception 'the overlay moderator-status read must return the held COUNT and the safe-mode FLAG and nothing else (§6: never private content, enforced as a property of the query). Declared result is "%", expected exactly "TABLE(held_count bigint, safe_mode boolean)"', declared_result;
   end if;
 end
 $$;
@@ -316,22 +323,32 @@ begin
     from information_schema.columns
    where table_name = 'prf02s5_returned_shape';
 
-  if actual_columns <> 'held_count bigint' then
-    raise exception 'the columns actually returned by a live call must be exactly "held_count bigint", got "%" -- any additional column is private content leaving the database on the overlay path', actual_columns;
+  if actual_columns <> 'held_count bigint, safe_mode boolean' then
+    raise exception 'the columns actually returned by a live call must be exactly "held_count bigint, safe_mode boolean", got "%" -- any additional column is private content leaving the database on the overlay path', actual_columns;
   end if;
 end
 $$;
 
 -- =====================================================================
--- S5.5 -- NO SAFE-MODE SURFACE EXISTS ON THIS PATH, PROVEN AGAINST THE
--- SHIPPED FUNCTION DEFINITION.
+-- S5.5 -- THE QUEUE-PAUSED FLAG STILL HAS NO SURFACE HERE, AND THE
+-- SAFE-MODE FLAG THAT DOES IS THE CREATOR'S OWN COLUMN -- BOTH PROVEN
+-- AGAINST THE SHIPPED FUNCTION DEFINITION.
 --
--- Owner decision, 2026-09-16 (§6's module table): "safe mode" is NOT the
--- queue-paused flag. It is a separate moderation control that does not
--- exist in this schema, and it needs its own record and decision. So the
--- shipped definition must not read the paused flag, must not read the
--- queue-closed timestamp, and must contain no safe-mode token at all --
--- asserted here against pg_get_functiondef, which is the definition the
+-- Owner decision, 2026-09-16 (§6's module table): "safe mode" is NOT
+-- alert_queues.is_paused. Safe mode arriving as a real, creator-owned
+-- per-channel switch (public.channels.safe_mode_enabled, migration
+-- 0138) does NOT make the queue-paused flag publishable -- it remains a
+-- queue lifecycle state and must never reach an overlay under any
+-- label.
+--
+-- So this case now asserts BOTH directions:
+--   * the definition still never references is_paused, and still never
+--     filters on queue closure; and
+--   * it positively DOES read safe_mode_enabled, so a build that
+--     silently dropped the flag while leaving the column in the
+--     signature fails here rather than shipping a card that always
+--     reads "off".
+-- Asserted against pg_get_functiondef, which is the definition the
 -- database actually holds, not a comment anyone could let drift.
 -- =====================================================================
 do $$
@@ -345,14 +362,54 @@ begin
      and p.proname = 'list_overlay_moderator_status';
 
   if definition ilike '%is_paused%' then
-    raise exception 'the overlay moderator-status read must never reference the queue-paused flag: the owner decided on 2026-09-16 that safe mode is NOT that flag, and surfacing it under any label is forbidden until safe mode has its own record and decision';
+    raise exception 'the overlay moderator-status read must never reference the queue-paused flag: the owner decided on 2026-09-16 that safe mode is NOT that flag, and safe mode having since been built does not make it publishable';
   end if;
-  if definition ilike '%safe_mode%' or definition ilike '%safemode%' then
-    raise exception 'safe mode is not built and must not appear on this path in any form';
+  if definition not ilike '%safe_mode_enabled%' then
+    raise exception 'the overlay moderator-status read must read public.channels.safe_mode_enabled -- the creator''s own switch is the whole of §6 module #12''s second half, and a definition that does not read it would report every channel as off';
   end if;
   if definition ilike '%closed_at%' then
     raise exception 'the overlay moderator-status read must not filter on queue closure: closing is a queue lifecycle state, held is a delivery state';
   end if;
+end
+$$;
+
+-- =====================================================================
+-- S5.11 -- SAFE MODE IS VISIBLE THROUGH THIS READ, AND IS STILL
+-- CHANNEL-SCOPED BY THE SESSION.
+--
+-- Channel A's session must see A's flag and never B's. Asserted here
+-- rather than only in prf02_safe_mode.sql because the cross-channel
+-- gate is THIS file's subject and a new column is a new thing that
+-- could leak across it.
+-- =====================================================================
+update public.channels set safe_mode_enabled = true, updated_at = current_timestamp
+ where id = '00000000-0000-4000-8000-000000005511';
+
+do $$
+declare a_safe boolean; b_safe boolean; a_held bigint;
+begin
+  select safe_mode, held_count into a_safe, a_held
+    from app_private.list_overlay_moderator_status('00000000-0000-4000-8000-000000005531'::uuid, 'prf02s5-a-fingerprint');
+  select safe_mode into b_safe
+    from app_private.list_overlay_moderator_status('00000000-0000-4000-8000-000000005532'::uuid, 'prf02s5-b-fingerprint');
+
+  if a_safe is not true then raise exception 'channel A''s session must read its own safe mode as on, got %', a_safe; end if;
+  if b_safe is not false then raise exception 'channel B''s session must read its OWN safe mode (off), never A''s, got %', b_safe; end if;
+  if a_held <> 4 then raise exception 'turning safe mode on must not change the held count of deliveries that already exist: expected 4, got %', a_held; end if;
+end
+$$;
+
+-- And back off again, so the rest of this file sees the state it seeded.
+update public.channels set safe_mode_enabled = false, updated_at = current_timestamp
+ where id = '00000000-0000-4000-8000-000000005511';
+
+do $$
+declare a_safe boolean; a_held bigint;
+begin
+  select safe_mode, held_count into a_safe, a_held
+    from app_private.list_overlay_moderator_status('00000000-0000-4000-8000-000000005531'::uuid, 'prf02s5-a-fingerprint');
+  if a_safe is not false then raise exception 'turning safe mode off must be visible on the same read, got %', a_safe; end if;
+  if a_held <> 4 then raise exception 'turning safe mode OFF must not release, delete or hide anything already held: expected 4, got %', a_held; end if;
 end
 $$;
 

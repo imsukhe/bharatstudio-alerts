@@ -57,7 +57,7 @@ test('quota_exhausted denial durably records the fallback reason', async () => {
 
 test('a successful synthesis never records a fallback reason', async () => {
   const recorded: { eventId: string; reason: string }[] = [];
-  const meter: TtsQuotaMeter = { async meter() { return { allowed: true, remaining: 99 }; }, async release() {} };
+  const meter: TtsQuotaMeter = { async meter() { return { allowed: true, remaining: 99, reservationId: '00000000-0000-4000-8000-0000000000a1' }; }, async release() {} };
   const store: TtsStore = {
     async getEventInput(eventId) { return { eventId, message: 'Namaste', locale: 'hi-IN', enabled: true, eligible: true }; },
     async storeAudio() { return '00000000-0000-4000-8000-000000000099'; },

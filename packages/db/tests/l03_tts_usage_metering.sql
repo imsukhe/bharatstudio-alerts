@@ -64,31 +64,32 @@ declare
   allowed boolean;
   remaining integer;
   reason text;
+  reservation uuid;
   remaining_row record;
 begin
   -- Free tier must not call paid TTS at all: quota is 0, blocked before any
   -- usage is recorded, distinguishable reason.
-  select * into allowed, remaining, reason from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003401', 100);
+  select * into allowed, remaining, reason, reservation from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003401', 100);
   if allowed or reason <> 'tier_not_entitled' or remaining <> 0 then
     raise exception 'free tier TTS metering was not blocked as tier_not_entitled: allowed=%, reason=%, remaining=%', allowed, reason, remaining;
   end if;
 
   -- Pro tier (quota 20000): consume most of the quota, then hit the exact
   -- boundary, then exceed it.
-  select * into allowed, remaining, reason from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003501', 19999);
+  select * into allowed, remaining, reason, reservation from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003501', 19999);
   if not allowed or remaining <> 1 then
     raise exception 'pro tier TTS metering under quota was not allowed correctly: allowed=%, remaining=%', allowed, remaining;
   end if;
 
   -- Exactly the remaining 1 character: boundary case, must be allowed and
   -- bring remaining to precisely 0 (hard stop is "> quota", not ">= quota").
-  select * into allowed, remaining, reason from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003502', 1);
+  select * into allowed, remaining, reason, reservation from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003502', 1);
   if not allowed or remaining <> 0 then
     raise exception 'pro tier TTS metering at the exact quota boundary was not allowed correctly: allowed=%, remaining=%', allowed, remaining;
   end if;
 
   -- Now at 0 remaining: even a single further character must hard-stop.
-  select * into allowed, remaining, reason from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003503', 1);
+  select * into allowed, remaining, reason, reservation from app_private.meter_tts_usage('00000000-0000-0000-0000-000000003503', 1);
   if allowed or reason <> 'quota_exhausted' or remaining <> 0 then
     raise exception 'pro tier TTS metering past quota was not hard-stopped: allowed=%, reason=%, remaining=%', allowed, reason, remaining;
   end if;

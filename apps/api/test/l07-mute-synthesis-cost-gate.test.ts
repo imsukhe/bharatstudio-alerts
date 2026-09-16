@@ -40,7 +40,7 @@ async function buildTtsApp(store: TtsStore, service: TtsService, quotaMeter?: Tt
 test('event whose entire fan-out is muted (eligible=false) never reaches the quota meter or the paid provider', async () => {
   let metered = false;
   let providerCalled = false;
-  const meter: TtsQuotaMeter = { async meter() { metered = true; return { allowed: true, remaining: 100 }; }, async release() {} };
+  const meter: TtsQuotaMeter = { async meter() { metered = true; return { allowed: true, remaining: 100, reservationId: '00000000-0000-4000-8000-0000000000a1' }; }, async release() {} };
   const service: TtsService = { async synthesize() { providerCalled = true; return { mode: 'audio', audio, cacheHit: false }; } };
   const app = await buildTtsApp(storeWithEligibility(false), service, meter);
   const response = await app.inject({ method: 'POST', url: `/internal/v1/tts/events/${EVENT_ID}`, headers: { authorization: 'Bearer worker-token' } });
@@ -56,7 +56,7 @@ test('event whose entire fan-out is muted (eligible=false) never reaches the quo
 test('event with at least one unmuted fan-out queue (eligible=true) meters quota and calls the provider exactly once', async () => {
   let meterCalls = 0;
   let providerCalls = 0;
-  const meter: TtsQuotaMeter = { async meter() { meterCalls += 1; return { allowed: true, remaining: 100 }; }, async release() {} };
+  const meter: TtsQuotaMeter = { async meter() { meterCalls += 1; return { allowed: true, remaining: 100, reservationId: '00000000-0000-4000-8000-0000000000a1' }; }, async release() {} };
   const service: TtsService = { async synthesize() { providerCalls += 1; return { mode: 'audio', audio, cacheHit: false }; } };
   const app = await buildTtsApp(storeWithEligibility(true), service, meter);
   const response = await app.inject({ method: 'POST', url: `/internal/v1/tts/events/${EVENT_ID}`, headers: { authorization: 'Bearer worker-token' } });

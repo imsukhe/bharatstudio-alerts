@@ -26,11 +26,15 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
     // and dashboard can tell "not configured for TTS" apart from "TTS quota
     // exhausted, show the upgrade prompt" (§3.2 "Overage behaviour").
     // §19.0 RT-03 / RT-03.6: meter() settles this charge immediately, before
-    // the provider call. reservedCharacters records what was just charged so
-    // every synthesis-failure path below can release it back — a failed
-    // synthesis must never consume premium characters (blocking acceptance
-    // test, not an assumption).
-    let reservedCharacters = 0;
+    // the provider call. reservationId names the durable reservation row it
+    // wrote (migration 0134) so every synthesis-failure path below can give
+    // exactly that charge back — a failed synthesis must never consume
+    // premium characters (blocking acceptance test, not an assumption).
+    // Releasing by reservation id rather than by character count is what
+    // makes the give-back idempotent and immune to a billing-month rollover
+    // between the meter call and the release; neither property is this
+    // route's to hold any more.
+    let reservationId: string | null = null;
     if (quotaMeter) {
       const quota = await quotaMeter.meter(input.eventId, input.message.length);
       if (!quota.allowed) {
@@ -42,7 +46,7 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
         await store.storeFallbackReason?.(input.eventId, quota.reason);
         return reply.code(200).send({ schemaVersion: 'v1', mode: 'chime', reason: quota.reason, remaining: quota.remaining });
       }
-      reservedCharacters = input.message.length;
+      reservationId = quota.reservationId;
     }
     // L09: a provider that throws, and a provider that answers "chime" because
     // it could not synthesize, are both TTS failures worth counting. Quota
@@ -54,12 +58,12 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
       result = await service.synthesize({ text: input.message, locale: input.locale, ...(input.voiceId ? { voiceId: input.voiceId } : {}), ...(input.model ? { model: input.model } : {}) });
     } catch (error) {
       metrics?.recordTtsFailure('provider_error');
-      if (reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
+      if (reservationId) await quotaMeter!.release(reservationId);
       throw error;
     }
     if (result.mode === 'chime') {
       metrics?.recordTtsFailure('other');
-      if (reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
+      if (reservationId) await quotaMeter!.release(reservationId);
       return reply.code(200).send({ schemaVersion: 'v1', mode: 'chime', reason: result.reason });
     }
     // Owner decision 2026-09-16: cached audio costs no premium characters.
@@ -70,7 +74,7 @@ export async function registerTtsRoutes(app: FastifyInstance, identity?: Service
     // consulted inside synthesize() — the hard stop above must still run
     // first and against the real character count, so an exhausted channel
     // still falls to chime and cannot mine the cache for free synthesis.
-    if (result.cacheHit && reservedCharacters > 0) await quotaMeter!.release(input.eventId, reservedCharacters);
+    if (result.cacheHit && reservationId) await quotaMeter!.release(reservationId);
     const artifactId = await store.storeAudio(input.eventId, result.audio);
     return reply.code(200).send({ schemaVersion: 'v1', mode: 'audio', artifactId, cacheHit: result.cacheHit });
   });

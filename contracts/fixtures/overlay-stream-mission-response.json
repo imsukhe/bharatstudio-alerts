@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-stream-mission-response.schema.json",
+  "schemaVersion": "v1",
+  "mission": { "schemaVersion": "v1", "missionId": "00000000-0000-4000-8000-000000002301", "objective": "Synthetic stream mission", "startedAt": "2026-09-16T10:00:00.000Z" }
+}

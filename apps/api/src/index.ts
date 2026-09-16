@@ -41,6 +41,11 @@ import { createSqlSeatStore } from './db/seat-store.js';
 import { createSqlGoalStore } from './db/goal-store.js';
 import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
 import { createSqlMasterCanvasOverlayStore, createSqlMasterCanvasStore } from './db/master-canvas-sql-store.js';
+import { createSqlModeratorStatusOverlayStore } from './db/moderator-status-overlay-store.js';
+// PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
+// two pools, deliberately -- see each store file's own header.
+import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
+import { createSqlStreamMissionOverlayStore } from './db/stream-mission-overlay-store.js';
 import { createSqlReputationStore } from './db/reputation-sql-store.js';
 import { createSqlProviderCapabilitySnapshotStore } from './db/payment-provider-capability-snapshot-store.js';
 import { createSqlChallengeStore } from './db/challenge-store.js';
@@ -142,6 +147,16 @@ const app = await buildApp(config, {
   overlayGoals: sql ? createSqlGoalOverlayStore(derivedReadSql!) : undefined,
   masterCanvasModules: sql ? createSqlMasterCanvasStore(sql) : undefined,
   overlayMasterCanvasModules: sql ? createSqlMasterCanvasOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 5, §6 module #12 (held half only). On the RT-10/RT-11
+  // derived-read pool like every other widget/overlay read -- which is
+  // also what puts it inside rule 3 of the RT-12 required-queries scan.
+  overlayModeratorStatus: sql ? createSqlModeratorStatusOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 5, module #9. The creator store carries writes, so it
+  // uses the main pool exactly as goals/challenges/masterCanvasModules do;
+  // the overlay store is a derived read and uses derivedReadSql, which is
+  // also what makes it visible to rule 3 of scan-required-queries.mjs.
+  streamMissions: sql ? createSqlStreamMissionStore(sql) : undefined,
+  overlayStreamMission: sql ? createSqlStreamMissionOverlayStore(derivedReadSql!) : undefined,
   reputation: sql ? createSqlReputationStore(sql) : undefined,
   capabilitySnapshots: sql ? createSqlProviderCapabilitySnapshotStore(sql) : undefined,
   challenges: sql ? createSqlChallengeStore(sql) : undefined,

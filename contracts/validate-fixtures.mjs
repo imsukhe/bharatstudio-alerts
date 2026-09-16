@@ -23,10 +23,12 @@ const fixtureToSchema = {
   'overlay-goal-response.json': 'overlay-goal-response.schema.json',
   'overlay-challenge-response.json': 'overlay-challenge-response.schema.json',
   'overlay-lottie-list-response.json': 'overlay-lottie-list-response.schema.json',
+  'overlay-stream-mission-response.json': 'overlay-stream-mission-response.schema.json',
   'overlay-vote-tally-response.json': 'overlay-vote-tally-response.schema.json',
   'overlay-hype-response.json': 'overlay-hype-response.schema.json',
   'overlay-leaderboard-response.json': 'overlay-leaderboard-response.schema.json',
   'overlay-paid-vote-tally-response.json': 'overlay-paid-vote-tally-response.schema.json',
+  'overlay-moderator-status-response.json': 'overlay-moderator-status-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
   'payment-webhook-delivery.json': 'payment-webhook-delivery.schema.json',
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',
@@ -181,6 +183,38 @@ if (overlayChallengeValidator(challengeWithRefundData)) {
   failures.push('overlay-challenge-response.json: refund field was accepted');
 }
 
+// PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). These
+// negative cases are the build's own check on an owner decision
+// (FULL-PRODUCT-DEFINITION.md §6, module table row 9, 2026-09-16): the
+// mission is SESSION-bounded, not clock-bounded. A future edit that adds
+// an end time, a duration or an expiry to the overlay contract fails here
+// rather than shipping -- the decision is checked on every
+// `pnpm contracts:validate`, not merely written down somewhere.
+const overlayStreamMissionSchema = await loadSchema('overlay-stream-mission-response.schema.json');
+const overlayStreamMissionValidator = ajv.getSchema(overlayStreamMissionSchema.$id);
+for (const clockBoundField of ['endsAt', 'durationSeconds', 'expiresAt']) {
+  const missionWithClockBound = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-stream-mission-response.json'), 'utf8'));
+  missionWithClockBound.mission[clockBoundField] = clockBoundField === 'durationSeconds' ? 900 : '2026-09-16T12:00:00.000Z';
+  if (overlayStreamMissionValidator(missionWithClockBound)) {
+    failures.push(`overlay-stream-mission-response.json: clock-bound field ${clockBoundField} was accepted — the stream mission is session-bounded, not clock-bounded`);
+  }
+}
+const missionWithAccountData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-stream-mission-response.json'), 'utf8'));
+missionWithAccountData.mission.viewerAccountId = '00000000-0000-4000-8000-0000000000a1';
+if (overlayStreamMissionValidator(missionWithAccountData)) {
+  failures.push('overlay-stream-mission-response.json: account identity was accepted in the overlay projection');
+}
+const missionWithPaymentData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-stream-mission-response.json'), 'utf8'));
+missionWithPaymentData.mission.paymentId = '00000000-0000-4000-8000-000000000d01';
+if (overlayStreamMissionValidator(missionWithPaymentData)) {
+  failures.push('overlay-stream-mission-response.json: payment identifier was accepted in the overlay projection');
+}
+const missionWithOverlongObjective = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-stream-mission-response.json'), 'utf8'));
+missionWithOverlongObjective.mission.objective = 'a'.repeat(121);
+if (overlayStreamMissionValidator(missionWithOverlongObjective)) {
+  failures.push('overlay-stream-mission-response.json: a 121-character objective was accepted — the bound is 1-120 (migration 0109 line 67, reused)');
+}
+
 const overlayLottieSchema = await loadSchema('overlay-lottie-list-response.schema.json');
 const overlayLottieValidator = ajv.getSchema(overlayLottieSchema.$id);
 const lottieWithAccountData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-lottie-list-response.json'), 'utf8'));
@@ -205,6 +239,58 @@ const voteWithNegativeCount = JSON.parse(await fs.readFile(path.join(fixtureDir,
 voteWithNegativeCount.tally.options[0].voteCount = -1;
 if (overlayVoteValidator(voteWithNegativeCount)) {
   failures.push('overlay-vote-tally-response.json: negative vote count was accepted');
+}
+
+// PRF-02 slice 5, catalogue module #12 (Moderator Status Card, held half
+// only). §6 requires "never private content" on this surface and the
+// owner's 2026-09-16 decision requires it to be a property of the query
+// rather than of the renderer -- migration 0136's function returns a
+// single held_count column. These negative cases are the CONTRACT's own
+// half of that guarantee: the published response schema must refuse every
+// private field outright, so a future server change cannot introduce one
+// without a visible, reviewable contract change.
+const overlayModeratorStatusSchema = await loadSchema('overlay-moderator-status-response.schema.json');
+const overlayModeratorStatusValidator = ajv.getSchema(overlayModeratorStatusSchema.$id);
+for (const [field, value] of [
+  ['supporterName', 'Riya'],
+  ['message', 'a private supporter message'],
+  ['amountPaise', 300000],
+  ['deliveryId', '00000000-0000-4000-8000-000000005561'],
+  ['eventId', '00000000-0000-4000-8000-000000005541'],
+  ['queueId', '00000000-0000-4000-8000-000000005521'],
+  ['viewerIdentityId', '00000000-0000-4000-8000-0000000000a1'],
+]) {
+  const polluted = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+  polluted.moderatorStatus[field] = value;
+  if (overlayModeratorStatusValidator(polluted)) {
+    failures.push(`overlay-moderator-status-response.json: private field ${field} was accepted`);
+  }
+}
+// Safe mode is NOT alert_queues.is_paused (owner decision, 2026-09-16).
+// It is a separate moderation control that does not exist in the schema
+// and needs its own record and decision, so no contract may carry a field
+// for it -- including one that merely looks like it.
+for (const field of ['safeMode', 'isPaused', 'paused']) {
+  const withSafeMode = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+  withSafeMode.moderatorStatus[field] = true;
+  if (overlayModeratorStatusValidator(withSafeMode)) {
+    failures.push(`overlay-moderator-status-response.json: ${field} was accepted -- safe mode is not built and must not appear in any contract`);
+  }
+}
+const moderatorStatusNegativeCount = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+moderatorStatusNegativeCount.moderatorStatus.heldCount = -1;
+if (overlayModeratorStatusValidator(moderatorStatusNegativeCount)) {
+  failures.push('overlay-moderator-status-response.json: negative held count was accepted');
+}
+const moderatorStatusFractionalCount = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+moderatorStatusFractionalCount.moderatorStatus.heldCount = 1.5;
+if (overlayModeratorStatusValidator(moderatorStatusFractionalCount)) {
+  failures.push('overlay-moderator-status-response.json: fractional held count was accepted');
+}
+const moderatorStatusZero = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-moderator-status-response.json'), 'utf8'));
+moderatorStatusZero.moderatorStatus.heldCount = 0;
+if (!overlayModeratorStatusValidator(moderatorStatusZero)) {
+  failures.push('overlay-moderator-status-response.json: heldCount 0 must be a VALID answer -- a recognised overlay token with nothing held returns zero, which is different from an unrecognised token returning null');
 }
 
 const overlayHypeSchema = await loadSchema('overlay-hype-response.schema.json');

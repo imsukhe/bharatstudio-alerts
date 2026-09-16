@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-stream-mission-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "mission"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "mission": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "missionId", "objective", "startedAt"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "missionId": { "type": "string", "format": "uuid" },
+            "objective": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "startedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

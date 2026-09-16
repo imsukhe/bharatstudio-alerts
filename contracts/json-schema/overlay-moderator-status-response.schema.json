@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-moderator-status-response.schema.json",
+  "title": "Overlay moderator status response (PRF-02 slice 5, catalogue module #12, held half only)",
+  "description": "The overlay-facing projection of held alert deliveries awaiting a moderator, scoped to one channel by the overlay session token. It carries a COUNT and nothing else: no supporter name, message text, amount, delivery id, event id, queue id, payment reference or viewer identifier. There is deliberately no safe-mode field -- safe mode is not the queue-paused flag, it is a separate moderation control that does not exist in the schema and needs its own record and decision. `moderatorStatus` is null when the overlay token is not recognised; a recognised token with nothing held returns heldCount 0.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "moderatorStatus"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "moderatorStatus": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "heldCount"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "heldCount": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    }
+  }
+}

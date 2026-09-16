@@ -1144,6 +1144,91 @@ paths:
               schema: { $ref: '#/components/schemas/OverlayChallengeResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/stream-mission:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayStreamMission
+      security: [{ overlayToken: [] }]
+      description: >-
+        The current stream mission for this overlay token, or null. Bounded to at most the
+        current mission and never a history (12.7). The mission is session-bounded, not
+        clock-bounded: this projection carries no end time, duration or expiry, and a mission
+        ends only when the creator ends it or the overlay session itself ends.
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Current stream mission render projection for this overlay token, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayStreamMissionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/stream-mission:
+    get:
+      tags: [Stream mission]
+      operationId: getChannelStreamMission
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The channel's current stream mission, or null. Available at every tier: storing,
+        viewing and exporting a durable creator record is never tier-gated (12.6). The
+        30.3 Master Canvas module cap governs only whether the Canvas renders the card.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's current stream mission, or null when none is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelStreamMissionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Stream mission]
+      operationId: startChannelStreamMission
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Starts a stream mission. Owner/admin only. At most one mission may run per channel:
+        starting a second one while one is running is a 409, never a silent supersede of the
+        running mission. The request body carries an objective and nothing else - there is no
+        duration, end time or expiry to supply.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartStreamMissionRequest' }
+      responses:
+        '201':
+          description: The started mission.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelStreamMissionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/stream-mission/{missionId}/end:
+    post:
+      tags: [Stream mission]
+      operationId: endChannelStreamMission
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Ends the named stream mission. Owner/admin only. The mission id is required so the
+        write is addressed rather than ambient - a stale dashboard tab cannot end a mission
+        started after that tab loaded. An unknown, already-ended, other-channel or
+        unauthorised mission is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/StreamMissionId'
+      responses:
+        '204':
+          description: The mission was ended.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -1253,6 +1338,31 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OverlayPaidVoteTallyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/moderator-status:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayModeratorStatus
+      summary: Held alert deliveries awaiting a moderator, as a count and nothing else.
+      description: >-
+        Master Canvas module #12 (Moderator Status Card), held half only. Returns the number of this
+        channel's alert deliveries currently held for a moderator's decision. It carries a COUNT and
+        nothing else - no supporter name, message text, amount, delivery id, event id, queue id,
+        payment reference or viewer identifier - and that is enforced by the read itself, whose
+        returned column set is a single integer. There is deliberately no safe-mode field: safe mode
+        is a separate moderation control that does not exist yet and needs its own decision.
+        moderatorStatus is null when the overlay token is not recognised; a recognised token with
+        nothing held returns heldCount 0.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped held-delivery count for this overlay, or null when unavailable for this overlay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayModeratorStatusResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/channels/{channelId}/companion/state:
@@ -1580,6 +1690,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    StreamMissionId:
+      name: missionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     ArtifactId:
       name: artifactId
       in: path
@@ -1738,6 +1853,86 @@ components:
           oneOf:
             - type: 'null'
             - $ref: '#/components/schemas/OverlayChallenge'
+    OverlayModeratorStatus:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, heldCount]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        heldCount:
+          type: integer
+          minimum: 0
+          description: >-
+            Alert deliveries held for a moderator's decision on this channel. Held deliveries, not
+            chat messages. Zero is a valid answer and means nothing is held.
+    OverlayModeratorStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, moderatorStatus]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        moderatorStatus:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayModeratorStatus'
+    StreamMission:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, missionId, objective, startedAt, endedAt, createdAt, updatedAt]
+      description: >-
+        Creator-facing stream mission. endedAt is a record of when the creator ended the
+        mission (null while it is running), never a scheduled end - the mission is
+        session-bounded, not clock-bounded, and carries no duration or expiry.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        missionId: { type: string, format: uuid }
+        objective: { type: string, minLength: 1, maxLength: 120 }
+        startedAt: { type: string, format: date-time }
+        endedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelStreamMissionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, mission]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        mission:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/StreamMission'
+    StartStreamMissionRequest:
+      type: object
+      additionalProperties: false
+      required: [objective]
+      description: >-
+        The objective and nothing else. additionalProperties is false deliberately: a body
+        carrying a duration, end time or expiry is rejected before the store is reached.
+        The 1-120 bound is migration 0109's already-decided challenge-title bound, reused.
+      properties:
+        objective: { type: string, minLength: 1, maxLength: 120 }
+    OverlayStreamMission:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, missionId, objective, startedAt]
+      description: >-
+        Overlay projection: three fields, 12.7-bounded. No identity of any kind, and no end
+        time, duration or expiry.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        missionId: { type: string, format: uuid }
+        objective: { type: string, minLength: 1, maxLength: 120 }
+        startedAt: { type: string, format: date-time }
+    OverlayStreamMissionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, mission]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        mission:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayStreamMission'
     OverlayLottieAssetRef:
       type: object
       additionalProperties: false

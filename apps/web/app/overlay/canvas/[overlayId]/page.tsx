@@ -95,6 +95,22 @@
  * `connection.subscribe()` signal every other snapshot module already
  * uses. See `modules/challenge-board-module.ts` and
  * `modules/milestone-celebration-module.ts` for the full reasoning.
+ *
+ * PRF-02 SLICE 5 — STREAM MISSION CARD (§6 #9): module eight, and the
+ * first since slice 1 to add an endpoint of its own
+ * (`/v1/overlay-widgets/:overlayId/stream-mission`, migration 0135) —
+ * because unlike every module slices 2–4 built, #9's data did not exist
+ * anywhere in the schema. It is nevertheless an ordinary snapshot module
+ * here: the SAME shared `connection` and the SAME shared runtime, one more
+ * `fetch` closure, zero new sessions and zero new transports. The owner's
+ * 2026-09-16 decision on §6's module table row 9 makes the mission
+ * SESSION-bounded, not clock-bounded — so nothing below passes it a
+ * duration, an end time or an expiry, and the card's visibility is decided
+ * solely by whether the endpoint still returns a mission. The elapsed
+ * reading the card paints is derived by the module from the server-sent
+ * `startedAt` on the shared frame loop; see
+ * `modules/stream-mission-module.ts` for why that is a reading and not a
+ * timer.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -109,6 +125,9 @@ import { createBossFightModule } from '../modules/boss-fight-module';
 import { createSupportTheaterModule } from '../modules/support-theater-module';
 import { createChallengeBoardModule } from '../modules/challenge-board-module';
 import { createMilestoneCelebrationModule } from '../modules/milestone-celebration-module';
+import { createStreamMissionModule, isStreamMission, type StreamMission } from '../modules/stream-mission-module';
+import { createModeratorStatusModule } from '../modules/moderator-status-module';
+import { isModeratorStatus, type ModeratorStatus } from '../modules/moderator-status-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -124,7 +143,11 @@ import { isOverlayChallenge, type OverlayChallenge } from '../../widgets/challen
 // ordering requirement, only Support Theater's first position matters.
 const BUILT_MODULE_KEYS = [
   'support_theater', 'supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight',
-  'challenge_board', 'milestone_celebration',
+  'challenge_board', 'milestone_celebration', 'stream_mission_card',
+  // PRF-02 slice 5, §6 #12 (held half only). A plain snapshot module
+  // like the rest, so its position here carries no ordering
+  // requirement -- only Support Theater's first position matters.
+  'moderator_status_card',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -145,6 +168,8 @@ export default function MasterCanvasPage() {
   const supportTheaterContainerRef = useRef<HTMLDivElement>(null);
   const challengeContainerRef = useRef<HTMLDivElement>(null);
   const milestoneContainerRef = useRef<HTMLDivElement>(null);
+  const missionContainerRef = useRef<HTMLDivElement>(null);
+  const moderatorStatusContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -224,6 +249,41 @@ export default function MasterCanvasPage() {
       return isOverlayChallenge(body.challenge) ? body.challenge : null;
     }
 
+    // Stream Mission Card (§6 #9, PRF-02 slice 5): the one endpoint this
+    // slice added. Three fields come back — missionId, objective,
+    // startedAt — and deliberately no end time, duration or expiry: the
+    // mission is session-bounded, not clock-bounded (owner decision,
+    // §6 module table row 9, 2026-09-16).
+    async function fetchStreamMissionSnapshot(): Promise<StreamMission | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/stream-mission`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { mission?: unknown };
+      return isStreamMission(body.mission) ? body.mission : null;
+    }
+
+    // Moderator Status Card (§6 #12, HELD HALF ONLY). The one new
+    // endpoint this slice adds. The response carries a COUNT and nothing
+    // else -- no supporter name, message, amount, delivery id, queue id
+    // or viewer identifier exists on this path at all, because
+    // app_private.list_overlay_moderator_status (migration 0136) returns
+    // a single column. `isModeratorStatus` is the client's own last-line
+    // check on top of that, not the guarantee itself.
+    //
+    // `moderatorStatus: null` means the read did not answer (an
+    // unrecognised/expired/revoked token); `heldCount: 0` means it
+    // answered and nothing is held. The module renders the same nothing
+    // for both, but the distinction is real and is preserved end to end.
+    async function fetchModeratorStatusSnapshot(): Promise<ModeratorStatus | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/moderator-status`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { moderatorStatus?: unknown };
+      return isModeratorStatus(body.moderatorStatus) ? body.moderatorStatus : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -289,6 +349,34 @@ export default function MasterCanvasPage() {
         connection,
         fetchGoalSnapshot,
         fetchVoteSnapshot: fetchTugOfWarVoteSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
+    if (missionContainerRef.current) {
+      runtime.registerModule(createStreamMissionModule({
+        container: missionContainerRef.current,
+        connection,
+        fetchSnapshot: fetchStreamMissionSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
+    if (moderatorStatusContainerRef.current) {
+      // Moderator Status Card (§6 #12, HELD HALF ONLY). One more plain
+      // snapshot module on the SAME shared `connection` and the SAME
+      // shared rAF loop -- no second session, no second transport, no
+      // timer of its own. Its snapshot endpoint is the only new one this
+      // slice adds, and it returns a COUNT and nothing else (migration
+      // 0136; §6's "never private content" is a property of that query,
+      // not of this renderer).
+      //
+      // There is no safe-mode half here and that is deliberate: safe
+      // mode is NOT the queue-paused flag (owner decision, 2026-09-16);
+      // it is a separate moderation control that does not exist in the
+      // schema and needs its own record and decision.
+      runtime.registerModule(createModeratorStatusModule({
+        container: moderatorStatusContainerRef.current,
+        connection,
+        fetchSnapshot: fetchModeratorStatusSnapshot,
         reducedMotion: reducedMotionPreferred,
       }));
     }
@@ -358,6 +446,14 @@ export default function MasterCanvasPage() {
         .master-canvas-milestone { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: #fff; }
         .master-canvas-milestone [data-role="milestone-celebration-animated"] { position: absolute; display: flex; align-items: center; justify-content: center; padding: 18px 32px; border-radius: 16px; background: linear-gradient(135deg, #ffb703, #fb5607); font-size: 24px; font-weight: 800; text-align: center; }
         .master-canvas-milestone [data-role="milestone-celebration-badge"] { position: absolute; display: flex; align-items: center; justify-content: center; padding: 10px 20px; border-radius: 8px; border: 2px solid #fff; background: #111827; font-size: 16px; font-weight: 700; text-align: center; }
+        .master-canvas-mission { position: absolute; top: 120px; right: 0; max-width: 360px; color: #fff; text-align: right; }
+        .master-canvas-mission [data-role="stream-mission-card"] { display: inline-flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-radius: 12px; background: rgba(12,17,29,.78); }
+        .master-canvas-mission [data-role="stream-mission-kicker"] { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .75; }
+        .master-canvas-mission [data-role="stream-mission-objective"] { font-size: 16px; font-weight: 700; line-height: 1.3; }
+        .master-canvas-mission [data-role="stream-mission-elapsed"] { font-size: 13px; opacity: .9; font-variant-numeric: tabular-nums; }
+        .master-canvas-moderator-status { position: absolute; bottom: 56px; right: 0; color: #fff; text-align: right; }
+        .master-canvas-moderator-status [data-role="moderator-status-card"] { padding: 8px 12px; border-radius: 10px; background: rgba(12,17,29,.78); font-size: 13px; font-weight: 600; }
+        .master-canvas-moderator-status [data-role="moderator-status-dot"] { width: 8px; height: 8px; border-radius: 999px; background: #f59e0b; flex: none; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -366,6 +462,8 @@ export default function MasterCanvasPage() {
       <div ref={supportTheaterContainerRef} className="master-canvas-module master-canvas-theater" aria-live="polite" />
       <div ref={challengeContainerRef} className="master-canvas-module master-canvas-challenge" aria-live="polite" />
       <div ref={milestoneContainerRef} className="master-canvas-module master-canvas-milestone" aria-live="polite" />
+      <div ref={missionContainerRef} className="master-canvas-module master-canvas-mission" aria-live="polite" />
+      <div ref={moderatorStatusContainerRef} className="master-canvas-module master-canvas-moderator-status" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

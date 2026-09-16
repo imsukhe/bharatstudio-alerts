@@ -8,6 +8,10 @@ import {
   type MasterCanvasOverlayStore,
   type MasterCanvasStore,
 } from '../domain/master-canvas-store.js';
+import {
+  projectModeratorStatus,
+  type ModeratorStatusOverlayStore,
+} from '../domain/moderator-status-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -49,6 +53,7 @@ export async function registerMasterCanvasRoutes(
   store?: MasterCanvasStore,
   account?: AccountStore,
   overlayModules?: MasterCanvasOverlayStore,
+  overlayModeratorStatus?: ModeratorStatusOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -106,6 +111,51 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_master_canvas_modules_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Master Canvas is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+
+  // PRF-02 slice 5, §6 module #12 (Moderator Status Card) -- HELD HALF
+  // ONLY. Same overlay browser-source shape as the route just above, and
+  // deliberately in this file rather than interactions.ts: this is a
+  // Master Canvas module read, not an interaction, and this file already
+  // owns the bearer-token helper and the master_canvas_store_unavailable
+  // envelope.
+  //
+  // THE RESPONSE CARRIES A COUNT AND NOTHING ELSE. §6: "never private
+  // content", which the owner's 2026-09-16 decision requires to be a
+  // property of the query -- app_private.list_overlay_moderator_status
+  // (migration 0136) returns a single held_count column, so no supporter
+  // name, message, amount, delivery id, queue id or viewer identifier
+  // exists to be leaked here. projectModeratorStatus() then narrows a
+  // SECOND, independent time in front of whatever the store hands up, so
+  // the guarantee does not rest on a single layer.
+  //
+  // NO SAFE-MODE FIELD. Safe mode is NOT the queue-paused flag (owner
+  // decision, 2026-09-16); it is a separate moderation control that does
+  // not exist in this schema and needs its own record and decision. This
+  // response has no field for it, and 0136 reads no queue-lifecycle
+  // column at all.
+  //
+  // A VALID SESSION WITH NOTHING HELD ANSWERS 200 WITH heldCount: 0; an
+  // unrecognised/expired/revoked/foreign token answers 200 with
+  // moderatorStatus: null. The Canvas module renders those differently
+  // (a real zero hides the card; a null snapshot leaves it hidden
+  // without claiming anything), so collapsing them would be a bug.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/moderator-status', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Moderator status is not available', traceId: request.id });
+    if (!overlayModeratorStatus) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Moderator status is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const status = await overlayModeratorStatus.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', moderatorStatus: projectModeratorStatus(status) });
+    } catch (error) {
+      logSafeError(request, 'overlay_moderator_status_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Moderator status is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

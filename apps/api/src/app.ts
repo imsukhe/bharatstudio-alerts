@@ -71,7 +71,11 @@ import type { ProviderCapabilitySnapshotStore } from './domain/payment-provider-
 import { registerReputationRoutes } from './routes/reputation.js';
 import { registerGoalRoutes } from './routes/goals.js';
 import type { MasterCanvasOverlayStore, MasterCanvasStore } from './domain/master-canvas-store.js';
+import type { ModeratorStatusOverlayStore } from './domain/moderator-status-store.js';
 import { registerMasterCanvasRoutes } from './routes/master-canvas.js';
+// PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card).
+import type { StreamMissionOverlayStore, StreamMissionStore } from './domain/stream-mission-store.js';
+import { registerStreamMissionRoutes } from './routes/stream-mission.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -135,6 +139,13 @@ export type AppDependencies = {
   overlayGoals?: OverlayGoalStore;
   masterCanvasModules?: MasterCanvasStore;
   overlayMasterCanvasModules?: MasterCanvasOverlayStore;
+  // PRF-02 slice 5, §6 module #12 (held half only).
+  overlayModeratorStatus?: ModeratorStatusOverlayStore;
+  // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
+  // creator store is a write/read surface on the main pool; the overlay
+  // store is a derived read on RT-10/RT-11's derivedReadSql pool.
+  streamMissions?: StreamMissionStore;
+  overlayStreamMission?: StreamMissionOverlayStore;
   reputation?: ReputationStore;
   capabilitySnapshots?: ProviderCapabilitySnapshotStore;
   challenges?: ChallengeStore;
@@ -336,7 +347,8 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
-  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus);
+  await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

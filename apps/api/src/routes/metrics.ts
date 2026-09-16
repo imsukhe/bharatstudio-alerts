@@ -62,14 +62,33 @@ export async function registerMetricsRoutes(app: FastifyInstance, deps: MetricsR
     return reply.type('text/plain; version=0.0.4').send(output);
   });
 
-  // Periodic reconciliation trigger. Same idempotency-key shape as
-  // /internal/maintenance/:job so the same scheduler mechanism can call it;
-  // this route does not itself schedule anything (no cron entry is wired —
-  // see "Remaining open"). Safe to call repeatedly: it only reads and then
-  // replaces the in-memory gauge snapshot, it writes nothing durable.
-  app.post<{ Body: { idempotencyKey: string } }>('/internal/metrics/reconcile', {
+  // Periodic reconciliation trigger, called by the `reliability-reconciliation`
+  // schedule in bharatstudio-crons.
+  //
+  // The body shape matches /internal/maintenance/:job's, because the same
+  // scheduler mechanism calls both and every schedule in
+  // bharatstudio-crons/schedules/v1.json sends `{ idempotencyKey, window }`.
+  //
+  // This route previously declared only `idempotencyKey`. That did NOT break
+  // the scheduler — Fastify configures AJV with `removeAdditional: true`, so
+  // `additionalProperties: false` silently STRIPS an unknown field instead of
+  // rejecting it, and `window` would simply have vanished before the handler
+  // ran (proven in test/l09-metrics-routes.test.ts). Declaring it is still
+  // the right thing: a schema that silently drops what a caller sends is a
+  // contract that lies about itself, and the next reader cannot tell
+  // "ignored deliberately" from "forgotten". It is accepted with the
+  // identical constraints maintenance.ts uses and deliberately not read —
+  // this reconciliation always recomputes the whole snapshot rather than a
+  // window of it.
+  //
+  // Safe to call repeatedly: it recomputes the gauge snapshot from durable
+  // records and replaces it. It does write — RT-06 made the snapshot durable
+  // so instances agree — but that write is a full replace of the latest
+  // snapshot, never an append, so repeated calls converge rather than
+  // accumulate.
+  app.post<{ Body: { idempotencyKey: string; window?: string } }>('/internal/metrics/reconcile', {
     schema: {
-      body: { type: 'object', additionalProperties: false, required: ['idempotencyKey'], properties: { idempotencyKey: { type: 'string', minLength: 16, maxLength: 160 } } },
+      body: { type: 'object', additionalProperties: false, required: ['idempotencyKey'], properties: { idempotencyKey: { type: 'string', minLength: 16, maxLength: 160 }, window: { type: 'string', minLength: 1, maxLength: 80 } } },
     },
   }, async (request, reply) => {
     if (!serviceIdentity || !await serviceIdentity.verify(request.headers.authorization)) {

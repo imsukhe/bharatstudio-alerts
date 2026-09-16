@@ -140,3 +140,45 @@ test('POST /internal/metrics/reconcile fails closed (503), not silently zero, wh
   assert.equal(response.statusCode, 503);
   await app.close();
 });
+
+// The scheduler sends `{ idempotencyKey, window }` to every job in
+// bharatstudio-crons/schedules/v1.json, so this route must accept that
+// shape. It now declares `window` explicitly rather than relying on Fastify
+// silently dropping it.
+test('POST /internal/metrics/reconcile accepts the scheduler body shape, window included', async () => {
+  const app = Fastify();
+  await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
+  const response = await app.inject({
+    method: 'POST',
+    url: '/internal/metrics/reconcile',
+    headers: { authorization: 'Bearer worker-token' },
+    payload: { idempotencyKey: 'schedule:reliability-reconciliation:2026-09-16T00:00', window: '2026-09-16T00:00' },
+  });
+  // 503 (no database configured in this harness), never 400: the body was
+  // accepted and the request reached the handler.
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().errorCode, 'reconciliation_unavailable');
+  await app.close();
+});
+
+// Documents a Fastify behaviour that is easy to get wrong and that this
+// codebase's `additionalProperties: false` schemas depend on: Fastify
+// configures AJV with `removeAdditional: true`, so an unknown field is
+// STRIPPED, not rejected. This route therefore never 400s on an extra field
+// — it reaches the handler with that field removed. Asserted so nobody
+// (including a future reviewer reasoning about the scheduler contract)
+// concludes from the schema alone that an unexpected field is refused.
+test('an unknown body field is stripped by Fastify, not rejected', async () => {
+  const app = Fastify();
+  await registerMetricsRoutes(app, { metrics: createApiMetrics(), serviceIdentity: identity });
+  const response = await app.inject({
+    method: 'POST',
+    url: '/internal/metrics/reconcile',
+    headers: { authorization: 'Bearer worker-token' },
+    payload: { idempotencyKey: 'synthetic-reconcile-key-0001', unexpectedField: 'no' },
+  });
+  // 503 = reached the handler (no database in this harness). Not 400.
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().errorCode, 'reconciliation_unavailable');
+  await app.close();
+});

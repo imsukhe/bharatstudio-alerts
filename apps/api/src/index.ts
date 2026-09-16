@@ -39,6 +39,7 @@ import { createSqlCompanionEntitlementStore } from './db/companion-entitlement-s
 import { createSqlSeatStore } from './db/seat-store.js';
 import { createSqlGoalStore } from './db/goal-store.js';
 import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
+import { createSqlMasterCanvasOverlayStore, createSqlMasterCanvasStore } from './db/master-canvas-sql-store.js';
 import { createSqlReputationStore } from './db/reputation-sql-store.js';
 import { createSqlProviderCapabilitySnapshotStore } from './db/payment-provider-capability-snapshot-store.js';
 import { createSqlChallengeStore } from './db/challenge-store.js';
@@ -135,6 +136,8 @@ const app = await buildApp(config, {
   seats: sql ? createSqlSeatStore(sql) : undefined,
   goals: sql ? createSqlGoalStore(sql) : undefined,
   overlayGoals: sql ? createSqlGoalOverlayStore(derivedReadSql!) : undefined,
+  masterCanvasModules: sql ? createSqlMasterCanvasStore(sql) : undefined,
+  overlayMasterCanvasModules: sql ? createSqlMasterCanvasOverlayStore(derivedReadSql!) : undefined,
   reputation: sql ? createSqlReputationStore(sql) : undefined,
   capabilitySnapshots: sql ? createSqlProviderCapabilitySnapshotStore(sql) : undefined,
   challenges: sql ? createSqlChallengeStore(sql) : undefined,

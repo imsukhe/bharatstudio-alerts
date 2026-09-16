@@ -70,6 +70,8 @@ import type { ReputationStore } from './domain/reputation-store.js';
 import type { ProviderCapabilitySnapshotStore } from './domain/payment-provider-creator.js';
 import { registerReputationRoutes } from './routes/reputation.js';
 import { registerGoalRoutes } from './routes/goals.js';
+import type { MasterCanvasOverlayStore, MasterCanvasStore } from './domain/master-canvas-store.js';
+import { registerMasterCanvasRoutes } from './routes/master-canvas.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -129,6 +131,8 @@ export type AppDependencies = {
   seats?: SeatStore;
   goals?: GoalStore;
   overlayGoals?: OverlayGoalStore;
+  masterCanvasModules?: MasterCanvasStore;
+  overlayMasterCanvasModules?: MasterCanvasOverlayStore;
   reputation?: ReputationStore;
   capabilitySnapshots?: ProviderCapabilitySnapshotStore;
   challenges?: ChallengeStore;
@@ -324,6 +328,7 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

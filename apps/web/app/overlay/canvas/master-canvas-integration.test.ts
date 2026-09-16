@@ -7,6 +7,8 @@ import { createGoalLadderModule } from './modules/goal-ladder-module';
 import { createTugOfWarVoteModule } from './modules/tug-of-war-vote-module';
 import { createBossFightModule } from './modules/boss-fight-module';
 import { createSupportTheaterModule } from './modules/support-theater-module';
+import { createChallengeBoardModule } from './modules/challenge-board-module';
+import { createMilestoneCelebrationModule } from './modules/milestone-celebration-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -312,4 +314,73 @@ test('with all five built modules registered (Support Theater included): still e
   assert.equal(fetchCalls, 1, 'five entitled modules, Support Theater included, must still open exactly one transport connection');
   assert.equal(connection.getSubscriberCount(), 5, 'all five modules are subscribers on the one shared connection');
   assert.equal(scheduler.pendingFrameCount(), 1, 'all five active modules still share exactly one pending frame handle on the one rAF scheduler');
+});
+
+/*
+ * PRF-02 slice 4: Challenge Board (§6 #8, current-only) and Milestone
+ * Celebration (§6 #13) are modules six and seven. Neither adds an
+ * endpoint, a query or an event (Challenge Board reads the existing
+ * `/v1/overlay-challenges/:overlayId` snapshot; Milestone Celebration
+ * reuses the SAME goal/vote snapshot fetchers the goal/vote modules
+ * already call) — this test is the seven-modules version of the same
+ * "adding a module adds zero connections" proof this suite already
+ * carries for two, four and five.
+ */
+
+test('with all seven modules registered (Challenge Board + Milestone Celebration included): still exactly one connection and one rAF chain', async () => {
+  let fetchCalls = 0;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const goalContainer = document.createElement('div');
+  const voteContainer = document.createElement('div');
+  const bossFightContainer = document.createElement('div');
+  const theaterContainer = document.createElement('div');
+  const challengeContainer = document.createElement('div');
+  const milestoneContainer = document.createElement('div');
+
+  const fetchGoalSnapshot = async () => null;
+  const fetchVoteSnapshot = async () => null;
+
+  runtime.registerModule(createSupportTheaterModule({
+    container: theaterContainer, connection, overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    reducedMotion: () => false,
+  }));
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: fetchGoalSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createTugOfWarVoteModule({
+    container: voteContainer, connection, fetchSnapshot: fetchVoteSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createBossFightModule({
+    container: bossFightContainer, connection, fetchSnapshot: fetchGoalSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createChallengeBoardModule({
+    container: challengeContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createMilestoneCelebrationModule({
+    container: milestoneContainer, connection, fetchGoalSnapshot, fetchVoteSnapshot, reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('support_theater', true);
+  runtime.setModuleEntitled('supporter_ticker', true);
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('tug_of_war_vote', true);
+  runtime.setModuleEntitled('boss_fight', true);
+  runtime.setModuleEntitled('challenge_board', true);
+  runtime.setModuleEntitled('milestone_celebration', true);
+  await flush();
+
+  assert.equal(fetchCalls, 1, 'seven entitled modules must still open exactly one transport connection — adding Challenge Board and Milestone Celebration adds zero connections');
+  assert.equal(connection.getSubscriberCount(), 7, 'all seven modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all seven active modules still share exactly one pending frame handle on the one rAF scheduler');
 });

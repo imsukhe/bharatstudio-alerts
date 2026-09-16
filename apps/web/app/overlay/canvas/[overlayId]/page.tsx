@@ -76,6 +76,25 @@
  * L3 API/data change, outside this task's authority — recorded as a
  * referred item rather than guessed at with a client-side heuristic that
  * cannot actually see the other consumer.
+ *
+ * PRF-02 SLICE 4 — CHALLENGE BOARD (CURRENT-ONLY) AND MILESTONE
+ * CELEBRATION: modules six and seven, neither adding an endpoint, a
+ * query, or an event. Challenge Board reads the existing
+ * `/v1/overlay-challenges/:overlayId` snapshot (the SAME endpoint the
+ * standalone challenge widget already reads) and renders exactly the
+ * single current challenge that endpoint returns — no "next"/"completed"
+ * exists in this slice, matching the data path
+ * (`app_private.list_overlay_challenge`, migration 0109, `limit 1`).
+ * Milestone Celebration is handed `fetchGoalSnapshot`/
+ * `fetchTugOfWarVoteSnapshot` BY REFERENCE — the SAME functions already
+ * passed to the goal/vote modules above — so there is no second source of
+ * truth for either field, only a second, independent read of the same
+ * one. It is deliberately NOT wired to Support Theater's
+ * `subscribeToEvents`/`acknowledge` stream (that would be the transport
+ * mistake slice 3's Correction warns against); it uses the same plain
+ * `connection.subscribe()` signal every other snapshot module already
+ * uses. See `modules/challenge-board-module.ts` and
+ * `modules/milestone-celebration-module.ts` for the full reasoning.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -88,15 +107,25 @@ import { createGoalLadderModule } from '../modules/goal-ladder-module';
 import { createTugOfWarVoteModule } from '../modules/tug-of-war-vote-module';
 import { createBossFightModule } from '../modules/boss-fight-module';
 import { createSupportTheaterModule } from '../modules/support-theater-module';
+import { createChallengeBoardModule } from '../modules/challenge-board-module';
+import { createMilestoneCelebrationModule } from '../modules/milestone-celebration-module';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
+import { isOverlayChallenge, type OverlayChallenge } from '../../widgets/challenge/challenge-widget-logic';
 
 // support_theater is listed FIRST deliberately — see this file's header,
 // "BUILT_MODULE_KEYS lists support_theater FIRST" — so its event-payload
 // subscription to the shared connection always attaches before any
-// snapshot module can start the stream without one.
-const BUILT_MODULE_KEYS = ['support_theater', 'supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight'] as const;
+// snapshot module can start the stream without one. challenge_board and
+// milestone_celebration (slice 4) are appended at the end — both are
+// plain snapshot modules like the four already there, so their position
+// relative to each other and to the four snapshot modules carries no
+// ordering requirement, only Support Theater's first position matters.
+const BUILT_MODULE_KEYS = [
+  'support_theater', 'supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight',
+  'challenge_board', 'milestone_celebration',
+] as const;
 
 function reducedMotionPreferred(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
@@ -114,6 +143,8 @@ export default function MasterCanvasPage() {
   const voteContainerRef = useRef<HTMLDivElement>(null);
   const bossFightContainerRef = useRef<HTMLDivElement>(null);
   const supportTheaterContainerRef = useRef<HTMLDivElement>(null);
+  const challengeContainerRef = useRef<HTMLDivElement>(null);
+  const milestoneContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -179,6 +210,20 @@ export default function MasterCanvasPage() {
       return isTugOfWarVoteTally(body.tally) ? body.tally : null;
     }
 
+    // Challenge Board (§6 #8, current-only this slice): the SAME
+    // `/v1/overlay-challenges/:overlayId` endpoint and OverlayChallenge
+    // shape the standalone challenge widget
+    // (../../widgets/challenge/[overlayId]/page.tsx) already reads — no
+    // new endpoint, no new query.
+    async function fetchChallengeSnapshot(): Promise<OverlayChallenge | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-challenges/${encodeURIComponent(overlayId)}`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { challenge?: unknown };
+      return isOverlayChallenge(body.challenge) ? body.challenge : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -221,6 +266,29 @@ export default function MasterCanvasPage() {
         container: bossFightContainerRef.current,
         connection,
         fetchSnapshot: fetchGoalSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
+    if (challengeContainerRef.current) {
+      runtime.registerModule(createChallengeBoardModule({
+        container: challengeContainerRef.current,
+        connection,
+        fetchSnapshot: fetchChallengeSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
+    if (milestoneContainerRef.current) {
+      // Milestone Celebration (§6 #13): the SAME fetchGoalSnapshot/
+      // fetchTugOfWarVoteSnapshot functions above, passed by reference —
+      // no second source of truth for goal.reached or the vote's
+      // resolved, only a second, independent read of the same one. See
+      // this file's header and milestone-celebration-module.ts for why
+      // it is never wired to Support Theater's event-payload stream.
+      runtime.registerModule(createMilestoneCelebrationModule({
+        container: milestoneContainerRef.current,
+        connection,
+        fetchGoalSnapshot,
+        fetchVoteSnapshot: fetchTugOfWarVoteSnapshot,
         reducedMotion: reducedMotionPreferred,
       }));
     }
@@ -280,12 +348,24 @@ export default function MasterCanvasPage() {
         .master-canvas-theater [data-role="support-theater-message"] { font-size: 14px; opacity: .92; max-width: 480px; }
         .master-canvas-theater [data-role="support-theater-aggregate-line"] { font-size: 13px; opacity: .92; margin: 0; }
         .master-canvas-theater [data-role="support-theater-next"] { margin-top: 8px; font-size: 12px; opacity: .75; }
+        .master-canvas-challenge { position: absolute; top: 240px; left: 0; max-width: 420px; color: #fff; }
+        .master-canvas-challenge [data-role="challenge-board-title"] { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+        .master-canvas-challenge [data-role="challenge-board-state"] { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; opacity: .8; margin-bottom: 6px; }
+        .master-canvas-challenge [data-role="challenge-board-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
+        .master-canvas-challenge [data-role="challenge-board-fill"] { background: linear-gradient(90deg, #22c55e, #7c5cff); }
+        .master-canvas-challenge [data-role="challenge-board-amounts"] { margin-top: 6px; font-size: 13px; opacity: .9; }
+        .master-canvas-challenge [data-role="challenge-board-failure-copy"] { margin-top: 8px; font-size: 11px; line-height: 1.4; opacity: .85; max-width: 400px; }
+        .master-canvas-milestone { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; color: #fff; }
+        .master-canvas-milestone [data-role="milestone-celebration-animated"] { position: absolute; display: flex; align-items: center; justify-content: center; padding: 18px 32px; border-radius: 16px; background: linear-gradient(135deg, #ffb703, #fb5607); font-size: 24px; font-weight: 800; text-align: center; }
+        .master-canvas-milestone [data-role="milestone-celebration-badge"] { position: absolute; display: flex; align-items: center; justify-content: center; padding: 10px 20px; border-radius: 8px; border: 2px solid #fff; background: #111827; font-size: 16px; font-weight: 700; text-align: center; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
       <div ref={voteContainerRef} className="master-canvas-module master-canvas-vote" aria-live="polite" />
       <div ref={tickerContainerRef} className="master-canvas-module master-canvas-ticker" aria-live="polite" />
       <div ref={supportTheaterContainerRef} className="master-canvas-module master-canvas-theater" aria-live="polite" />
+      <div ref={challengeContainerRef} className="master-canvas-module master-canvas-challenge" aria-live="polite" />
+      <div ref={milestoneContainerRef} className="master-canvas-module master-canvas-milestone" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

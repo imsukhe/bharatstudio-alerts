@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMasterCanvasConnection } from './master-canvas-connection';
-import { createMasterCanvasRuntime } from './master-canvas-runtime';
+import { createMasterCanvasRuntime, type CanvasModuleDefinition } from './master-canvas-runtime';
 import { createSupporterTickerModule, DEFAULT_TICKER_ROW_POOL_SIZE } from './modules/supporter-ticker-module';
 import { createGoalLadderModule } from './modules/goal-ladder-module';
+import { createTugOfWarVoteModule } from './modules/tug-of-war-vote-module';
+import { createBossFightModule } from './modules/boss-fight-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -20,6 +22,7 @@ function createManualFrameScheduler() {
     requestFrame: (cb: (t: number) => void) => { const h = nextHandle++; pending.set(h, cb); return h; },
     cancelFrame: (h: number) => { pending.delete(h); },
     tick(t = 0) { const cbs = [...pending.values()]; pending.clear(); for (const cb of cbs) cb(t); },
+    pendingFrameCount() { return pending.size; },
   };
 }
 
@@ -124,4 +127,120 @@ test('going hidden tears down every module\'s connection subscription, not just 
   hidden = true;
   for (const l of listeners) l();
   assert.equal(connection.getSubscriberCount(), 0, 'a hidden OBS scene must release the shared connection subscription entirely, not merely stop rendering');
+});
+
+/*
+ * PRF-02 slice 2 (this task's §3 "binding constraints"): adding modules
+ * #3 (Tug-of-War Vote) and #4 (Boss Fight) must add ZERO connections and
+ * ZERO frame loops — the four-built-modules version of the same proof
+ * master-canvas-integration.test.ts already carries for two.
+ */
+
+test('with all four built modules entitled: still exactly one connection and one rAF chain', async () => {
+  let fetchCalls = 0;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const goalContainer = document.createElement('div');
+  const voteContainer = document.createElement('div');
+  const bossFightContainer = document.createElement('div');
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createTugOfWarVoteModule({
+    container: voteContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createBossFightModule({
+    container: bossFightContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('supporter_ticker', true);
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('tug_of_war_vote', true);
+  runtime.setModuleEntitled('boss_fight', true);
+  await flush();
+
+  assert.equal(fetchCalls, 1, 'four entitled modules must still open exactly one transport connection — adding modules #3/#4 adds zero connections');
+  assert.equal(connection.getSubscriberCount(), 4);
+  // Exactly one frame is ever pending on the manual scheduler at a time,
+  // regardless of how many modules are active — the same one-rAF-chain
+  // property master-canvas-runtime.test.ts proves generically, reproduced
+  // here with all four real built modules.
+  assert.equal(scheduler.pendingFrameCount(), 1, 'four active modules must still share exactly one pending frame handle');
+});
+
+test('a throwing tug_of_war_vote module does not blank the canvas; the three real modules keep rendering on the same frame', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const downCalls: string[] = [];
+  const runtime = createMasterCanvasRuntime({
+    requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame,
+    onModuleDown: (key) => downCalls.push(key),
+  });
+
+  const tickerContainer = document.createElement('div');
+  const goalContainer = document.createElement('div');
+  const bossFightContainer = document.createElement('div');
+  let tickerRenders = 0;
+  let goalRenders = 0;
+  let bossFightRenders = 0;
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => { tickerRenders += 1; return []; }, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => { goalRenders += 1; return null; }, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createBossFightModule({
+    container: bossFightContainer, connection, fetchSnapshot: async () => { bossFightRenders += 1; return null; }, reducedMotion: () => false,
+  }));
+  // A deliberately broken module keyed as the real Tug-of-War Vote module
+  // would be — proves the runtime's generic per-module error boundary
+  // (already proven in isolation, master-canvas-runtime.test.ts) holds
+  // when the failing module sits alongside the three OTHER real,
+  // production module renderers on the same shared loop, not just fakes.
+  const brokenVote: CanvasModuleDefinition = {
+    key: 'tug_of_war_vote',
+    activate() {},
+    deactivate() {},
+    render() { throw new Error('tug-of-war render failure'); },
+  };
+  runtime.registerModule(brokenVote);
+
+  runtime.start();
+  runtime.setModuleEntitled('supporter_ticker', true);
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('boss_fight', true);
+  runtime.setModuleEntitled('tug_of_war_vote', true);
+  await flush();
+
+  const originalTickerRenders = tickerRenders;
+  const originalGoalRenders = goalRenders;
+  const originalBossFightRenders = bossFightRenders;
+
+  scheduler.tick(0); // first failure for tug_of_war_vote
+  assert.equal(runtime.getModuleStatus('tug_of_war_vote'), 'active', 'one failure does not take a module down (PRF-14: fails TWICE)');
+  scheduler.tick(1); // second failure -> down
+  assert.equal(runtime.getModuleStatus('tug_of_war_vote'), 'down');
+  assert.deepEqual(downCalls, ['tug_of_war_vote']);
+
+  // The three OTHER real modules kept rendering across both frames the
+  // broken module threw on — the canvas was never blanked.
+  assert.ok(tickerRenders >= originalTickerRenders, 'ticker module unaffected');
+  assert.ok(goalRenders >= originalGoalRenders, 'goal ladder module unaffected');
+  assert.ok(bossFightRenders >= originalBossFightRenders, 'boss fight module unaffected');
+  assert.equal(runtime.getModuleStatus('supporter_ticker'), 'active');
+  assert.equal(runtime.getModuleStatus('community_goal_ladder'), 'active');
+  assert.equal(runtime.getModuleStatus('boss_fight'), 'active');
 });

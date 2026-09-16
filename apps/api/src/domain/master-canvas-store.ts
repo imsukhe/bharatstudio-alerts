@@ -24,12 +24,13 @@ export function isMasterCanvasModuleKey(value: unknown): value is MasterCanvasMo
   return typeof value === 'string' && (MASTER_CANVAS_MODULE_KEYS as readonly string[]).includes(value);
 }
 
-// The two module keys this slice actually renders. Kept separate from the
+// The module keys this slice actually renders. Kept separate from the
 // full catalogue above: MASTER_CANVAS_MODULE_KEYS is what the SERVER will
 // accept and cap-count; this is what the CLIENT runtime currently knows
 // how to mount. A module can be configured (and cap-counted) long before
-// a renderer for it ships.
-export const MASTER_CANVAS_BUILT_MODULE_KEYS = ['supporter_ticker', 'community_goal_ladder'] as const;
+// a renderer for it ships. PRF-02 slice 2 adds module #3 (Tug-of-War
+// Vote) and module #4 (Boss Fight) to the two slice-1 shipped.
+export const MASTER_CANVAS_BUILT_MODULE_KEYS = ['supporter_ticker', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight'] as const;
 export type MasterCanvasBuiltModuleKey = typeof MASTER_CANVAS_BUILT_MODULE_KEYS[number];
 
 export type MasterCanvasModuleInactiveReason = 'disabled' | 'tier_module_cap';

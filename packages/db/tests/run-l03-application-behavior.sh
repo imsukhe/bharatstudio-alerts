@@ -115,6 +115,7 @@ run_sql_test l03_referral_growth_engine.sql
 run_sql_test l03_lottie_branding_upload.sql
 run_sql_test l14_viewer_identity.sql
 run_sql_test prf02_master_canvas_module_cap.sql
+run_sql_test prf02_slice2_tug_of_war_vote.sql
 
 echo "DB_TESTS_SQL_SUITE: ${sql_test_count} file(s) passed" >&2
 

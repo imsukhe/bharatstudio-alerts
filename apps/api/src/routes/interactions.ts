@@ -25,7 +25,7 @@ import type {
 // (not domain/interaction-types.ts or db/interaction-sql-store.ts — this
 // lane's ownership boundary is new files prefixed vote-payment- only), so
 // every existing consumer of the types above is untouched.
-import type { PaidSupportVoteStore, PaidVoteOverlayStore, PaidVoteTally } from '../domain/vote-payment-types.js';
+import type { PaidSupportVoteStore, PaidVoteOverlayStore, PaidVoteTally, TugOfWarVoteOverlayStore } from '../domain/vote-payment-types.js';
 import type { ContributionSourceStore, ContributionSourceType } from '../domain/contribution-source-types.js';
 import { logSafeError } from '../observability/safe-log.js';
 
@@ -222,6 +222,9 @@ export async function registerInteractionRoutes(
   // own "contribution-" naming boundary), trailing/optional so no existing
   // positional caller of this function is disturbed.
   contributionSources?: ContributionSourceStore,
+  // PRF-02 slice 2, module #3 (Tug-of-War Vote). Trailing/optional, same
+  // reason as every other addition in this list.
+  tugOfWarVoteOverlay?: TugOfWarVoteOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -596,6 +599,28 @@ export async function registerInteractionRoutes(
       } catch (error) {
         logSafeError(request, 'overlay_paid_vote_tally_read_failed', error);
         return overlayUnavailable(reply, request.id, 'Paid vote widget is temporarily unavailable');
+      }
+    },
+  );
+
+  // PRF-02 slice 2, module #3 (Tug-of-War Vote). No definitionId — the
+  // Master Canvas has no per-module config step yet (see 0132's header
+  // and vote-payment-sql-store.ts's createSqlTugOfWarVoteOverlayStore);
+  // the server resolves "the" current two-sided paid vote for the
+  // channel, exactly as /v1/overlay-goals resolves "the" goal.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>(
+    '/v1/overlay-widgets/:overlayId/tug-of-war-vote',
+    { schema: { params: overlayParams, headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } } } },
+    async (request, reply) => {
+      const token = bearerToken(request.headers.authorization);
+      if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Tug-of-war vote widget is not available', traceId: request.id });
+      if (!tugOfWarVoteOverlay) return overlayUnavailable(reply, request.id, 'Tug-of-war vote widget is temporarily unavailable');
+      try {
+        const tally = await tugOfWarVoteOverlay.getActiveTally(token, request.params.overlayId);
+        return reply.code(200).send({ schemaVersion: 'v1', tally: projectOverlayPaidVoteTally(tally) });
+      } catch (error) {
+        logSafeError(request, 'overlay_tug_of_war_vote_read_failed', error);
+        return overlayUnavailable(reply, request.id, 'Tug-of-war vote widget is temporarily unavailable');
       }
     },
   );

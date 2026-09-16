@@ -6,7 +6,7 @@ import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerInteractionRoutes } from '../src/routes/interactions.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AccountStore } from '../src/domain/account-store.js';
-import type { PaidVoteOverlayStore, PaidVoteTally, PaidSupportVoteStore } from '../src/domain/vote-payment-types.js';
+import type { PaidVoteOverlayStore, PaidVoteTally, PaidSupportVoteStore, TugOfWarVoteOverlayStore } from '../src/domain/vote-payment-types.js';
 
 // L16 gap closure (0108): the two new paid-vote routes plus the four new
 // widget overlay reads (recent-tips/top-supporters/supporter-ticker/
@@ -43,6 +43,7 @@ async function buildTestApp(deps: {
   paidVotes?: Partial<PaidSupportVoteStore>;
   paidVoteOverlay?: Partial<PaidVoteOverlayStore>;
   widgetOverlaySql?: Sql;
+  tugOfWarVoteOverlay?: Partial<TugOfWarVoteOverlayStore>;
 } = {}) {
   const app = Fastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
@@ -52,6 +53,8 @@ async function buildTestApp(deps: {
     deps.paidVotes as PaidSupportVoteStore | undefined,
     deps.paidVoteOverlay as PaidVoteOverlayStore | undefined,
     deps.widgetOverlaySql,
+    undefined,
+    deps.tugOfWarVoteOverlay as TugOfWarVoteOverlayStore | undefined,
   );
   return app;
 }
@@ -140,6 +143,127 @@ test('overlay paid-votes reports an unwired or failed store as retryable 503, ne
   assert.equal(failedResponse.statusCode, 503);
   assert.equal(failedResponse.json().errorCode, 'interaction_store_unavailable');
   await failed.close();
+});
+
+// --- overlay: tug-of-war vote (PRF-02 slice 2, module #3) -------------------
+// Same route shape as overlay paid-votes above, minus the definitionId path
+// param — the store resolves "the" active two-sided paid vote for the
+// channel itself (see packages/db/migrations/0132's header), so this
+// route's OWN correctness surface is: does it require a bearer token, does
+// it pass whatever token it was given straight to the store untouched
+// (never substituting or merging across callers), does it fail closed
+// (never 401) when the store is unwired or throws, and does a successful
+// read carry through the tally exactly as the store returned it — the
+// transparency property (this task's §1(b)) asserted at the route
+// boundary, not only in the SQL/web-module tests either side of it.
+
+test('overlay tug-of-war-vote rejects a request with no bearer token', async () => {
+  const app = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally() { return sampleTally; } } });
+  const response = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote` });
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.json().errorCode, 'overlay_unauthorized');
+  assert.equal(typeof response.json().traceId, 'string');
+  await app.close();
+});
+
+test('overlay tug-of-war-vote rejects a malformed authorization header (not "Bearer <token>"), never a 500', async () => {
+  const app = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally() { return sampleTally; } } });
+  for (const header of ['Basic dXNlcjpwYXNz', 'Bearer', 'Bearer   ']) {
+    const response = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`, headers: { authorization: header } });
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.json().errorCode, 'overlay_unauthorized');
+  }
+  await app.close();
+});
+
+test('overlay tug-of-war-vote returns the tally for a valid bearer token, passing the exact token through to the store', async () => {
+  let seenToken: string | undefined;
+  const app = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally(t) { seenToken = t; return sampleTally; } } });
+  const response = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`, headers: { authorization: 'Bearer overlay-token-jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj' } });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json().tally, sampleTally);
+  assert.equal(seenToken, 'overlay-token-jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj');
+  await app.close();
+});
+
+test('overlay tug-of-war-vote: a token the store does not recognize (wrong session/channel) returns null, never another session\'s data', async () => {
+  // The store is the layer that actually scopes a token to its
+  // overlay_sessions row (packages/db/migrations/0132's token-fingerprint
+  // gate) -- this proves the ROUTE'S half of that boundary: it forwards
+  // whatever token it received and returns exactly, and only, what the
+  // store answered for THAT token. A store that only recognizes one
+  // token and returns null for every other one is exactly what a
+  // mismatched/foreign overlay session looks like from the route's
+  // point of view.
+  const recognizedToken = 'overlay-token-kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk';
+  const app = await buildTestApp({
+    tugOfWarVoteOverlay: { async getActiveTally(t) { return t === recognizedToken ? sampleTally : null; } },
+  });
+  const foreign = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`, headers: { authorization: 'Bearer overlay-token-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' } });
+  assert.equal(foreign.statusCode, 200);
+  assert.equal(foreign.json().tally, null, 'a token the store does not recognize must never surface another session\'s tally');
+  const recognized = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`, headers: { authorization: `Bearer ${recognizedToken}` } });
+  assert.equal(recognized.statusCode, 200);
+  assert.deepEqual(recognized.json().tally, sampleTally);
+  await app.close();
+});
+
+test('overlay tug-of-war-vote reports an unwired or failed store as retryable 503, never a 500 or 401, and strips sensitive fields', async () => {
+  const url = `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`;
+  const noStore = await buildTestApp({});
+  const unavailable = await noStore.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-llllllllllllllllllllllllllllllll' } });
+  assert.equal(unavailable.statusCode, 503);
+  assert.equal(unavailable.json().errorCode, 'interaction_store_unavailable');
+  assert.equal(unavailable.json().retryable, true);
+  await noStore.close();
+
+  const polluted = {
+    ...sampleTally,
+    channelId, accountId: userId, providerSecret: 'private', refundId: 'refund-private',
+    options: [{ ...sampleTally.options[0], paymentId: 'payment-private', instrumentId: 'instrument-private' }],
+  } as unknown as PaidVoteTally;
+  const app = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally() { return polluted; } } });
+  const response = await app.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-llllllllllllllllllllllllllllllll' } });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { schemaVersion: 'v1', tally: { schemaVersion: 'v1', votingMode: 'paid', options: [{ optionKey: 'a', label: 'A', amountPaise: 300000 }], resolved: false, resolvedOptionKey: null } });
+  await app.close();
+
+  const failed = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally() { throw new Error('synthetic database outage'); } } });
+  const failedResponse = await failed.inject({ method: 'GET', url, headers: { authorization: 'Bearer overlay-token-llllllllllllllllllllllllllllllll' } });
+  assert.equal(failedResponse.statusCode, 503);
+  assert.equal(failedResponse.json().errorCode, 'interaction_store_unavailable');
+  assert.equal(JSON.stringify(failedResponse.json()).includes('database outage'), false);
+  await failed.close();
+});
+
+test('overlay tug-of-war-vote: the amounts returned at the route boundary are exactly the durable record the store holds — the transparency property, asserted here rather than only below it', async () => {
+  // Deliberately a DIFFERENT tally shape from sampleTally (asymmetric
+  // amounts, one side at zero, a resolved result) so this test cannot
+  // pass by coincidentally matching a shared fixture -- it proves the
+  // route passes the store's own numbers through unmodified, not that it
+  // happens to echo sampleTally.
+  const durableTally: PaidVoteTally = {
+    schemaVersion: 'v1', votingMode: 'paid',
+    options: [{ optionKey: 'team-red', label: 'Team Red', amountPaise: 480000 }, { optionKey: 'team-blue', label: 'Team Blue', amountPaise: 0 }],
+    resolved: true, resolvedOptionKey: 'team-red',
+  };
+  const app = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally() { return durableTally; } } });
+  const response = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`, headers: { authorization: 'Bearer overlay-token-mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm' } });
+  assert.equal(response.statusCode, 200);
+  const tally = response.json().tally;
+  assert.equal(tally.options.find((o: { optionKey: string }) => o.optionKey === 'team-red').amountPaise, 480000);
+  assert.equal(tally.options.find((o: { optionKey: string }) => o.optionKey === 'team-blue').amountPaise, 0);
+  assert.equal(tally.resolved, true);
+  assert.equal(tally.resolvedOptionKey, 'team-red');
+  await app.close();
+});
+
+test('overlay tug-of-war-vote: no active two-sided paid vote for the channel returns tally: null, not an error', async () => {
+  const app = await buildTestApp({ tugOfWarVoteOverlay: { async getActiveTally() { return null; } } });
+  const response = await app.inject({ method: 'GET', url: `/v1/overlay-widgets/${overlayId}/tug-of-war-vote`, headers: { authorization: 'Bearer overlay-token-nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn' } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().tally, null);
+  await app.close();
 });
 
 for (const route of ['recent-tips', 'top-supporters', 'supporter-ticker', 'mega-tip-banner']) {

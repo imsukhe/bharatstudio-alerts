@@ -58,7 +58,7 @@ import type { GoalStore, OverlayGoalStore } from './domain/goal-store.js';
 import type { SeatStore } from './domain/seat-store.js';
 import type { HypeModeStore, InteractionDefinitionStore, InteractionOverlayStore, LeaderboardStore, PublicVoteStore, SupportVoteStore, WidgetConfigStore } from './domain/interaction-types.js';
 import { registerInteractionRoutes } from './routes/interactions.js';
-import type { PaidSupportVoteStore, PaidVoteOverlayStore, PublicPaidVoteStore, VotePaymentTagStore } from './domain/vote-payment-types.js';
+import type { PaidSupportVoteStore, PaidVoteOverlayStore, PublicPaidVoteStore, TugOfWarVoteOverlayStore, VotePaymentTagStore } from './domain/vote-payment-types.js';
 import type { TemplateCatalogueStore } from './domain/template-catalogue.js';
 import { registerTemplateRoutes } from './routes/templates.js';
 import type { StickerCatalogueStore, PublicStickerCatalogueStore, StickerSelectionStore } from './domain/sticker-catalogue.js';
@@ -148,6 +148,8 @@ export type AppDependencies = {
   publicPaidVotes?: PublicPaidVoteStore;
   paidVotes?: PaidSupportVoteStore;
   paidVoteOverlay?: PaidVoteOverlayStore;
+  // PRF-02 slice 2, module #3 (Tug-of-War Vote).
+  tugOfWarVoteOverlay?: TugOfWarVoteOverlayStore;
   templates?: TemplateCatalogueStore;
   stickers?: StickerCatalogueStore;
   publicStickers?: PublicStickerCatalogueStore;
@@ -333,7 +335,7 @@ export async function buildApp(
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);
   await registerStickerRoutes(app, dependencies.sessions, dependencies.stickers, dependencies.account, dependencies.publicStickers, dependencies.stickerSelections, dependencies.creatorPack, dependencies.publicCreatorPack, dependencies.creatorPackSelections);
-  await registerInteractionRoutes(app, dependencies.sessions, dependencies.account, dependencies.interactionDefinitions, dependencies.interactionVotes, dependencies.interactionPublicVotes, dependencies.interactionHype, dependencies.interactionWidgets, dependencies.interactionLeaderboard, dependencies.interactionOverlay, dependencies.paidVotes, dependencies.paidVoteOverlay, dependencies.derivedReadSql ?? dependencies.sql);
+  await registerInteractionRoutes(app, dependencies.sessions, dependencies.account, dependencies.interactionDefinitions, dependencies.interactionVotes, dependencies.interactionPublicVotes, dependencies.interactionHype, dependencies.interactionWidgets, dependencies.interactionLeaderboard, dependencies.interactionOverlay, dependencies.paidVotes, dependencies.paidVoteOverlay, dependencies.derivedReadSql ?? dependencies.sql, undefined, dependencies.tugOfWarVoteOverlay);
   await registerYoutubeRoutes(app, dependencies.sessions, dependencies.youtubeConnections, dependencies.account, dependencies.youtubeOAuthClient);
   await registerOverlayAudioRoutes(app, dependencies.overlayAudio);
   await registerOverlayLottieRoutes(app, dependencies.overlayBranding);

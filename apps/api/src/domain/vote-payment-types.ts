@@ -64,3 +64,17 @@ export interface PaidSupportVoteStore {
 export interface PaidVoteOverlayStore {
   getPaidVoteTally(token: string, overlayId: string, definitionId: string): Promise<PaidVoteTally | null>;
 }
+
+// PRF-02 slice 2, module #3 (Tug-of-War Vote). Same PaidVoteTally shape as
+// PaidVoteOverlayStore above — deliberately NOT a new type, because the
+// transparency requirement (this task's §1(b): "the displayed state
+// derives from the durable record") is the same money-derived tally 0108
+// already computes; the only difference is that the Master Canvas has no
+// per-module config step yet to supply a definitionId, so this store
+// resolves "the" current two-sided paid vote for the channel itself —
+// see packages/db/migrations/0132's header for the exact resolution rule
+// — the same way OverlayGoalStore.getForOverlay resolves "the" goal with
+// no goalId argument.
+export interface TugOfWarVoteOverlayStore {
+  getActiveTally(token: string, overlayId: string): Promise<PaidVoteTally | null>;
+}

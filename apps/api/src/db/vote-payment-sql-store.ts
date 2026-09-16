@@ -13,6 +13,7 @@ import type {
   PublicPaidVoteStore,
   TagVotePaymentInput,
   TagVotePaymentResult,
+  TugOfWarVoteOverlayStore,
   VotePaymentTagStore,
 } from '../domain/vote-payment-types.js';
 
@@ -112,6 +113,23 @@ export function createSqlPaidVoteOverlayStore(sql: Sql): PaidVoteOverlayStore {
       const rows = await sql<PaidTallyRowDb[]>`
         select option_key, label, amount_paise, resolved, resolved_option_key
           from app_private.list_overlay_paid_vote_tally(${overlayId}::uuid, ${fingerprint(token)}, ${definitionId}::uuid)
+      `;
+      return toPaidTally(rows);
+    },
+  };
+}
+
+// PRF-02 slice 2, module #3 (Tug-of-War Vote). packages/db/migrations/
+// 0132's app_private.list_overlay_tug_of_war_vote resolves "the" current
+// two-sided paid vote for the channel itself — no definitionId argument,
+// same shape reused via toPaidTally (this file's existing helper, not a
+// parallel one — this task's §1(b) instruction).
+export function createSqlTugOfWarVoteOverlayStore(sql: Sql): TugOfWarVoteOverlayStore {
+  return {
+    async getActiveTally(token, overlayId): Promise<PaidVoteTally | null> {
+      const rows = await sql<PaidTallyRowDb[]>`
+        select option_key, label, amount_paise, resolved, resolved_option_key
+          from app_private.list_overlay_tug_of_war_vote(${overlayId}::uuid, ${fingerprint(token)})
       `;
       return toPaidTally(rows);
     },

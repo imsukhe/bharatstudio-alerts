@@ -23,7 +23,7 @@
     "deployment:test": "sh deployment/test-validate-manifests.sh",
     "contracts:validate": "node contracts/validate-fixtures.mjs && node contracts/validate-openapi.mjs && node contracts/test-openapi-validator.mjs",
     "contracts:route-inventory": "node contracts/runtime-route-inventory.mjs",
-    "explain:check": "node packages/db/explain-plans/check-plans.mjs"
+    "explain:check": "node packages/db/explain-plans/scan-required-queries.mjs && node packages/db/explain-plans/check-plans.mjs"
   },
   "devDependencies": {
     "ajv": "8.20.0",

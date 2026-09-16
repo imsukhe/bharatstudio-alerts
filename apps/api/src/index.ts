@@ -49,7 +49,7 @@ import { createSqlStickerCatalogueStore } from './db/sticker-catalogue-store.js'
 import { createSqlPublicStickerCatalogueStore, createSqlStickerSelectionStore } from './db/sticker-public-store.js';
 import { createSqlCreatorPackStore, createSqlPublicCreatorPackStore, createSqlCreatorPackSelectionStore } from './db/sticker-creator-pack-store.js';
 import { createSqlInteractionDefinitionStore, createSqlSupportVoteStore, createSqlPublicVoteStore, createSqlHypeModeStore, createSqlWidgetConfigStore, createSqlLeaderboardStore, createSqlInteractionOverlayStore } from './db/interaction-sql-store.js';
-import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlPublicPaidVoteStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
+import { createSqlPaidSupportVoteStore, createSqlPaidVoteOverlayStore, createSqlPublicPaidVoteStore, createSqlTugOfWarVoteOverlayStore, createSqlVotePaymentTagStore } from './db/vote-payment-sql-store.js';
 import { createSqlIngestFailureStore } from './db/ingest-failure-store.js';
 import { createSqlStaffCreatorPackReviewStore } from './db/staff-creator-pack-review-store.js';
 import { createSqlAssistStore } from './db/assist-sql-store.js';
@@ -153,6 +153,8 @@ const app = await buildApp(config, {
   publicPaidVotes: sql ? createSqlPublicPaidVoteStore(sql) : undefined,
   paidVotes: sql ? createSqlPaidSupportVoteStore(sql) : undefined,
   paidVoteOverlay: sql ? createSqlPaidVoteOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 2, module #3 (Tug-of-War Vote).
+  tugOfWarVoteOverlay: sql ? createSqlTugOfWarVoteOverlayStore(derivedReadSql!) : undefined,
   templates: sql ? createSqlTemplateCatalogueStore(sql) : undefined,
   stickers: sql ? createSqlStickerCatalogueStore(sql) : undefined,
   publicStickers: sql ? createSqlPublicStickerCatalogueStore(sql) : undefined,

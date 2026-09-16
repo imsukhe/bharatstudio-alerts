@@ -1,0 +1,268 @@
+name: Alerts CI
+
+# OPS-CI-01 (bharatstudio-requirements/active/tasks/OPS-CI-01.md). This is
+# the first CI this repository has ever had — every check below already
+# exists and already passes under `pnpm verify:local`; nothing here is new
+# product logic, only automatic enforcement of checks a human previously had
+# to remember to run by hand.
+#
+# HONESTY, read before trusting a green run: a workflow file committed to
+# this repository is not a workflow that has ever run. Nothing in this file
+# is evidence that CI executes, passes, or is enabled on GitHub until it has
+# actually run here at least once (same distinction RT-08's record draws
+# about enabling a cron flag versus deploying it). Every job's own steps
+# additionally carry the specific honesty disclosures RT-06/PRF-01/PRF-03/
+# PRF-04 require — see .github/scripts/*.mjs and .github/scripts/*.sh.
+#
+# VERSIONS — every one below is read from a file already in this
+# repository, never chosen:
+#   Node   22.17.0  — apps/api/Dockerfile's pinned `node:22.17.0-alpine…` base
+#   pnpm   10.32.1  — package.json "packageManager"
+#   Go     1.26     — every services/*/go.mod "go 1.26" and every
+#                      services/*/Dockerfile "golang:1.26-alpine" base
+#   Postgres 16     — postgres:16-alpine in every packages/db/tests/*.sh
+#                      and scripts/load/*.sh harness script
+#
+# SECRETS — this workflow needs none. Every database is a disposable local
+# Docker container the invoked scripts create and tear down themselves;
+# every Go/Docker/contract check runs against the checked-out source only.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: alerts-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22.17.0"
+  PNPM_VERSION: "10.32.1"
+  GO_VERSION: "1.26"
+
+jobs:
+  # pnpm contracts:validate · pnpm explain:check · pnpm deployment:test ·
+  # git diff --check — no Docker, no Go, fast feedback.
+  node-static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: contracts:validate
+        run: pnpm contracts:validate
+      - name: explain:check
+        run: pnpm explain:check
+      - name: deployment:test
+        run: pnpm deployment:test
+      - name: git diff --check
+        # Whitespace/conflict-marker hygiene, same command
+        # bharatstudio-requirements/tests/TC-RT-02-*.md and OPS-CI-01's own
+        # test record run. On a pristine CI checkout this diffs an
+        # unmodified working tree against the index and is structurally a
+        # no-op — its teeth are in local development, where it catches an
+        # uncommitted whitespace error before it lands. Kept here for
+        # parity with pnpm verify:local's exact command list, not because
+        # CI can meaningfully violate it on a fresh checkout.
+        run: git diff --check
+
+  # pnpm --filter alerts-api test · pnpm --filter alerts-web test ·
+  # pnpm measurement:test
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - name: alerts-api test
+        run: pnpm --filter @bharatstudio/alerts-api test
+      - name: alerts-web test
+        run: pnpm --filter @bharatstudio/alerts-web test
+      - name: measurement:test
+        run: pnpm measurement:test
+
+  # pnpm build (tsc for the API, next build for the web app)
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+  # (cd services/<svc> && go test -race ./... && go vet ./...), all three
+  # services, including youtube-poller-go (Phase 2 scope per
+  # bharatstudio-alerts/AGENTS.md — tested here the same as verify:local
+  # already does; never containerised, see docker-builds below).
+  go-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [alert-worker-go, payment-webhook-go, youtube-poller-go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+      - name: go test -race
+        working-directory: services/${{ matrix.service }}
+        run: go test -race ./...
+      - name: go vet
+        working-directory: services/${{ matrix.service }}
+        run: go vet ./...
+
+  # pnpm db:test:all · pnpm db:test:l03 — both boot their own disposable
+  # postgres:16-alpine container via `docker run` (no GitHub Actions
+  # `services:` block needed, same as running them locally); db:test:l03's
+  # full mode also drives short Go and TS integration legs, so both
+  # toolchains are set up here.
+  sql-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: pnpm install --frozen-lockfile
+      - name: db:test:all
+        run: pnpm db:test:all
+      - name: db:test:l03
+        run: pnpm db:test:l03
+
+  # sh scripts/load/run-l09-load-self-test.sh · run-l09-fault-self-test.sh —
+  # each boots its own disposable postgres:16-alpine container.
+  l09-self-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: l09 load invariants self-test
+        run: sh scripts/load/run-l09-load-self-test.sh
+      - name: l09 fault (duplicate webhook) self-test
+        run: sh scripts/load/run-l09-fault-self-test.sh
+
+  # docker build --file apps/api/Dockerfile ... · docker build
+  # services/payment-webhook-go · docker build services/alert-worker-go.
+  # Local build only, no push, no registry credential — matches
+  # verify:local exactly. youtube-poller-go is Phase 2 (AGENTS.md) and has
+  # no image built here, same as verify:local.
+  docker-builds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: build alerts-api image
+        run: docker build --file apps/api/Dockerfile --tag bharatstudio-alerts-api:ci .
+      - name: build payment-webhook-go image
+        run: docker build --tag bharatstudio-alerts-payment:ci services/payment-webhook-go
+      - name: build alert-worker-go image
+        run: docker build --tag bharatstudio-alerts-worker:ci services/alert-worker-go
+
+  # PRF-01 / RT-06: the budget-gate mechanism. Proves the Prometheus
+  # exposition carries §19.4's two boundary buckets, proves the pass/fail
+  # evaluator itself can fail on a synthetic breach, and prints (never
+  # enforces) the absolute-threshold wiring, which stays inert until
+  # ENV-08/RT-07 close. See .github/scripts/budget-gate-check.mjs's header
+  # for the full honesty disclosure.
+  budget-gate-mechanism:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @bharatstudio/alerts-api build
+      - name: RT-06/PRF-01 budget-gate mechanism
+        run: node .github/scripts/budget-gate-check.mjs
+
+  # PRF-03 / PRF-04: static discipline over apps/web/app/overlay/canvas.
+  # Code-level check only — see .github/scripts/canvas-static-check.mjs's
+  # header for exactly what this does and does not prove.
+  canvas-static-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: PRF-03/PRF-04 canvas static check
+        run: node .github/scripts/canvas-static-check.mjs
+
+  # PRF-01 relative-regression gate. Owner decision 2026-09-16 (recorded in
+  # bharatstudio-requirements/reviews/2026-09-16-ops-ci-01-alerts-continuous-integration.md):
+  # worst-of-three against the checked-in baseline, zero tolerance. The
+  # comparator self-test runs first and needs no Docker; the real
+  # Docker/Postgres-backed run follows. See
+  # .github/scripts/relative-regression-check.sh's header for the full
+  # scope and the accepted CI-runner-variance risk.
+  relative-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: comparator self-test (proves the gate can fail; no Docker needed)
+        run: node .github/scripts/relative-regression-selftest.mjs
+      - name: worst-of-three vs. checked-in baseline
+        run: sh .github/scripts/relative-regression-check.sh

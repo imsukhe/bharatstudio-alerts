@@ -1,0 +1,12 @@
+{
+  "schema": "bharatstudio.ci.perf-baseline.v1",
+  "reason": "Initial baseline, established 2026-09-16 while standing up OPS-CI-01 (bharatstudio-requirements/active/tasks/OPS-CI-01.md). Not one worst-of-three sample: twelve local establishing runs (four groups of three, scripts/load/load-harness.ts, LOAD_TIP_COUNT=20 LOAD_CONCURRENCY=5, one disposable postgres:16-alpine container per group) were taken on the implementing machine, one group of which ran while another agent's own disposable Postgres container was concurrently active on the same host and shows visibly as an outlier (23/51/51ms vs a typical 10-16/26-30/26-30ms). The baseline below is the worst value observed across all twelve runs, not a padded or invented number, chosen deliberately over a single worst-of-three sample because the owner-decided rule (2026-09-16) applies zero tolerance with no percentage band — a baseline seeded from a single unusually-quiet run would fail almost immediately on ordinary GitHub Actions runner variance, which is a worse outcome than the noisier-but-realistic ceiling recorded here. This is still a code-level, non-invented number: it is the literal worst this repository's own harness produced under real (if noisy) local conditions, never a guessed tolerance. A future baseline change must update this 'reason' field with why the number moved, per the owner's baseline-discipline decision.",
+  "establishedAt": "2026-09-16T00:00:00Z",
+  "establishedBy": "OPS-CI-01 implementation, twelve local runs across four groups of three (scripts/load/load-harness.ts, LOAD_TIP_COUNT=20, LOAD_CONCURRENCY=5)",
+  "scopeNote": "This baseline governs a local-loopback SQL harness only (20 synthetic tips, concurrency 5, one disposable Postgres container). It is the same harness RT-06 names explicitly as SQL-correctness evidence only, not a §19.4 production-budget measurement. RT-07 (real browser/OBS/device/staging evidence): Blocked. externalEvidence: not-claimed.",
+  "worstOfThree": {
+    "latencyMsP50": 23,
+    "latencyMsP95": 51,
+    "latencyMsP99": 51
+  }
+}

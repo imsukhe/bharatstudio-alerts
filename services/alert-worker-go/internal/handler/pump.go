@@ -17,7 +17,11 @@ type PumpConfig struct {
 	Now         func() time.Time
 	Limit       int
 	Concurrency int
-	Metrics     *observability.Metrics
+	// Leaser and LeaseDuration coordinate concurrent dispatch runs (RT-05).
+	// Leaser is optional; nil preserves the pre-RT-05 always-scan behaviour.
+	Leaser        tasks.DispatchLeaser
+	LeaseDuration time.Duration
+	Metrics       *observability.Metrics
 }
 
 type PumpHandler struct {
@@ -53,7 +57,14 @@ func (h PumpHandler) ServeHTTP(response http.ResponseWriter, request *http.Reque
 		writeJSON(response, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	summary, err := (tasks.Pump{Source: h.config.Source, Enqueuer: h.config.Enqueuer, Now: h.config.Now, Concurrency: h.config.Concurrency}).RunOnce(request.Context(), h.config.Limit)
+	summary, err := (tasks.Pump{
+		Source:        h.config.Source,
+		Enqueuer:      h.config.Enqueuer,
+		Now:           h.config.Now,
+		Concurrency:   h.config.Concurrency,
+		Leaser:        h.config.Leaser,
+		LeaseDuration: h.config.LeaseDuration,
+	}).RunOnce(request.Context(), h.config.Limit)
 	if err != nil {
 		if errors.Is(err, tasks.ErrInvalidPumpLimit) {
 			h.config.Metrics.ObservePumpOutcome("invalid")
@@ -62,6 +73,17 @@ func (h PumpHandler) ServeHTTP(response http.ResponseWriter, request *http.Reque
 		}
 		response.Header().Set("Retry-After", "5")
 		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "pump_retryable"})
+		return
+	}
+	if summary.Skipped {
+		// RT-05: another dispatch run already holds the lease. This is a
+		// normal, idempotent no-op -- not a failure -- so the response
+		// stays 200 and the scheduler/wake-up caller must not retry it as
+		// an error.
+		h.config.Metrics.ObservePumpOutcome("skipped")
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(response).Encode(summary)
 		return
 	}
 	if summary.Failed > 0 {

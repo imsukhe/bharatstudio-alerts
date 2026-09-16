@@ -27,6 +27,8 @@ func (r fakeRow) Scan(dest ...any) error {
 			*target = r.values[index].(int64)
 		case *[]byte:
 			*target = r.values[index].([]byte)
+		case *bool:
+			*target = r.values[index].(bool)
 		}
 	}
 	return nil

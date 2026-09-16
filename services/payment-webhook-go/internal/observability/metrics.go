@@ -48,6 +48,15 @@ func (m *Metrics) ObserveCheckoutOutcome(outcome string) {
 	m.observeBusiness("checkout", outcome, []string{"accepted", "invalid", "retryable", "unauthorized", "not_configured"})
 }
 
+// ObserveWakeupOutcome records the post-commit dispatcher wake-up outcome
+// (RT-04). The wake-up is fire-and-forget and never changes the webhook's
+// response, so its failure is only ever logged and counted here -- never a
+// reason to retry an already-durable payment. No provider event ID, order
+// ID, account reference or amount is ever a label value.
+func (m *Metrics) ObserveWakeupOutcome(outcome string) {
+	m.observeBusiness("wakeup", outcome, []string{"succeeded", "failed"})
+}
+
 // ObserveQrOutcome records dynamic-QR creation outcomes (L19d). Same fixed
 // category discipline as ObserveCheckoutOutcome: no provider or intent
 // identifier is ever a label value.

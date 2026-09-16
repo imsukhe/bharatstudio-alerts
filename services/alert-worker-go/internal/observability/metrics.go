@@ -44,7 +44,7 @@ func (m *Metrics) ObserveTaskOutcome(outcome string) {
 // to expose through the authenticated metrics endpoint without leaking queue
 // or payment data.
 func (m *Metrics) ObservePumpOutcome(outcome string) {
-	m.observeBusiness("pump", outcome, []string{"completed", "partial", "retryable", "invalid", "unauthorized", "not_configured"})
+	m.observeBusiness("pump", outcome, []string{"completed", "partial", "skipped", "retryable", "invalid", "unauthorized", "not_configured"})
 }
 
 func (m *Metrics) observeBusiness(kind, outcome string, allowed []string) {

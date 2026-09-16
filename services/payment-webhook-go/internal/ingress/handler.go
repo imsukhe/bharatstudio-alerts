@@ -106,17 +106,18 @@ func (h Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		writeRetryable(response)
 		return
 	}
-	// A durable write followed by a failed wake-up must remain retryable.
-	// Provider retry then repeats the idempotent scan; it must never receive
-	// a success response while a ready delivery is unwoken.
-	pumpContext := withTraceID(request.Context(), traceForProviderEvent(delivery.ProviderEventID))
+	// RT-04: the commit above is the one atomic, durable truth. The provider
+	// gets its 2xx now, unconditionally -- dispatch is never again a reason
+	// to turn an already-safe payment into a retry. The old reasoning here
+	// was that a durable write followed by a failed wake-up had to stay
+	// retryable, so the provider's own retry would repeat the idempotent
+	// scan. That is superseded: a failed or slow wake-up no longer has a
+	// durable delivery to lose, because the independently scheduled, leased
+	// outbox dispatcher (bharatstudio-crons "outbox-recovery") scans and
+	// re-enqueues anything a wake-up missed on its next tick. The wake-up
+	// below is a fire-and-forget latency optimisation only.
 	traceID := traceForProviderEvent(delivery.ProviderEventID)
-	if err := h.Pumper.Pump(pumpContext); err != nil {
-		h.Metrics.ObserveWebhookOutcome("retryable")
-		h.Logger.Event("webhook", "retryable", traceID)
-		writeRetryable(response)
-		return
-	}
+	h.wakeUpDispatcher(traceID)
 	if duplicate {
 		h.Metrics.ObserveWebhookOutcome("duplicate")
 		h.Logger.Event("webhook", "duplicate", traceID)
@@ -126,6 +127,30 @@ func (h Handler) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	h.Metrics.ObserveWebhookOutcome("accepted")
 	h.Logger.Event("webhook", "accepted", traceID)
 	writeJSON(response, http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+// wakeUpDispatcher fires the post-commit dispatcher wake-up without
+// blocking, or being able to affect, the acknowledgement already decided
+// above (RT-04). It deliberately does not derive from request.Context():
+// that context is cancelled once ServeHTTP returns and the response has
+// been written, and a wake-up that is meant to outlive the request must not
+// be cancelled along with it. WorkerPumpClient bounds every call to its own
+// configured timeout (5s by default, see worker_pump.go), so this goroutine
+// always exits on its own and never leaks past that bound, however many
+// webhooks arrive concurrently in a burst.
+func (h Handler) wakeUpDispatcher(traceID string) {
+	if h.Pumper == nil {
+		return
+	}
+	go func() {
+		ctx := withTraceID(context.Background(), traceID)
+		if err := h.Pumper.Pump(ctx); err != nil {
+			h.Metrics.ObserveWakeupOutcome("failed")
+			h.Logger.Event("webhook_wakeup", "failed", traceID)
+			return
+		}
+		h.Metrics.ObserveWakeupOutcome("succeeded")
+	}()
 }
 
 func writeRetryable(response http.ResponseWriter) {

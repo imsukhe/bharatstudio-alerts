@@ -82,19 +82,19 @@ func TestWorkerPumpClientSendsJSONPOST(t *testing.T) {
 }
 
 func TestPaymentHandlerAndWorkerPumpBoundary(t *testing.T) {
-	var workerCalls int
+	workerCalled := make(chan struct{}, 1)
 	worker := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		workerCalls++
 		if request.Method != http.MethodPost || request.URL.Path != "/internal/pump" {
-			t.Fatalf("worker request=%s %s", request.Method, request.URL.Path)
+			t.Errorf("worker request=%s %s", request.Method, request.URL.Path)
 		}
 		if request.Header.Get("Content-Type") != "application/json" {
-			t.Fatalf("worker content-type=%q", request.Header.Get("Content-Type"))
+			t.Errorf("worker content-type=%q", request.Header.Get("Content-Type"))
 		}
 		if request.Header.Get(traceHeader) != "razorpay:event_boundary_1" {
-			t.Fatalf("worker trace=%q", request.Header.Get(traceHeader))
+			t.Errorf("worker trace=%q", request.Header.Get(traceHeader))
 		}
 		response.WriteHeader(http.StatusOK)
+		workerCalled <- struct{}{}
 	}))
 	defer worker.Close()
 
@@ -109,14 +109,25 @@ func TestPaymentHandlerAndWorkerPumpBoundary(t *testing.T) {
 		request(`{"event":"payment.captured"}`, "secret", "event_boundary_1"),
 	)
 
-	if recorder.Code != http.StatusOK || workerCalls != 1 || store.calls != 1 {
-		t.Fatalf("status=%d worker_calls=%d store_calls=%d", recorder.Code, workerCalls, store.calls)
+	if recorder.Code != http.StatusOK || store.calls != 1 {
+		t.Fatalf("status=%d store_calls=%d", recorder.Code, store.calls)
+	}
+	select {
+	case <-workerCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the fire-and-forget wake-up to reach the worker")
 	}
 }
 
-func TestPaymentHandlerReturnsRetryableWhenWorkerBoundaryFails(t *testing.T) {
+// RT-04.1: a worker boundary failure is a dispatch problem, not a commit
+// problem. The commit already succeeded, so the response stays 2xx --
+// superseding the pre-RT-04 behaviour where this same scenario returned 503
+// and asked the provider to retry an already-durable payment.
+func TestPaymentHandlerAcknowledgesEvenWhenWorkerBoundaryFails(t *testing.T) {
+	workerCalled := make(chan struct{}, 1)
 	worker := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusServiceUnavailable)
+		workerCalled <- struct{}{}
 	}))
 	defer worker.Close()
 
@@ -131,7 +142,12 @@ func TestPaymentHandlerReturnsRetryableWhenWorkerBoundaryFails(t *testing.T) {
 		request(`{"event":"payment.captured"}`, "secret", "event_boundary_2"),
 	)
 
-	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Retry-After") != "5" || store.calls != 1 {
-		t.Fatalf("status=%d retry-after=%q store_calls=%d", recorder.Code, recorder.Header().Get("Retry-After"), store.calls)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "{\"status\":\"accepted\"}\n" || store.calls != 1 {
+		t.Fatalf("status=%d body=%q store_calls=%d", recorder.Code, recorder.Body.String(), store.calls)
+	}
+	select {
+	case <-workerCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker pump was never attempted despite a durable commit")
 	}
 }

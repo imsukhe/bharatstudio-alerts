@@ -28,6 +28,32 @@ type pumpEnqueuer struct {
 
 func (e *pumpEnqueuer) Enqueue(context.Context, tasks.Command) error { e.calls++; return e.err }
 
+// alreadyHeldLeaser always reports that another dispatch run holds the
+// lease, so the pump never reaches the source/enqueuer at all -- proving
+// RT-04.9 (no request handler scans the backlog once another run already
+// is).
+type alreadyHeldLeaser struct{}
+
+func (alreadyHeldLeaser) TryAcquire(context.Context, string, time.Time) (bool, error) {
+	return false, nil
+}
+func (alreadyHeldLeaser) Release(context.Context, string) error { return nil }
+
+func TestPumpHandlerSkipsCleanlyWhenAnotherDispatchRunHoldsTheLease(t *testing.T) {
+	source := pumpSource{}
+	enqueuer := &pumpEnqueuer{}
+	handler := NewPumpHandler(PumpConfig{Authorizer: pumpAuthorizer{}, Source: source, Enqueuer: enqueuer, Leaser: alreadyHeldLeaser{}})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/internal/pump", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if enqueuer.calls != 0 {
+		t.Fatalf("expected no enqueue attempt while another run holds the lease, got %d", enqueuer.calls)
+	}
+}
+
 func TestPumpHandlerRequiresAuthorization(t *testing.T) {
 	handler := NewPumpHandler(PumpConfig{Authorizer: pumpAuthorizer{err: errors.New("no")}, Source: pumpSource{}, Enqueuer: &pumpEnqueuer{}})
 	recorder := httptest.NewRecorder()

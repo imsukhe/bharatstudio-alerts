@@ -105,6 +105,7 @@ func run() error {
 	}
 	deliveryStore := store.NewSQLDeliveryStore(database)
 	readyStore := store.NewSQLReadyDeliveryStore(database)
+	dispatchLeaseStore := store.NewSQLDispatchLeaseStore(database)
 	notifier := store.NewSQLWakeupNotifier(database)
 	publisher := handler.NewDurableReplayPublisher()
 	metrics := observability.New()
@@ -125,7 +126,15 @@ func run() error {
 		Source:      readyStore,
 		Enqueuer:    enqueuer,
 		Concurrency: pumpConcurrency,
-		Metrics:     metrics,
+		// RT-05: the pump is invoked both by the payment webhook's
+		// post-commit fire-and-forget wake-up and by the scheduled
+		// "outbox-recovery" cron (RT-08), so concurrent runs are expected,
+		// not exceptional. LeaseDuration is the outbox-recovery schedule's
+		// own timeoutSeconds (60s, bharatstudio-crons/schedules/v1.json) --
+		// not a new number.
+		Leaser:        dispatchLeaseStore,
+		LeaseDuration: 60 * time.Second,
+		Metrics:       metrics,
 	})
 
 	mux := http.NewServeMux()

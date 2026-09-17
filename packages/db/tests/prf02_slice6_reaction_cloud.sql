@@ -21,6 +21,12 @@
 --   the negative test recorded in
 --   bharatstudio-requirements/reviews/2026-09-16-prf-02-slice-6-reaction-cloud-decisions.md.
 --
+--   S6.9 / S6.12 -- THE RATE LIMIT IS PER SENDER, 60 A MINUTE, AND THE
+--   CHANNEL CAP IS GONE (migration 0141, owner direction 2026-09-17). The
+--   61st send by ONE sender is refused while a DIFFERENT sender in the SAME
+--   channel is still accepted. That pair is the whole point of the change,
+--   so it is proven here rather than asserted anywhere.
+--
 --   S6.20 -- SAMPLING IS SERVER-SIDE. §19.5 requires the cloud to show "a
 --   representative sample, never every event", "sampled and rate-limited
 --   server-side BEFORE they reach the canvas". The ceiling is asserted
@@ -105,6 +111,44 @@ insert into overlay_sessions (id, channel_id, token_fingerprint, expires_at, cre
 values
   ('00000000-0000-4000-8000-000000005744', '00000000-0000-4000-8000-000000005711', 'prf02s6-revoked-fingerprint', current_timestamp + interval '1 hour', current_timestamp, current_timestamp);
 
+-- ---------------------------------------------------------------------
+-- SENDER FIXTURE (0141). Four fingerprints, exercising every branch of
+-- app_private.resolve_reaction_sender_key:
+--
+--   SENDER A (a1a1...) and SENDER B (b2b2...) -- UNKNOWN to
+--     anonymous_browser_identities. They resolve to the opaque
+--     'token:<fingerprint>' key and create NOTHING. This is the ordinary
+--     case for a viewer who has never checked out.
+--   SENDER KNOWN (c3c3...) -- a browser that HAS checked out, so 0124
+--     already minted its identity. Resolves to that viewer_identities row.
+--   SENDER CLAIMED (d4d4...) -- the same, but claimed into an account, so
+--     it must resolve to the ACCOUNT's identity rather than its own.
+--
+-- The raw tokens do not exist anywhere: these ARE the SHA-256 fingerprints,
+-- which is the only form the database ever sees.
+-- ---------------------------------------------------------------------
+insert into viewer_accounts (id, email, display_name, created_at, updated_at)
+values ('00000000-0000-4000-8000-000000005751', 'prf02s6-claimed@example.test', 'Claimed Viewer', current_timestamp, current_timestamp)
+on conflict (id) do nothing;
+
+insert into anonymous_browser_identities (id, token_hash, created_at, expires_at)
+values
+  ('00000000-0000-4000-8000-000000005761', 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3', current_timestamp, current_timestamp + interval '30 days'),
+  ('00000000-0000-4000-8000-000000005762', 'd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4', current_timestamp, current_timestamp + interval '30 days')
+on conflict (id) do nothing;
+
+insert into viewer_identities (id, kind, anonymous_identity_id, created_at)
+values ('00000000-0000-4000-8000-000000005771', 'anonymous', '00000000-0000-4000-8000-000000005761', current_timestamp)
+on conflict (id) do nothing;
+
+insert into viewer_identities (id, kind, anonymous_identity_id, merged_into_account_id, created_at)
+values ('00000000-0000-4000-8000-000000005772', 'anonymous', '00000000-0000-4000-8000-000000005762', '00000000-0000-4000-8000-000000005751', current_timestamp)
+on conflict (id) do nothing;
+
+insert into viewer_identities (id, kind, viewer_account_id, created_at)
+values ('00000000-0000-4000-8000-000000005773', 'account', '00000000-0000-4000-8000-000000005751', current_timestamp)
+on conflict (id) do nothing;
+
 -- =====================================================================
 -- S6.8 -- EXACTLY ONE OF sticker_id / pack_sticker_id, ENFORCED BY THE
 -- DATABASE. A reaction is ONE entry; the check constraint, not the
@@ -134,7 +178,7 @@ $$;
 do $$
 begin
   begin
-    perform app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'emoji', '00000000-0000-4000-8000-000000005721');
+    perform app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'emoji', '00000000-0000-4000-8000-000000005721', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
     raise exception 'an unrecognised entry source must raise';
   exception when invalid_parameter_value then null;
   end;
@@ -150,28 +194,28 @@ do $$
 declare outcome text; sends bigint;
 begin
   -- S6.3: an id in neither catalogue.
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-0000000057ff');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-0000000057ff', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'unknown_entry' then raise exception 'an unknown catalogue id must be unknown_entry, got %', outcome; end if;
 
   -- S6.4: an entry the creator turned OFF for this channel.
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-000000005724');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-000000005724', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'not_available' then raise exception 'a creator-disabled entry must be not_available, got %', outcome; end if;
 
   -- S6.5: a pro-tier entry on a free channel.
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005723');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005723', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'not_available' then raise exception 'a tier-ineligible entry must be not_available, got %', outcome; end if;
 
   -- S6.6: another channel's pack sticker, addressed from channel A.
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'creator_pack', '00000000-0000-4000-8000-000000005733');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'creator_pack', '00000000-0000-4000-8000-000000005733', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'unknown_entry' then raise exception 'another channel''s pack entry must be unknown_entry, got %', outcome; end if;
 
   -- A pack sticker still awaiting staff review is not sendable either.
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'creator_pack', '00000000-0000-4000-8000-000000005732');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'creator_pack', '00000000-0000-4000-8000-000000005732', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'not_available' then raise exception 'a pending_review pack entry must be not_available, got %', outcome; end if;
 
   -- creator_pack_tier_limit('free') is 0, so a free channel has no pack
   -- slots at all -- 0119's own rule, reused unchanged.
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'creator_pack', '00000000-0000-4000-8000-000000005731');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'creator_pack', '00000000-0000-4000-8000-000000005731', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'unknown_entry' then raise exception 'a pack entry belonging to another channel must be unknown_entry, got %', outcome; end if;
 
   select count(*) into sends from public.channel_reaction_sends;
@@ -180,25 +224,24 @@ end
 $$;
 
 -- =====================================================================
--- S6.1 / S6.2 / S6.11 -- A GOOD SEND IS RECORDED, FROM EITHER HALF OF
--- THE CURATED CATALOGUE, AND WITH NO rateLimitPerMinute CONFIGURED THERE
--- IS NO LIMIT (0032/0063's own fallback, reused rather than replaced by a
--- guessed default).
+-- S6.1 / S6.2 -- A GOOD SEND IS RECORDED, FROM EITHER HALF OF THE CURATED
+-- CATALOGUE. Twenty-two sends by one sender, comfortably inside the
+-- per-sender ceiling of 60, so nothing here is near the limit.
 -- =====================================================================
 do $$
 declare outcome text; sends bigint; i integer;
 begin
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-000000005721');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-000000005721', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'recorded' then raise exception 'a valid catalogue reaction must be recorded, got %', outcome; end if;
 
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'creator_pack', '00000000-0000-4000-8000-000000005731');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'creator_pack', '00000000-0000-4000-8000-000000005731', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'recorded' then raise exception 'a valid creator-pack reaction must be recorded, got %', outcome; end if;
 
   -- Twenty more on an unconfigured channel. If an invented default limit
   -- had crept in anywhere, this loop is where it would surface.
   for i in 1..20 loop
-    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-000000005722');
-    if outcome <> 'recorded' then raise exception 'with no rateLimitPerMinute configured there must be NO limit; send % returned %', i, outcome; end if;
+    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005711', 'catalogue', '00000000-0000-4000-8000-000000005722', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
+    if outcome <> 'recorded' then raise exception 'a send well inside the per-sender ceiling must be recorded; send % returned %', i, outcome; end if;
   end loop;
 
   select count(*) into sends from public.channel_reaction_sends;
@@ -230,7 +273,7 @@ $$;
 do $$
 declare outcome text; rows_b bigint; total_a bigint;
 begin
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005712', 'creator_pack', '00000000-0000-4000-8000-000000005733');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005712', 'creator_pack', '00000000-0000-4000-8000-000000005733', 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
   if outcome <> 'recorded' then raise exception 'channel B''s own pack reaction must be recorded, got %', outcome; end if;
 
   select count(*) into rows_b from app_private.list_overlay_reaction_cloud('00000000-0000-4000-8000-000000005742'::uuid, 'prf02s6-b-fingerprint', null);
@@ -427,27 +470,33 @@ end
 $$;
 
 -- =====================================================================
--- S6.9 / S6.10 / S6.13 -- THE RATE LIMIT IS THE CREATOR'S OWN
--- rateLimitPerMinute, ENFORCED AGAINST A ONE-MINUTE WINDOW.
+-- S6.9 / S6.10 / S6.11 / S6.12 -- THE RATE LIMIT IS PER SENDER, 60 A
+-- MINUTE, AND THERE IS NO CHANNEL CAP LEFT (migration 0141).
 --
--- Channel C is used from here on so channel A's cloud assertions above
--- stay exactly as they were. Config version 2 carries the limit; the
--- function reads the LATEST version, the same way every other config
--- consumer does.
+-- Channel C is used from here on so channel A's cloud assertions above stay
+-- exactly as they were. Its config version 2 carries
+-- queue.rateLimitPerMinute = 1 SPECIFICALLY so that S6.11 can prove the
+-- reaction path does not read it: under the old per-channel cap this
+-- channel would have accepted exactly ONE reaction a minute.
 -- =====================================================================
 insert into channel_configs (channel_id, version, values, effective_at, created_at)
-values ('00000000-0000-4000-8000-000000005713', 2, '{"queue":{"rateLimitPerMinute":3}}'::jsonb, current_timestamp, current_timestamp);
+values ('00000000-0000-4000-8000-000000005713', 2, '{"queue":{"rateLimitPerMinute":1}}'::jsonb, current_timestamp, current_timestamp);
 
+-- S6.9: sender A's 61st send inside the window is refused; the first 60
+-- are recorded. Channel C's free tier makes only the free catalogue entry
+-- eligible, which is what the loop sends.
 do $$
-declare outcome text; i integer; recorded integer := 0;
+declare outcome text; i integer; recorded integer := 0; limited integer := 0;
 begin
-  for i in 1..5 loop
-    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721');
+  for i in 1..65 loop
+    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721', 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2');
     if outcome = 'recorded' then recorded := recorded + 1;
-    elsif outcome <> 'rate_limited' then raise exception 'unexpected outcome % on send %', outcome, i;
+    elsif outcome = 'rate_limited' then limited := limited + 1;
+    else raise exception 'unexpected outcome % on send %', outcome, i;
     end if;
   end loop;
-  if recorded <> 3 then raise exception 'rateLimitPerMinute 3 must allow exactly 3 sends in one window, got %', recorded; end if;
+  if recorded <> 60 then raise exception 'the per-sender limit must allow exactly 60 sends in one window, got %', recorded; end if;
+  if limited <> 5 then raise exception 'sends 61-65 must all be rate_limited, got % refusals', limited; end if;
 end
 $$;
 
@@ -455,67 +504,147 @@ do $$
 declare sends bigint;
 begin
   select count(*) into sends from public.channel_reaction_sends where channel_id = '00000000-0000-4000-8000-000000005713';
-  if sends <> 3 then raise exception 'a rate-limited send must insert nothing; expected 3 rows, got %', sends; end if;
+  if sends <> 60 then raise exception 'a rate-limited send must insert nothing; expected 60 rows, got %', sends; end if;
 end
 $$;
 
--- S6.10: the window is one minute. Back-date the window start past it and
--- the next send is allowed again, with the counter reset to 1 -- 0032's
--- exact reset branch.
-update public.channel_reaction_rate_limits
-   set rate_limit_window_started_at = current_timestamp - interval '61 seconds'
- where channel_id = '00000000-0000-4000-8000-000000005713';
+-- S6.12 -- THE WHOLE POINT OF 0141, PROVEN RATHER THAN ASSERTED. Sender B
+-- is exhausted. A DIFFERENT sender, on the SAME channel, in the SAME
+-- window, is still accepted -- because the budget belongs to the sender and
+-- the channel has none.
+do $$
+declare outcome text; i integer;
+begin
+  for i in 1..10 loop
+    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721', 'c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3');
+    if outcome <> 'recorded' then
+      raise exception 'a DIFFERENT sender in the same channel must be unaffected by an exhausted sender; send % returned %', i, outcome;
+    end if;
+  end loop;
+
+  -- ...and sender B is still refused, so the first loop did not simply
+  -- reset the window.
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721', 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2');
+  if outcome <> 'rate_limited' then raise exception 'the exhausted sender must stay refused inside the window, got %', outcome; end if;
+end
+$$;
+
+-- S6.11 -- THERE IS NO PER-CHANNEL CAP AT ALL. Channel C has
+-- rateLimitPerMinute = 1 configured and has just taken 70 reactions in one
+-- minute. Under 0139 it would have taken one.
+do $$
+declare sends bigint;
+begin
+  select count(*) into sends from public.channel_reaction_sends where channel_id = '00000000-0000-4000-8000-000000005713';
+  if sends <> 70 then
+    raise exception 'reactions must not read the creator''s alert-source rateLimitPerMinute; expected 70 rows on a channel configured with 1, got %', sends;
+  end if;
+end
+$$;
+
+-- S6.10: the window is one minute. Back-date the sender's window start past
+-- it and the next send is allowed again, with the counter reset to 1.
+update public.reaction_sender_rate_limits
+   set window_started_at = current_timestamp - interval '61 seconds'
+ where sender_key = 'token:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2';
 
 do $$
 declare outcome text; counter integer;
 begin
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721');
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721', 'b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2');
   if outcome <> 'recorded' then raise exception 'once the one-minute window has elapsed the next send must be allowed, got %', outcome; end if;
-  select rate_limit_send_count into counter from public.channel_reaction_rate_limits where channel_id = '00000000-0000-4000-8000-000000005713';
+  select send_count into counter from public.reaction_sender_rate_limits where sender_key = 'token:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2';
   if counter <> 1 then raise exception 'an elapsed window must reset the counter to 1, got %', counter; end if;
 end
 $$;
 
--- S6.13: the legacy `rateLimitPerMin` alias is accepted, exactly as 0063
--- line 56 accepts it for queue dispatch.
-insert into channel_configs (channel_id, version, values, effective_at, created_at)
-values ('00000000-0000-4000-8000-000000005713', 3, '{"queue":{"rateLimitPerMin":1}}'::jsonb, current_timestamp, current_timestamp);
-
-update public.channel_reaction_rate_limits
-   set rate_limit_window_started_at = null, rate_limit_send_count = 0
- where channel_id = '00000000-0000-4000-8000-000000005713';
-
-do $$
-declare outcome text;
-begin
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721');
-  if outcome <> 'recorded' then raise exception 'the first send under rateLimitPerMin 1 must be recorded, got %', outcome; end if;
-  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721');
-  if outcome <> 'rate_limited' then raise exception 'the legacy rateLimitPerMin alias must be honoured, got %', outcome; end if;
-end
-$$;
-
 -- =====================================================================
--- S6.12 -- A VALUE OUTSIDE 1-1000 IS IGNORED, THE SAME WAY 0032/0063
--- IGNORE IT. This is not a new policy; it is the existing one, reused.
+-- S6.13 -- A SEND WITH NO RESOLVABLE SENDER IS REFUSED, AND REFUSED
+-- BEFORE ANY CATALOGUE LOOKUP. Null, empty, non-hex and wrong-length
+-- fingerprints all fail closed; none of them inserts anything, and an
+-- entry id that does not exist still answers sender_unidentified rather
+-- than unknown_entry -- proof that admission control runs first, so an
+-- unidentified caller cannot probe a channel's sticker set.
 -- =====================================================================
-insert into channel_configs (channel_id, version, values, effective_at, created_at)
-values ('00000000-0000-4000-8000-000000005713', 4, '{"queue":{"rateLimitPerMinute":9999}}'::jsonb, current_timestamp, current_timestamp);
-
 do $$
-declare outcome text; i integer;
+declare outcome text; before_count bigint; after_count bigint; bad text;
 begin
-  for i in 1..4 loop
-    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721');
-    if outcome <> 'recorded' then raise exception 'an out-of-bounds rateLimitPerMinute must apply NO limit (0032/0063''s own fallback); send % returned %', i, outcome; end if;
+  select count(*) into before_count from public.channel_reaction_sends;
+
+  foreach bad in array array['', 'not-a-hash', 'ABCDEF', 'e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5']::text[]
+  loop
+    outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721', bad);
+    if outcome <> 'sender_unidentified' then
+      raise exception 'an unresolvable sender fingerprint (%) must be refused, got %', coalesce(bad, '<null>'), outcome;
+    end if;
   end loop;
+
+  -- A null is asserted on its own rather than inside the array literal,
+  -- where it would be an untyped element.
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-000000005721', null);
+  if outcome <> 'sender_unidentified' then raise exception 'a null sender fingerprint must be refused, got %', outcome; end if;
+
+  -- Admission control runs BEFORE eligibility: an entry id in no catalogue
+  -- still answers sender_unidentified, never unknown_entry.
+  outcome := app_private.record_channel_reaction('00000000-0000-4000-8000-000000005713', 'catalogue', '00000000-0000-4000-8000-0000000057ff', null);
+  if outcome <> 'sender_unidentified' then
+    raise exception 'an unidentified sender must be refused before the catalogue is consulted, got %', outcome;
+  end if;
+
+  select count(*) into after_count from public.channel_reaction_sends;
+  if after_count <> before_count then raise exception 'a refused send must insert nothing; % row(s) appeared', after_count - before_count; end if;
 end
 $$;
 
 -- =====================================================================
--- S6.14 -- THE REUSED MECHANISM IS VISIBLE IN THE SHIPPED DEFINITION, NOT
--- ONLY IN A COMMENT: the one-minute window, the 1-1000 bound and the
--- legacy alias all appear in the function the database actually holds.
+-- S6.44 / S6.45 -- THE SENDER KEY IS THE EXISTING ANONYMOUS BROWSER
+-- IDENTITY, AND RESOLVING ONE NEVER MINTS A ROW.
+--
+-- A fingerprint 0124 already knows keys on its viewer_identities row. One
+-- whose browser has been CLAIMED INTO AN ACCOUNT keys on the ACCOUNT's
+-- identity instead, so a signed-in viewer's several browsers share one
+-- budget rather than multiplying it. An unknown fingerprint keys on itself
+-- and creates nothing -- asserted against the row counts of BOTH identity
+-- tables, because a free interaction must not grow the identity graph.
+-- =====================================================================
+do $$
+declare resolved text; identities_before bigint; identities_after bigint; browsers_before bigint; browsers_after bigint;
+begin
+  resolved := app_private.resolve_reaction_sender_key('c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3');
+  if resolved <> 'identity:00000000-0000-4000-8000-000000005771' then
+    raise exception 'a known browser fingerprint must key on its own viewer identity, got %', coalesce(resolved, '<null>');
+  end if;
+
+  resolved := app_private.resolve_reaction_sender_key('d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4');
+  if resolved <> 'identity:00000000-0000-4000-8000-000000005773' then
+    raise exception 'a browser claimed into an account must key on the ACCOUNT identity, got %', coalesce(resolved, '<null>');
+  end if;
+
+  select count(*) into browsers_before from public.anonymous_browser_identities;
+  select count(*) into identities_before from public.viewer_identities;
+
+  resolved := app_private.resolve_reaction_sender_key('a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1');
+  if resolved <> 'token:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1' then
+    raise exception 'an unknown fingerprint must key on itself, got %', coalesce(resolved, '<null>');
+  end if;
+  if app_private.resolve_reaction_sender_key(null) is not null then
+    raise exception 'a null fingerprint must resolve to null';
+  end if;
+
+  select count(*) into browsers_after from public.anonymous_browser_identities;
+  select count(*) into identities_after from public.viewer_identities;
+  if browsers_after <> browsers_before or identities_after <> identities_before then
+    raise exception 'resolving a sender key must NEVER mint an identity row (browsers %->%, identities %->%)',
+      browsers_before, browsers_after, identities_before, identities_after;
+  end if;
+end
+$$;
+
+-- =====================================================================
+-- S6.14 -- THE SHIPPED DEFINITION PROVES BOTH HALVES: the per-sender
+-- mechanism is there, and the CHANNEL CAP IS GONE. `rateLimitPerMinute`
+-- and its legacy alias must not appear anywhere in the reaction send path
+-- -- if either comes back, this file turns red by name.
 -- =====================================================================
 do $$
 declare definition text;
@@ -527,14 +656,99 @@ begin
    where n.nspname = 'app_private'
      and p.proname = 'record_channel_reaction';
 
+  if definition is null then raise exception 'app_private.record_channel_reaction does not exist'; end if;
+
   if position($q$interval '1 minute'$q$ in definition) = 0 then
-    raise exception 'the reaction rate limit must use the SAME one-minute window migrations 0032/0063 already enforce';
+    raise exception 'the per-sender reaction rate limit must be enforced against a one-minute window';
   end if;
-  if position('between 1 and 1000' in definition) = 0 then
-    raise exception 'the reaction rate limit must use the SAME 1-1000 bound the channel config schema already decides';
+  if position('60' in definition) = 0 then
+    raise exception 'the per-sender reaction rate limit must carry its owner-delegated figure of 60';
   end if;
-  if position('rateLimitPerMinute' in definition) = 0 or position('rateLimitPerMin''' in definition) = 0 then
-    raise exception 'the reaction rate limit must read the creator''s own rateLimitPerMinute, with 0063''s legacy rateLimitPerMin alias';
+  if position('rateLimitPerMinute' in definition) > 0 or position('rateLimitPerMin' in definition) > 0 then
+    raise exception 'the reaction send path must NOT read the creator''s alert-source rateLimitPerMinute -- the per-channel cap was removed by 0141 because it throttled the creator';
+  end if;
+  if position('resolve_reaction_sender_key' in definition) = 0 then
+    raise exception 'the reaction send path must key its limit on the existing anonymous browser identity';
+  end if;
+end
+$$;
+
+-- =====================================================================
+-- S6.46 / S6.47 / S6.49 -- THE LIMITER STATE IS A COUNTER AND NOTHING
+-- ELSE, THE REACTION ROW IS UNCHANGED, AND THE PER-CHANNEL OBJECTS ARE
+-- GONE.
+--
+-- reaction_sender_rate_limits must have EXACTLY three columns. A
+-- channel_id, an entry id or a per-send timestamp would turn a rate-limit
+-- bucket into a record of where a viewer was and what they sent, which is
+-- precisely what the design refuses.
+-- =====================================================================
+do $$
+declare limiter_columns text; leftover boolean;
+begin
+  select string_agg(column_name || ' ' || data_type, ', ' order by ordinal_position)
+    into limiter_columns
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'reaction_sender_rate_limits';
+
+  if limiter_columns <> 'sender_key text, window_started_at timestamp with time zone, send_count integer' then
+    raise exception 'the per-sender limiter must hold a key, a window start and a count and NOTHING else, got "%"', limiter_columns;
+  end if;
+
+  select exists (
+    select 1 from information_schema.tables
+     where table_schema = 'public' and table_name = 'channel_reaction_rate_limits'
+  ) into leftover;
+  if leftover then raise exception 'the per-channel reaction rate-limit table must be gone after 0141'; end if;
+
+  select exists (
+    select 1
+      from pg_catalog.pg_proc p
+      join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'app_private'
+       and p.proname = 'record_channel_reaction'
+       and pg_catalog.pg_get_function_identity_arguments(p.oid) = 'uuid, text, uuid'
+  ) into leftover;
+  if leftover then raise exception 'the three-argument (per-channel) record_channel_reaction must be gone after 0141'; end if;
+end
+$$;
+
+-- The send row is STILL non-identifying after 0141 -- not merely withheld
+-- from the read, absent from the table. (S6.47; the same assertion S6.23
+-- makes above, repeated here so it is proven AFTER this migration too.)
+do $$
+declare identifying_columns text;
+begin
+  select string_agg(column_name, ', ' order by column_name)
+    into identifying_columns
+    from information_schema.columns
+   where table_schema = 'public'
+     and table_name = 'channel_reaction_sends'
+     and (column_name like '%viewer%' or column_name like '%anonymous%' or column_name like '%ip%'
+          or column_name like '%session%' or column_name like '%sender%' or column_name like '%token%'
+          or column_name like '%donor%' or column_name like '%supporter%');
+  if identifying_columns is not null then
+    raise exception '0141 must leave channel_reaction_sends non-identifying; found: %', identifying_columns;
+  end if;
+end
+$$;
+
+-- S6.48 -- THE OVERLAY PROJECTION IS UNCHANGED BY 0141. S6.16 above already
+-- asserts the exact column set; this repeats the declared-result half after
+-- the sender work, so a future edit to the send path cannot quietly widen
+-- the read.
+do $$
+declare declared_result text;
+begin
+  select pg_catalog.pg_get_function_result(p.oid)
+    into declared_result
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'app_private'
+     and p.proname = 'list_overlay_reaction_cloud';
+
+  if declared_result <> 'TABLE(entry_source text, entry_id uuid, display_name text, reaction_count bigint)' then
+    raise exception '0141 must leave the overlay projection exactly as 0139 shipped it; declared result is "%"', declared_result;
   end if;
 end
 $$;

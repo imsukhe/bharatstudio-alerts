@@ -54,24 +54,49 @@ export interface ReactionCloudOverlayStore {
 }
 
 /**
- * The outcomes a send can have. `rate_limited` is an ordinary, expected
- * answer on a high-frequency path rather than an error: the creator's own
- * `rateLimitPerMinute` was reached inside the current one-minute window
- * (owner decision, 2026-09-16 -- the same mechanism migrations 0032 and
- * 0063 already enforce for queue dispatch).
+ * The outcomes a send can have.
+ *
+ * `rate_limited` is an ordinary, expected answer on a high-frequency path
+ * rather than an error: this SENDER reached 60 sends inside the current
+ * one-minute window (owner direction, 2026-09-17 -- migration 0141).
+ *
+ * `sender_unidentified` means the fingerprint could not be resolved to a
+ * sender at all. It is a REFUSAL, never a silent accept and never a
+ * fallback to the ambient per-IP limit: a fallback would make dropping a
+ * cookie the cheapest route to the weaker limit, so the fallback would be
+ * the attack.
  */
-export type ReactionSendOutcome = 'recorded' | 'rate_limited' | 'unknown_entry' | 'not_available';
+export type ReactionSendOutcome =
+  | 'recorded'
+  | 'rate_limited'
+  | 'sender_unidentified'
+  | 'unknown_entry'
+  | 'not_available';
 
 /**
- * The public, unauthenticated send path. There is no viewer identity in
- * this signature, and that is the design: §6 #5 forbids one on this
- * surface, and the rate limit the owner decided on is per CHANNEL and is
- * the creator's own figure, so no per-viewer identifier is needed to
- * enforce it. See `apps/api/src/routes/public.ts` for which existing
- * public-surface protection guards the route.
+ * The public, unauthenticated send path.
+ *
+ * THE FOURTH ARGUMENT IS A FINGERPRINT, NOT AN IDENTITY. It is the SHA-256
+ * hex hash of the existing `__Host-bsa-anonymous` browser token -- the same
+ * value the two public checkout POSTs already compute with the same helper
+ * in `apps/api/src/routes/public.ts`, and the raw token never reaches the
+ * database. It is used for ADMISSION CONTROL ONLY: `record` returns an
+ * outcome and nothing derived from the sender, the value is never written
+ * to the reaction row, never returned by any read, never logged and never
+ * used as a metric label.
+ *
+ * The rate limit it keys is 60 sends per minute PER SENDER. The previous
+ * per-CHANNEL cap was removed on 2026-09-17 because it throttled the
+ * creator: a popular stream exhausted the channel budget and then refused
+ * legitimate viewers.
  */
 export interface ReactionSendStore {
-  record(channelId: string, entrySource: ReactionEntrySource, entryId: string): Promise<ReactionSendOutcome>;
+  record(
+    channelId: string,
+    entrySource: ReactionEntrySource,
+    entryId: string,
+    senderTokenHash: string,
+  ): Promise<ReactionSendOutcome>;
 }
 
 function isEntrySource(value: unknown): value is ReactionEntrySource {

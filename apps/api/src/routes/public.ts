@@ -695,21 +695,44 @@ export async function registerPublicRoutes(
   //     two public payment POSTs above already use. No new flag, no new
   //     secret, no new envelope, no new verifier.
   //   * The rate limit is the creator's own per-channel
-  //     `rateLimitPerMinute`, enforced against a one-minute window in
-  //     app_private.record_channel_reaction exactly as migrations 0032 and
-  //     0063 already do (owner decision, 2026-09-16).
+  //     one-minute SQL limit -- see below, and migration 0141.
   //
-  // There is deliberately NO `config.rateLimit` on this route. The sibling
-  // payment POSTs carry their own figures, but the owner decided the
-  // creator's rateLimitPerMinute is what governs reactions, and attaching
-  // a second, differently-sized limit here would be inventing a number
-  // nobody decided.
+  // THE RATE LIMIT IS PER SENDER, 60 A MINUTE (owner direction,
+  // 2026-09-17). It replaced a per-CHANNEL cap that reused the creator's
+  // `rateLimitPerMinute`, for two reasons the owner named: a channel-level
+  // cap THROTTLES THE CREATOR -- a popular stream exhausts the budget and
+  // then refuses legitimate viewers -- and `rateLimitPerMinute` is the
+  // creator's ALERT-SOURCE setting, which must not quietly acquire a second
+  // meaning. The figure is owner-delegated ("plan a safe number for user")
+  // and anchored to the paid-votes route above, the closest public-write
+  // sibling, which already uses max 60 per 1 minute.
   //
-  // NO VIEWER IDENTITY IS READ OR WRITTEN. This handler does not read the
-  // anonymous-identity cookie, does not issue one, and passes no viewer,
-  // session or address value to the store -- the rate limit is per
-  // CHANNEL and needs none. §6 #5's non-identifying rule is upheld on the
-  // write path as well as the read path.
+  // There is deliberately NO `config.rateLimit` on this route: the
+  // per-sender SQL limit is the reaction-specific figure, and the
+  // pre-existing global @fastify/rate-limit registration in app.ts
+  // (120/minute, IP-keyed) continues to apply here as it does everywhere,
+  // unchanged by this work.
+  //
+  // THE SENDER KEY IS THE EXISTING ANONYMOUS BROWSER IDENTITY, OBTAINED
+  // EXACTLY THE WAY CHECKOUT OBTAINS IT. The three steps below are the
+  // identical three the two public checkout POSTs above perform: read
+  // `__Host-bsa-anonymous`; mint one with randomBytes(32).toString(
+  // 'base64url') and set the same cookie header when absent; SHA-256 it and
+  // pass ONLY the hash onward. No second identity mechanism, cookie, header
+  // or fingerprint is introduced, and the raw token never enters the
+  // database.
+  //
+  // NOT AN IP. Indian mobile carriers use CGNAT heavily -- thousands of
+  // genuine viewers share one address, so an IP-keyed reaction limit would
+  // refuse them as a group, which is the same failure the owner just
+  // removed.
+  //
+  // THE FINGERPRINT IS ADMISSION CONTROL AND NOTHING ELSE. It is not
+  // written to the reaction row (0141 leaves channel_reaction_sends
+  // untouched -- it still has no viewer, token, session or IP column), not
+  // returned in any response, not logged, and not used as a metric label.
+  // §6 #5's non-identifying rule is upheld on the write path and the read
+  // path exactly as before.
   app.post<{ Params: { handle: string }; Body: { entrySource: 'catalogue' | 'creator_pack'; entryId: string; turnstileToken?: string | null } }>(
     '/v1/public/channels/:handle/reactions',
     {
@@ -752,16 +775,41 @@ export async function registerPublicRoutes(
         return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Channel not found', traceId: request.id });
       }
 
+      // The existing anonymous-identity flow, step for step. Minting when
+      // the cookie is absent is what lets an ordinary first-time visitor
+      // react at all; a client that DISCARDS the cookie presents a new
+      // fingerprint each time and so evades the per-sender limit, leaving
+      // only app.ts's pre-existing global per-IP limit against it. That
+      // residual is stated in the decision record rather than papered over.
+      const priorSenderToken = anonymousTokenFromCookie(request.headers.cookie);
+      const issuedSenderToken = priorSenderToken ? undefined : randomBytes(32).toString('base64url');
+      const senderTokenHash = anonymousTokenHash(priorSenderToken ?? issuedSenderToken!);
+
       try {
-        const outcome = await reactionSends.record(channel.channelId, request.body.entrySource, request.body.entryId);
+        const outcome = await reactionSends.record(
+          channel.channelId,
+          request.body.entrySource,
+          request.body.entryId,
+          senderTokenHash,
+        );
+        if (issuedSenderToken) reply.header('set-cookie', anonymousCookie(issuedSenderToken));
         switch (outcome) {
           case 'recorded':
             return reply.code(201).send({ schemaVersion: 'v1', outcome: 'recorded' });
           case 'rate_limited':
-            // The creator's own per-minute figure was reached for this
-            // channel's current one-minute window. Retryable, because it
-            // will be false again within a minute.
-            return reply.code(429).send({ schemaVersion: 'v1', errorCode: 'reaction_rate_limited', message: 'Reactions are coming in quickly right now; try again shortly', traceId: request.id, retryable: true });
+            // THIS SENDER reached 60 sends inside the current one-minute
+            // window. Retryable, because it will be false again within a
+            // minute -- and it says nothing about the channel, which has no
+            // budget of its own any more.
+            return reply.code(429).send({ schemaVersion: 'v1', errorCode: 'reaction_rate_limited', message: 'You are sending reactions very quickly; try again in a moment', traceId: request.id, retryable: true });
+          case 'sender_unidentified':
+            // REFUSED, never silently accepted and never downgraded to the
+            // ambient per-IP limit -- a fallback would make dropping a
+            // cookie the cheapest route to the weaker limit. Unreachable in
+            // the ordinary flow, since the cookie is minted just above;
+            // this is the fail-closed answer to a caller that bypassed the
+            // route or a wiring fault.
+            return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'reaction_sender_unidentified', message: 'Reactions need your browser to accept a small anonymous cookie', traceId: request.id, retryable: false });
           case 'unknown_entry':
             return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'unknown_reaction_entry', message: 'That reaction does not exist', traceId: request.id, retryable: false });
           case 'not_available':

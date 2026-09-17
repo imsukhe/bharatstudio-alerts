@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { createTestFastify } from './create-test-fastify.js';
 import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerMasterCanvasRoutes } from '../src/routes/master-canvas.js';
@@ -100,6 +101,15 @@ async function buildSendApp(options: {
 function sendBody(overrides: Record<string, unknown> = {}) {
   return { entrySource: 'catalogue', entryId: catalogueEntryId, ...overrides };
 }
+
+// A 43-character base64url token, the exact shape the route's own cookie
+// reader accepts -- and the SHA-256 hex hash the route must derive from it.
+// Both are computed here the way the two public checkout POSTs compute them,
+// so the assertions below fail if the reaction route ever grows a second,
+// divergent identity mechanism instead of reusing the existing one.
+const senderToken = 'a'.repeat(43);
+const senderTokenHash = createHash('sha256').update(senderToken, 'utf8').digest('hex');
+const senderCookie = `__Host-bsa-anonymous=${senderToken}`;
 
 // =====================================================================
 // S6.30 -- the overlay read's auth surface
@@ -253,12 +263,112 @@ test('a recorded reaction answers 201', async () => {
 test('the resolved channel id, entry source and entry id reach the store unchanged', async () => {
   let seen: unknown[] = [];
   const app = await buildSendApp({ store: { async record(...args) { seen = args; return 'recorded'; } } });
-  await app.inject({ method: 'POST', url: sendUrl, payload: sendBody({ entrySource: 'creator_pack' }) });
-  assert.deepEqual(seen, [channelId, 'creator_pack', catalogueEntryId]);
+  await app.inject({
+    method: 'POST',
+    url: sendUrl,
+    payload: sendBody({ entrySource: 'creator_pack' }),
+    headers: { cookie: senderCookie },
+  });
+  assert.deepEqual(seen, [channelId, 'creator_pack', catalogueEntryId, senderTokenHash]);
   await app.close();
 });
 
-test('a rate-limited reaction answers a retryable 429', async () => {
+// =====================================================================
+// S6.50 / S6.51 / S6.52 -- the sender fingerprint: obtained the way the
+// existing checkout flow obtains it, and used for admission control only
+// =====================================================================
+
+test('an existing __Host-bsa-anonymous cookie is reused, hashed, and never echoed back', async () => {
+  let seen: unknown[] = [];
+  const app = await buildSendApp({ store: { async record(...args) { seen = args; return 'recorded'; } } });
+  const response = await app.inject({
+    method: 'POST',
+    url: sendUrl,
+    payload: sendBody(),
+    headers: { cookie: senderCookie },
+  });
+
+  // Only the SHA-256 hex hash crosses the boundary; the raw token does not.
+  assert.equal(seen[3], senderTokenHash);
+  assert.match(String(seen[3]), /^[0-9a-f]{64}$/);
+  assert.notEqual(seen[3], senderToken);
+
+  // A cookie that already exists is NOT reissued.
+  assert.equal(response.headers['set-cookie'], undefined);
+
+  // S6.52: the fingerprint appears in no response body.
+  assert.equal(response.statusCode, 201);
+  assert.deepEqual(response.json(), { schemaVersion: 'v1', outcome: 'recorded' });
+  assert.equal(response.body.includes(senderTokenHash), false);
+  assert.equal(response.body.includes(senderToken), false);
+  await app.close();
+});
+
+test('with no cookie the route mints one exactly as the checkout POSTs do', async () => {
+  let seen: unknown[] = [];
+  const app = await buildSendApp({ store: { async record(...args) { seen = args; return 'recorded'; } } });
+  const response = await app.inject({ method: 'POST', url: sendUrl, payload: sendBody() });
+
+  const setCookie = String(response.headers['set-cookie']);
+  const minted = /^__Host-bsa-anonymous=([A-Za-z0-9_-]{43});/.exec(setCookie);
+  assert.notEqual(minted, null);
+  // __Host- cookies are only valid with Secure + Path=/ and no Domain, and
+  // the 30-day Max-Age is the existing flow's, not a new one.
+  assert.equal(setCookie.includes('Path=/'), true);
+  assert.equal(setCookie.includes('HttpOnly'), true);
+  assert.equal(setCookie.includes('Secure'), true);
+  assert.equal(setCookie.includes('Max-Age=2592000'), true);
+  assert.equal(setCookie.includes('Domain='), false);
+
+  // The hash the store received is the hash OF THE MINTED TOKEN -- the route
+  // does not mint one value and key the limit on another.
+  assert.equal(seen[3], createHash('sha256').update(String(minted?.[1]), 'utf8').digest('hex'));
+  await app.close();
+});
+
+test('a malformed cookie is not trusted: the route mints a fresh token rather than keying on rubbish', async () => {
+  let seen: unknown[] = [];
+  const app = await buildSendApp({ store: { async record(...args) { seen = args; return 'recorded'; } } });
+  const response = await app.inject({
+    method: 'POST',
+    url: sendUrl,
+    payload: sendBody(),
+    headers: { cookie: '__Host-bsa-anonymous=not-a-valid-token' },
+  });
+  assert.notEqual(response.headers['set-cookie'], undefined);
+  assert.match(String(seen[3]), /^[0-9a-f]{64}$/);
+  assert.notEqual(seen[3], createHash('sha256').update('not-a-valid-token', 'utf8').digest('hex'));
+  await app.close();
+});
+
+test('an unresolvable sender is REFUSED with 400, never accepted and never downgraded to a weaker limit', async () => {
+  const app = await buildSendApp({ store: storeReturning('sender_unidentified') });
+  const response = await app.inject({ method: 'POST', url: sendUrl, payload: sendBody() });
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json().errorCode, 'reaction_sender_unidentified');
+  assert.equal(response.json().retryable, false);
+  await app.close();
+});
+
+test('the sender fingerprint is never written to a log line', async () => {
+  const logged: string[] = [];
+  const app = await buildSendApp({ store: { async record() { throw new Error('boom'); } } });
+  app.log.error = ((...args: unknown[]) => { logged.push(JSON.stringify(args)); }) as typeof app.log.error;
+  const response = await app.inject({
+    method: 'POST',
+    url: sendUrl,
+    payload: sendBody(),
+    headers: { cookie: senderCookie },
+  });
+  assert.equal(response.statusCode, 503);
+  for (const line of logged) {
+    assert.equal(line.includes(senderTokenHash), false);
+    assert.equal(line.includes(senderToken), false);
+  }
+  await app.close();
+});
+
+test('a sender at its per-minute ceiling answers a retryable 429', async () => {
   const app = await buildSendApp({ store: storeReturning('rate_limited') });
   const response = await app.inject({ method: 'POST', url: sendUrl, payload: sendBody() });
   assert.equal(response.statusCode, 429);

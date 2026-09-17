@@ -1569,11 +1569,26 @@ paths:
         endpoints; no new authentication model is introduced, and no viewer identity is read,
         issued or stored.
 
-        Rate limiting is the creator's own per-channel rateLimitPerMinute (1-1000), enforced in
-        the database against a one-minute window - the same mechanism queue dispatch already
-        uses. It is per channel, not per viewer: a per-viewer figure would need a viewer
-        identifier this surface may not hold. When the limit is reached the request is refused
-        with 429 and nothing is recorded.
+        Rate limiting is per SENDER - 60 sends per minute - enforced in the database against a
+        one-minute window. It is deliberately NOT per channel: a channel-level cap throttles the
+        creator, because a popular stream exhausts the budget and then refuses legitimate
+        viewers. A creator's reaction throughput therefore scales with their audience and no
+        channel budget can cap it, and the creator's alert-source rateLimitPerMinute setting is
+        not read by this path at all. When the limit is reached the request is refused with 429
+        reaction_rate_limited and nothing is recorded; one sender's exhausted budget never
+        affects another sender on the same channel.
+
+        The sender key is the existing anonymous browser identity: the server reads the
+        __Host-bsa-anonymous cookie the public checkout endpoints already use, issues one when
+        absent, and keys the limit on its SHA-256 fingerprint - resolved through the existing
+        viewer-identity tables, and through the account identity when that browser has been
+        claimed into an account. The raw token never reaches the database, no new identity row is
+        ever created by a reaction, and the fingerprint is used for admission control ONLY: it is
+        never stored on the reaction, never returned by any read, never logged and never used as
+        a metric label. It is not an IP address - CGNAT means thousands of genuine viewers share
+        one address, so an IP-keyed limit would refuse them as a group. A send whose sender
+        cannot be resolved is refused with 400 reaction_sender_unidentified rather than accepted
+        or downgraded to a weaker limit.
 
         The entry must already exist in the channel's live, enabled, tier-eligible curated
         catalogue at the moment of the send; existence, ownership, tier eligibility, the

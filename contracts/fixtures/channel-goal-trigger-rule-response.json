@@ -1,0 +1,16 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-rule-response.schema.json",
+  "schemaVersion": "v1",
+  "rule": {
+    "schemaVersion": "v1",
+    "ruleId": "00000000-0000-4000-8000-000000007220",
+    "goalId": "00000000-0000-4000-8000-000000007221",
+    "triggerType": "threshold_percentage",
+    "enabled": true,
+    "thresholdPercentage": 50,
+    "thresholdAmountPaise": null,
+    "repeatMode": "once_per_stream",
+    "createdAt": "2026-09-17T10:00:00.000Z",
+    "updatedAt": "2026-09-17T10:00:00.000Z"
+  }
+}

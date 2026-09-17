@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-action-response.schema.json",
+  "title": "Channel goal trigger action response (GOA-18/GOA-21, migration 0158)",
+  "description": "One newly-added ordered step. stepOrder and delayMs are GOA-18's explicit ordering/delay data, never re-derived from row order. actionType is one of three minimal no-op types that exist only to exercise sequencing, the interlock and the prepare/fire default -- GOA-10..GOA-17's real action catalogue is a separate, later slice. fireMode defaults to prepare (GOA-21); a database CHECK constraint makes it structurally impossible for noop_outbound to ever carry fire.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "action"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "actionId", "stepOrder", "delayMs", "actionType", "fireMode", "createdAt", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": "v1" },
+        "actionId": { "type": "string", "format": "uuid" },
+        "stepOrder": { "type": "integer", "minimum": 0 },
+        "delayMs": { "type": "integer", "minimum": 0 },
+        "actionType": { "enum": ["noop_local_quiet", "noop_local_loud_or_fullscreen", "noop_outbound"] },
+        "fireMode": { "enum": ["prepare", "fire"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "actionType": { "const": "noop_outbound" } } },
+          "then": { "properties": { "fireMode": { "const": "prepare" } } }
+        }
+      ]
+    }
+  }
+}

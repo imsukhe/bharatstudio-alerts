@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-action-list-response.schema.json",
+  "title": "Channel goal trigger action list response (GOA-18/GOA-21, migration 0158)",
+  "description": "Every ordered step on one trigger rule, sorted by stepOrder ascending -- GOA-18: the composition's order and per-step delay are explicit data, returned in that explicit order, never in insertion or id order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "actions"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "actionId", "stepOrder", "delayMs", "actionType", "fireMode", "createdAt", "updatedAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "actionId": { "type": "string", "format": "uuid" },
+          "stepOrder": { "type": "integer", "minimum": 0 },
+          "delayMs": { "type": "integer", "minimum": 0 },
+          "actionType": { "enum": ["noop_local_quiet", "noop_local_loud_or_fullscreen", "noop_outbound"] },
+          "fireMode": { "enum": ["prepare", "fire"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

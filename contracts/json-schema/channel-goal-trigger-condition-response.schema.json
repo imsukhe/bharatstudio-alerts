@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-condition-response.schema.json",
+  "title": "Channel goal trigger condition response (GOA-19, migration 0158)",
+  "description": "One newly-added rule-level condition. only_live, named_scene and not_in_clutch are UNEVALUATABLE today (no live/broadcast-status concept, no scene-profile table, Clutch Mode/CMP-17 absent) and fail safe when a rule is dispatched -- the type exists so the intent is recorded, not stubbed. Only not_during_sponsor_slot is evaluatable today, against public.sponsor_cards (migration 0145). conditionValue is set only for named_scene.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "condition"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "conditionId", "conditionType", "conditionValue", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": "v1" },
+        "conditionId": { "type": "string", "format": "uuid" },
+        "conditionType": { "enum": ["only_live", "named_scene", "not_in_clutch", "not_during_sponsor_slot"] },
+        "conditionValue": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 120 }] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "conditionType": { "const": "named_scene" } } },
+          "then": { "properties": { "conditionValue": { "type": "string" } } },
+          "else": { "properties": { "conditionValue": { "type": "null" } } }
+        }
+      ]
+    }
+  }
+}

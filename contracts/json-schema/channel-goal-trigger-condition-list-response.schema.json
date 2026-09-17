@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-condition-list-response.schema.json",
+  "title": "Channel goal trigger condition list response (GOA-19, migration 0158)",
+  "description": "Every condition attached to one trigger rule. Order matters only in that all conditions must pass (or be honestly reported unevaluatable and fail safe) for the rule's sequence to dispatch -- see channel-goal-trigger-condition-response.schema.json for the per-condition evaluatability notes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "conditions"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "conditionId", "conditionType", "conditionValue", "createdAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "conditionId": { "type": "string", "format": "uuid" },
+          "conditionType": { "enum": ["only_live", "named_scene", "not_in_clutch", "not_during_sponsor_slot"] },
+          "conditionValue": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 120 }] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

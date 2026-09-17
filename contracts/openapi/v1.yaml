@@ -1189,6 +1189,201 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/goals/{goalId}/triggers:
+    get:
+      tags: [Goals]
+      operationId: listChannelGoalTriggerRules
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-04/GOA-09 (migration 0158): every trigger rule configured on this goal.
+        Owner/admin/operator/moderator visible - creator/staff configuration, never a
+        viewer-facing surface.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: The goal's configured trigger rules.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerRuleListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Goals]
+      operationId: createChannelGoalTriggerRule
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-04: creates one trigger rule, exactly one of the four in scope for this spine
+        (reached_100, threshold_percentage, threshold_absolute, first_contribution). Owner/admin
+        only. thresholdPercentage/thresholdAmountPaise must match triggerType exactly (both null
+        for reached_100/first_contribution) - re-checked at the API layer and enforced by a
+        database CHECK constraint (migration 0158).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGoalTriggerRuleRequest' }
+      responses:
+        '201':
+          description: The created trigger rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerRuleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/goal-triggers/{ruleId}:
+    patch:
+      tags: [Goals]
+      operationId: setChannelGoalTriggerRuleEnabled
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-09 "enabled": owner/admin only. There is no other mutable field on a rule in this
+        spine - trigger type and thresholds are fixed at creation.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalTriggerRuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetGoalTriggerRuleEnabledRequest' }
+      responses:
+        '204':
+          description: The rule's enabled flag was updated.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/goal-triggers/{ruleId}/conditions:
+    get:
+      tags: [Goals]
+      operationId: listChannelGoalTriggerConditions
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-19: every condition attached to this rule. only_live, named_scene and not_in_clutch
+        are unevaluatable today (no live/broadcast-status concept, no scene-profile table, Clutch
+        Mode/CMP-17 absent) and fail safe on dispatch; only not_during_sponsor_slot is evaluatable
+        today, against public.sponsor_cards (migration 0145).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalTriggerRuleId'
+      responses:
+        '200':
+          description: The rule's conditions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerConditionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Goals]
+      operationId: addChannelGoalTriggerCondition
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-19: attaches one condition to a rule. Owner/admin only. conditionValue is required
+        for named_scene and forbidden otherwise. Attaching not_in_clutch here is a creator's
+        OPTIONAL, per-rule condition - separate from GOA-20's own, non-configurable
+        loud/full-screen interlock, which applies to those actions regardless of whether this
+        condition is ever added.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalTriggerRuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddGoalTriggerConditionRequest' }
+      responses:
+        '201':
+          description: The added condition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerConditionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/goal-triggers/{ruleId}/actions:
+    get:
+      tags: [Goals]
+      operationId: listChannelGoalTriggerActions
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-18: this rule's ordered action sequence, sorted by stepOrder ascending - order and
+        per-step delay are explicit data, never row/insertion order.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalTriggerRuleId'
+      responses:
+        '200':
+          description: The rule's ordered actions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerActionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Goals]
+      operationId: addChannelGoalTriggerAction
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-18/GOA-21: appends one ordered step (there is no bulk replace in this spine). Owner/
+        admin only. fireMode null relies on the database default, which is always 'prepare'
+        (GOA-21). An outbound actionType (noop_outbound) may never be requested with fireMode
+        'fire' - rejected here at the API layer, and structurally impossible in the database
+        regardless (a CHECK constraint referencing an immutable action-class lookup, migration
+        0158).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalTriggerRuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddGoalTriggerActionRequest' }
+      responses:
+        '201':
+          description: The added action.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/goal-trigger-runs/{evaluationId}:
+    get:
+      tags: [Goals]
+      operationId: listChannelGoalTriggerActionRuns
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-18/GOA-19/GOA-20/GOA-21: read-only reflection of what a system-driven dispatch of one
+        evaluation produced. There is no HTTP route that triggers evaluation or dispatch in this
+        spine - app_private.evaluate_goal_trigger_rule and app_private.dispatch_goal_trigger_
+        sequence (migration 0158) are system/event-driven entry points, not called from this API.
+        status is prepared/fired/blocked_interlock/blocked_condition; blockedReason carries GOA-
+        19's fail-safe reasons and GOA-20's not-creator-configurable interlock reason verbatim.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalTriggerEvaluationId'
+      responses:
+        '200':
+          description: The evaluation's dispatched action runs, ordered by stepOrder.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGoalTriggerActionRunListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-goals/{overlayId}:
     get:
       tags: [Overlay]
@@ -3685,6 +3880,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    GoalTriggerRuleId:
+      name: ruleId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    GoalTriggerEvaluationId:
+      name: evaluationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     ChangeRequestId:
       name: changeRequestId
       in: path
@@ -3896,6 +4101,165 @@ components:
       required: [reason]
       properties:
         reason: { type: string, minLength: 1, maxLength: 500 }
+    GoalTriggerRule:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, ruleId, goalId, triggerType, enabled, thresholdPercentage, thresholdAmountPaise, repeatMode, createdAt, updatedAt]
+      description: >-
+        GOA-04/GOA-09 (migration 0158). triggerType is exactly the four in scope for this spine -
+        the full S31 register row lists more (the closer, biggest single, stretch steps, stalled,
+        expired, ladder, all/any), not built here. Exactly one of thresholdPercentage/
+        thresholdAmountPaise is set, and only for the trigger type that uses it (a database CHECK
+        constraint).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        ruleId: { type: string, format: uuid }
+        goalId: { type: string, format: uuid }
+        triggerType: { type: string, enum: [reached_100, threshold_percentage, threshold_absolute, first_contribution] }
+        enabled: { type: boolean }
+        thresholdPercentage: { oneOf: [{ type: 'null' }, { type: integer, minimum: 1, maximum: 100 }] }
+        thresholdAmountPaise: { oneOf: [{ type: 'null' }, { type: integer, minimum: 1 }] }
+        repeatMode: { type: string, enum: [once_per_stream, every_time] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelGoalTriggerRuleListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, rules]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        rules: { type: array, items: { $ref: '#/components/schemas/GoalTriggerRule' } }
+    ChannelGoalTriggerRuleResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, rule]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        rule: { $ref: '#/components/schemas/GoalTriggerRule' }
+    CreateGoalTriggerRuleRequest:
+      type: object
+      additionalProperties: false
+      required: [triggerType, thresholdPercentage, thresholdAmountPaise, repeatMode]
+      description: >-
+        thresholdPercentage/thresholdAmountPaise must be null except for the one trigger type
+        that uses each (GOA-04) - both fields are still required keys on the wire so a client
+        cannot omit the coupling by accident; the value is null when unused.
+      properties:
+        triggerType: { type: string, enum: [reached_100, threshold_percentage, threshold_absolute, first_contribution] }
+        thresholdPercentage: { oneOf: [{ type: 'null' }, { type: integer, minimum: 1, maximum: 100 }] }
+        thresholdAmountPaise: { oneOf: [{ type: 'null' }, { type: integer, minimum: 1 }] }
+        repeatMode: { type: string, enum: [once_per_stream, every_time] }
+    SetGoalTriggerRuleEnabledRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    GoalTriggerCondition:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, conditionId, conditionType, conditionValue, createdAt]
+      description: >-
+        GOA-19. only_live, named_scene and not_in_clutch are unevaluatable today (no live/
+        broadcast-status concept, no scene-profile table, Clutch Mode/CMP-17 absent) and fail
+        safe on dispatch; only not_during_sponsor_slot is evaluatable, against public.sponsor_
+        cards (migration 0145). conditionValue is set only for named_scene.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        conditionId: { type: string, format: uuid }
+        conditionType: { type: string, enum: [only_live, named_scene, not_in_clutch, not_during_sponsor_slot] }
+        conditionValue: { oneOf: [{ type: 'null' }, { type: string, minLength: 1, maxLength: 120 }] }
+        createdAt: { type: string, format: date-time }
+    ChannelGoalTriggerConditionListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, conditions]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        conditions: { type: array, items: { $ref: '#/components/schemas/GoalTriggerCondition' } }
+    ChannelGoalTriggerConditionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, condition]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        condition: { $ref: '#/components/schemas/GoalTriggerCondition' }
+    AddGoalTriggerConditionRequest:
+      type: object
+      additionalProperties: false
+      required: [conditionType, conditionValue]
+      properties:
+        conditionType: { type: string, enum: [only_live, named_scene, not_in_clutch, not_during_sponsor_slot] }
+        conditionValue: { oneOf: [{ type: 'null' }, { type: string, minLength: 1, maxLength: 120 }] }
+    GoalTriggerAction:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, actionId, stepOrder, delayMs, actionType, fireMode, createdAt, updatedAt]
+      description: >-
+        GOA-18/GOA-21 (migration 0158). stepOrder/delayMs are explicit ordering/delay data.
+        actionType is one of three minimal no-op types built only to exercise sequencing, the
+        interlock and the prepare/fire default - GOA-10..GOA-17's real action catalogue is a
+        separate, later slice. fireMode defaults to prepare; noop_outbound can never carry fire
+        (a database CHECK constraint makes this structurally impossible, not merely validated).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        actionId: { type: string, format: uuid }
+        stepOrder: { type: integer, minimum: 0 }
+        delayMs: { type: integer, minimum: 0 }
+        actionType: { type: string, enum: [noop_local_quiet, noop_local_loud_or_fullscreen, noop_outbound] }
+        fireMode: { type: string, enum: [prepare, fire] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelGoalTriggerActionListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, actions]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        actions: { type: array, items: { $ref: '#/components/schemas/GoalTriggerAction' } }
+    ChannelGoalTriggerActionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, action]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        action: { $ref: '#/components/schemas/GoalTriggerAction' }
+    AddGoalTriggerActionRequest:
+      type: object
+      additionalProperties: false
+      required: [stepOrder, delayMs, actionType, fireMode]
+      description: >-
+        fireMode is a required key but null is an accepted value, meaning "use the database
+        default" - which is always 'prepare' (GOA-21). fireMode 'fire' with actionType
+        noop_outbound is rejected before the store is ever called.
+      properties:
+        stepOrder: { type: integer, minimum: 0 }
+        delayMs: { type: integer, minimum: 0 }
+        actionType: { type: string, enum: [noop_local_quiet, noop_local_loud_or_fullscreen, noop_outbound] }
+        fireMode: { oneOf: [{ type: 'null' }, { type: string, enum: [prepare, fire] }] }
+    GoalTriggerActionRun:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, runId, actionId, stepOrder, delayMs, status, blockedReason, createdAt]
+      description: >-
+        GOA-18/GOA-19/GOA-20/GOA-21. blockedReason is set exactly when status is blocked_
+        interlock or blocked_condition, and null otherwise, never omitted.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        runId: { type: string, format: uuid }
+        actionId: { type: string, format: uuid }
+        stepOrder: { type: integer, minimum: 0 }
+        delayMs: { type: integer, minimum: 0 }
+        status: { type: string, enum: [prepared, fired, blocked_interlock, blocked_condition] }
+        blockedReason: { oneOf: [{ type: 'null' }, { type: string, minLength: 1, maxLength: 500 }] }
+        createdAt: { type: string, format: date-time }
+    ChannelGoalTriggerActionRunListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, runs]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        runs: { type: array, items: { $ref: '#/components/schemas/GoalTriggerActionRun' } }
     OverlayGoal:
       type: object
       additionalProperties: false

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-action-response.schema.json",
+  "schemaVersion": "v1",
+  "action": {
+    "schemaVersion": "v1",
+    "actionId": "00000000-0000-4000-8000-000000007224",
+    "stepOrder": 0,
+    "delayMs": 0,
+    "actionType": "noop_local_quiet",
+    "fireMode": "prepare",
+    "createdAt": "2026-09-17T10:00:00.000Z",
+    "updatedAt": "2026-09-17T10:00:00.000Z"
+  }
+}

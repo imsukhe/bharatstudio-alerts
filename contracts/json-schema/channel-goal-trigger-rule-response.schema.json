@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-rule-response.schema.json",
+  "title": "Channel goal trigger rule response (GOA-04/GOA-09, migration 0158)",
+  "description": "One newly-created goal trigger rule. triggerType is exactly the four in scope for this spine (reached_100, threshold_percentage, threshold_absolute, first_contribution) -- the full S31 register row lists more, not built here. Exactly one of thresholdPercentage/thresholdAmountPaise is set, and only for the trigger type that uses it (a database CHECK constraint, migration 0158). repeatMode is GOA-09's once-per-stream/every-time control.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "rule"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "ruleId", "goalId", "triggerType", "enabled", "thresholdPercentage", "thresholdAmountPaise", "repeatMode", "createdAt", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": "v1" },
+        "ruleId": { "type": "string", "format": "uuid" },
+        "goalId": { "type": "string", "format": "uuid" },
+        "triggerType": { "enum": ["reached_100", "threshold_percentage", "threshold_absolute", "first_contribution"] },
+        "enabled": { "type": "boolean" },
+        "thresholdPercentage": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 100 }] },
+        "thresholdAmountPaise": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }] },
+        "repeatMode": { "enum": ["once_per_stream", "every_time"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-rule-list-response.schema.json",
+  "title": "Channel goal trigger rule list response (GOA-04/GOA-09, migration 0158)",
+  "description": "Every trigger rule configured on one support goal, owner/admin/operator/moderator visible -- creator/staff configuration, never a viewer-facing or overlay-facing surface.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "rules"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "ruleId", "goalId", "triggerType", "enabled", "thresholdPercentage", "thresholdAmountPaise", "repeatMode", "createdAt", "updatedAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "ruleId": { "type": "string", "format": "uuid" },
+          "goalId": { "type": "string", "format": "uuid" },
+          "triggerType": { "enum": ["reached_100", "threshold_percentage", "threshold_absolute", "first_contribution"] },
+          "enabled": { "type": "boolean" },
+          "thresholdPercentage": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1, "maximum": 100 }] },
+          "thresholdAmountPaise": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }] },
+          "repeatMode": { "enum": ["once_per_stream", "every_time"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

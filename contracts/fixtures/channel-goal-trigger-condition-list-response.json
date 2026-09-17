@@ -1,0 +1,20 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-condition-list-response.schema.json",
+  "schemaVersion": "v1",
+  "conditions": [
+    {
+      "schemaVersion": "v1",
+      "conditionId": "00000000-0000-4000-8000-000000007222",
+      "conditionType": "named_scene",
+      "conditionValue": "Boss Fight",
+      "createdAt": "2026-09-17T10:00:00.000Z"
+    },
+    {
+      "schemaVersion": "v1",
+      "conditionId": "00000000-0000-4000-8000-000000007223",
+      "conditionType": "not_during_sponsor_slot",
+      "conditionValue": null,
+      "createdAt": "2026-09-17T10:00:05.000Z"
+    }
+  ]
+}

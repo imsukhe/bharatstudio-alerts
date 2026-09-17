@@ -107,6 +107,9 @@ import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
 import { createSqlStreamMissionOverlayStore } from './db/stream-mission-overlay-store.js';
 import { createSqlSponsorCardStore } from './db/sponsor-card-store.js';
 import { createSqlSponsorCardOverlayStore } from './db/sponsor-card-overlay-store.js';
+// GOA-04/GOA-09/GOA-18/GOA-19/GOA-20/GOA-21 (migration 0158): creator
+// configuration only, main pool -- see db/goal-trigger-store.ts header.
+import { createSqlGoalTriggerStore } from './db/goal-trigger-store.js';
 import { createSqlReputationStore } from './db/reputation-sql-store.js';
 import { createSqlProviderCapabilitySnapshotStore } from './db/payment-provider-capability-snapshot-store.js';
 import { createSqlChallengeStore } from './db/challenge-store.js';
@@ -343,6 +346,7 @@ const app = await buildApp(config, {
   // wire in here.
   sponsorCards: sql ? createSqlSponsorCardStore(sql) : undefined,
   overlaySponsorCard: sql ? createSqlSponsorCardOverlayStore(derivedReadSql!) : undefined,
+  goalTriggers: sql ? createSqlGoalTriggerStore(sql) : undefined,
   reputation: sql ? createSqlReputationStore(sql) : undefined,
   capabilitySnapshots: sql ? createSqlProviderCapabilitySnapshotStore(sql) : undefined,
   challenges: sql ? createSqlChallengeStore(sql) : undefined,

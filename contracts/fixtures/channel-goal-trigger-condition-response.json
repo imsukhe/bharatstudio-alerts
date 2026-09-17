@@ -1,0 +1,11 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-condition-response.schema.json",
+  "schemaVersion": "v1",
+  "condition": {
+    "schemaVersion": "v1",
+    "conditionId": "00000000-0000-4000-8000-000000007222",
+    "conditionType": "not_in_clutch",
+    "conditionValue": null,
+    "createdAt": "2026-09-17T10:00:00.000Z"
+  }
+}

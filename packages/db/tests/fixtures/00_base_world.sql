@@ -113,3 +113,5 @@ on conflict (channel_id, user_id) do nothing;
 -- grep regardless of what this note says -- two concurrent lanes each
 -- verified ...5f00 free against the same base and both took it).
 -- grep regardless of what this note says).
+--
+--   ...7200-...72ff                           goa_trigger_engine OWN fixture (reuses base_world channel '...0011'; own payments) -- pre-assigned to this lane by the coordinator, not independently verified free

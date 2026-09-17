@@ -104,6 +104,12 @@ import type { MediaQueueStore, MediaQueueOverlayStore } from './domain/media-que
 import { registerMediaQueueRoutes } from './routes/media-queue.js';
 import type { SponsorCardStore, SponsorCardOverlayStore } from './domain/sponsor-card-store.js';
 import { registerSponsorCardRoutes } from './routes/sponsor-card.js';
+// GOA-04/GOA-09/GOA-18/GOA-19/GOA-20/GOA-21 (migration 0158): the goal
+// trigger engine spine's creator-facing configuration surface only --
+// evaluation/dispatch are system-driven with no HTTP route (see
+// domain/goal-trigger-store.ts's own header).
+import type { GoalTriggerStore } from './domain/goal-trigger-store.js';
+import { registerGoalTriggerRoutes } from './routes/goal-triggers.js';
 // PRF-02 slice 7, §6 catalogue module #10 (QR Smart Card). The creator's
 // own destination/label/toggle read-writes are their own route file; the
 // OVERLAY read is a Master Canvas module read and lives in
@@ -330,6 +336,7 @@ export type AppDependencies = {
   // only gate on whether the canvas renders this card.
   sponsorCards?: SponsorCardStore;
   overlaySponsorCard?: SponsorCardOverlayStore;
+  goalTriggers?: GoalTriggerStore;
   reputation?: ReputationStore;
   capabilitySnapshots?: ProviderCapabilitySnapshotStore;
   challenges?: ChallengeStore;
@@ -539,6 +546,7 @@ export async function buildApp(
   await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlayMediaQueue, dependencies.overlaySafeSoundboard, dependencies.overlaySponsorCard, dependencies.overlayQrSmartCard, dependencies.overlayCanvasLayout);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerSponsorCardRoutes(app, dependencies.sessions, dependencies.sponsorCards, dependencies.account);
+  await registerGoalTriggerRoutes(app, dependencies.sessions, dependencies.goalTriggers, dependencies.account);
   await registerSafeModeRoutes(app, dependencies.sessions, dependencies.safeMode, dependencies.account);
   await registerLobbySessionRoutes(app, dependencies.sessions, dependencies.lobbySessions, dependencies.account);
   await registerGiveawayTournamentRoutes(app, dependencies.sessions, dependencies.giveawayTournaments, dependencies.account);

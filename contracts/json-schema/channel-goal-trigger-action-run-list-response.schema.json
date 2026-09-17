@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-trigger-action-run-list-response.schema.json",
+  "title": "Channel goal trigger action run list response (GOA-18/GOA-19/GOA-20/GOA-21, migration 0158)",
+  "description": "Read-only reflection of what a system-driven dispatch of one evaluation produced, sorted by stepOrder ascending. status is exactly one of prepared/fired/blocked_interlock/blocked_condition; blockedReason is set exactly when status is one of the two blocked_* values and is null otherwise, never omitted -- this is where GOA-19's fail-safe reasons and GOA-20's not-creator-configurable interlock reason are visible to a creator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "runs"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "runId", "actionId", "stepOrder", "delayMs", "status", "blockedReason", "createdAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "runId": { "type": "string", "format": "uuid" },
+          "actionId": { "type": "string", "format": "uuid" },
+          "stepOrder": { "type": "integer", "minimum": 0 },
+          "delayMs": { "type": "integer", "minimum": 0 },
+          "status": { "enum": ["prepared", "fired", "blocked_interlock", "blocked_condition"] },
+          "blockedReason": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 500 }] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "enum": ["blocked_interlock", "blocked_condition"] } } },
+            "then": { "properties": { "blockedReason": { "type": "string" } } },
+            "else": { "properties": { "blockedReason": { "type": "null" } } }
+          }
+        ]
+      }
+    }
+  }
+}

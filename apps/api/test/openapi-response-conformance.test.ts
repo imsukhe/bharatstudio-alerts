@@ -4,8 +4,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
-import Ajv2020 from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
+// ajv 8 ships CommonJS with `export =`, so under module: NodeNext the default
+// import is the module namespace rather than the constructor. contracts/*.mjs
+// get away with the plain import because .mjs files are never typechecked;
+// this file is, so it takes ajv's documented ESM interop form instead.
+import _Ajv2020 from 'ajv/dist/2020.js';
+import _addFormats from 'ajv-formats';
+const Ajv2020 = _Ajv2020 as unknown as typeof _Ajv2020.default;
+const addFormats = _addFormats as unknown as typeof _addFormats.default;
 import { buildApp } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';

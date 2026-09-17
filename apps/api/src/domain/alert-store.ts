@@ -96,7 +96,22 @@ export type CompanionControlSession = {
 // Companion v1 exposes only actions with an implemented server-side effect.
 // Alert approve/hold/replay remain on the moderation route until their
 // Companion-specific target and transition semantics are implemented.
-export type CompanionAction = 'pause_queue' | 'resume_queue' | 'send_test_alert';
+// The full 17-action catalogue (migration 0089's
+// `companion_commands_v1_action_check` CHECK constraint and
+// `app_private.companion_action_group()`). This union was stuck at the
+// original three 'alerts' verbs long after 0089 widened the database, which
+// forced `apps/api/src/routes/companion.ts` to launder every other action
+// through `as unknown as CompanionAction` -- a compile-time lie that also
+// hid a real typing error in the OpenAPI conformance test. The database
+// CHECK remains the enforcement; this type now simply tells the truth about
+// what the enforcement allows.
+export type CompanionAction =
+  | 'pause_queue' | 'resume_queue' | 'send_test_alert'
+  | 'obs_set_scene' | 'obs_toggle_source' | 'obs_toggle_mute'
+  | 'obs_start_stream' | 'obs_stop_stream' | 'obs_start_record' | 'obs_stop_record'
+  | 'obs_save_replay_buffer' | 'obs_set_transition'
+  | 'mirror_start' | 'mirror_stop' | 'mirror_screenshot'
+  | 'stream_go_live' | 'stream_end';
 
 export type CompanionActionResult = {
   schemaVersion: 'v1';

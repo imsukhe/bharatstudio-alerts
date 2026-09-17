@@ -24,14 +24,15 @@ import { logSafeError } from '../observability/safe-log.js';
 //     three native/mobile client mirrors. Five places total; see the
 //     "Allowlist sync" note in this task's return report for how they are
 //     kept from drifting.
-//   - Calls into `store.executeCompanionAction` for a non-legacy action are
-//     cast through `CompanionAction` (a 3-value union in the unowned domain
-//     file) via `as unknown as CompanionAction`. This is a compile-time
-//     bridge only: the real enforcement is (a) this file's own
-//     ACTION_GROUPS allowlist and JSON schema `enum`, and (b) migration
-//     0089's DB CHECK constraint, which will reject any string outside the
-//     full 17-action catalogue regardless of what TypeScript believes the
-//     type is.
+//   - Calls into `store.executeCompanionAction` no longer launder the action
+//     through `as unknown as CompanionAction`. That bridge existed because
+//     the domain union was stuck at the original three 'alerts' verbs while
+//     migration 0089 had already widened the database to all 17; it was
+//     removed on 2026-09-18 when the domain union was corrected to match.
+//     Enforcement is unchanged and still (a) this file's own ACTION_GROUPS
+//     allowlist and JSON schema `enum`, and (b) migration 0089's DB CHECK
+//     constraint, which rejects any string outside the catalogue whatever
+//     TypeScript believes.
 //   - Activation (is the action's target actually live, independent of
 //     entitlement) is now checked here for every group, against
 //     migration 0093's fields on `CompanionState`: 'alerts' uses
@@ -315,10 +316,12 @@ export async function registerCompanionRoutes(app: FastifyInstance, sessions?: S
     }
 
     try {
-      // See this file's header comment: `action` is cast through the
-      // unowned 3-value CompanionAction union. Migration 0089's DB CHECK
-      // constraint is the real allowlist enforcement at this call.
-      return reply.code(202).send(await store.executeCompanionAction(request.auth.userId, request.params.channelId, action as unknown as CompanionAction, targetId, idempotencyKey));
+      // Migration 0089's DB CHECK constraint is the real allowlist
+      // enforcement at this call; ACTION_GROUPS above and the route's JSON
+      // schema `enum` reject anything outside the catalogue before we get
+      // here. The `as unknown as CompanionAction` laundering that used to
+      // sit on this line is gone: the domain union now carries all 17.
+      return reply.code(202).send(await store.executeCompanionAction(request.auth.userId, request.params.channelId, action as CompanionAction, targetId, idempotencyKey));
     } catch (error) {
       logSafeError(request, 'companion_action_failed', error);
       return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'companion_action_rejected', message: 'Companion action could not be accepted', traceId: request.id, retryable: true });

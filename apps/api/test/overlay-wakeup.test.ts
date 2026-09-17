@@ -80,7 +80,36 @@ test('listener rejection rejects every outstanding waiter across every channel, 
 
 // RT-02.1 — a notification for channel A wakes only channel A's
 // subscribers; a channel B subscriber never resolves from it.
-test('RT-02.1: a notification wakes only the subscribers of its own channel', async () => {
+// The wake-up registry's per-wait timeout (src/db/overlay-wakeup.ts:169) and
+// its reconnect timer (:100) are deliberately `unref()`d, and that is correct
+// for production: an SSE request's real socket is what keeps the event loop
+// alive there, and an unref'd timer is precisely what stops a pending wake-up
+// from holding the process open at shutdown.
+//
+// A unit test has no socket. Once one of those timers is the only pending
+// handle, Node reports the loop drained before it fires, and node:test cancels
+// the still-pending test with "Promise resolution is still pending but the
+// event loop has already resolved". Node 24 happens not to exhibit this, which
+// is why CI's pinned 22.17.0 was the first thing ever to see it -- the same
+// root cause, in a second file, that keepEventLoopAliveForInject addresses for
+// app.test.ts's inject() calls.
+//
+// The remedy is identical and stays in the harness: hold one ordinary ref'd
+// handle for the test's duration, standing in for the socket production always
+// has. No timing, no assertion and no production code changes -- the 1s
+// interval cannot fire inside these millisecond-scale tests.
+function refdTest(name: string, fn: () => Promise<void>): void {
+  test(name, async () => {
+    const keepAlive = setInterval(() => {}, 1_000);
+    try {
+      await fn();
+    } finally {
+      clearInterval(keepAlive);
+    }
+  });
+}
+
+refdTest('RT-02.1: a notification wakes only the subscribers of its own channel', async () => {
   let notify: ((value: string) => void) | undefined;
   const client = {
     listen(_channel: string, onnotify: (value: string) => void, onlisten?: () => void) {
@@ -114,7 +143,7 @@ test('RT-02.1: a notification wakes only the subscribers of its own channel', as
 
 // RT-02.8 — malformed notifications, and notifications with no usable
 // channelId, wake nobody and never throw.
-test('RT-02.8: malformed or channel-less notifications wake nobody and never throw', async () => {
+refdTest('RT-02.8: malformed or channel-less notifications wake nobody and never throw', async () => {
   let notify: ((value: string) => void) | undefined;
   const client = {
     listen(_channel: string, onnotify: (value: string) => void, onlisten?: () => void) {
@@ -146,7 +175,7 @@ test('RT-02.8: malformed or channel-less notifications wake nobody and never thr
 // baseline after every stream closes. Proven indirectly through admission:
 // a ceiling of 1 is reached, then freed by release(), for the SAME channel,
 // repeatedly — a leaking count would eventually refuse every subscriber.
-test('RT-02.9: releasing a subscription frees its admission slot, repeatedly, with no leak', async () => {
+refdTest('RT-02.9: releasing a subscription frees its admission slot, repeatedly, with no leak', async () => {
   const client = {
     listen(_channel: string, _onnotify: (value: string) => void, onlisten?: () => void) {
       onlisten?.();
@@ -170,7 +199,7 @@ test('RT-02.9: releasing a subscription frees its admission slot, repeatedly, wi
   await wakeup.close();
 });
 
-test('an admission ceiling rejects further subscribers on the same channel and the instance, independently', async () => {
+refdTest('an admission ceiling rejects further subscribers on the same channel and the instance, independently', async () => {
   const client = {
     listen(_channel: string, _onnotify: (value: string) => void, onlisten?: () => void) {
       onlisten?.();
@@ -204,7 +233,7 @@ test('an admission ceiling rejects further subscribers on the same channel and t
 
 // RT-01 non-regression, restated at the wakeup layer: with no ceiling
 // configured, subscribe() never rejects.
-test('unset admission limits never reject a subscriber', async () => {
+refdTest('unset admission limits never reject a subscriber', async () => {
   const client = {
     listen(_channel: string, _onnotify: (value: string) => void, onlisten?: () => void) {
       onlisten?.();
@@ -219,7 +248,7 @@ test('unset admission limits never reject a subscriber', async () => {
   await wakeup.close();
 });
 
-test('aborting a wait resolves it immediately and removes it from the registry', async () => {
+refdTest('aborting a wait resolves it immediately and removes it from the registry', async () => {
   let notify: ((value: string) => void) | undefined;
   const client = {
     listen(_channel: string, onnotify: (value: string) => void, onlisten?: () => void) {
@@ -246,7 +275,7 @@ test('aborting a wait resolves it immediately and removes it from the registry',
   await wakeup.close();
 });
 
-test('notification outcomes are reported through the optional onNotification hook, without a channel or overlay identifier', async () => {
+refdTest('notification outcomes are reported through the optional onNotification hook, without a channel or overlay identifier', async () => {
   let notify: ((value: string) => void) | undefined;
   const outcomes: string[] = [];
   const client = {

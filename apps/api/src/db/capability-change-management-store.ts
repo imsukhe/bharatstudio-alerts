@@ -166,6 +166,15 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
         return fromRow(row);
       } catch (error) {
         if (hasSqlstate(error, '23505')) throw new CapabilityChangeManagementError('duplicate_approval', errorMessage(error));
+        // Migration 0155, Job 1: approval_kind='owner' by a platform
+        // admin who is not the real owner raises 42501
+        // (insufficient_privilege) from app_private.staff_approve_
+        // capability_change, distinct from the function's own top-of-
+        // body is_platform_admin() re-check (unreachable via legitimate
+        // app traffic, since requirePlatformAdmin already gates that).
+        if (hasSqlstate(error, '42501') && errorMessage(error).includes('owner approval requires real platform owner identity')) {
+          throw new CapabilityChangeManagementError('owner_identity_required', errorMessage(error));
+        }
         if (hasSqlstate(error, '22023')) throw classify(error);
         throw error;
       }

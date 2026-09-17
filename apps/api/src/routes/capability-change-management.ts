@@ -48,7 +48,7 @@ function errorResponse(reply: { code: (status: number) => { send: (body: unknown
     ? 404
     : error.reason === 'duplicate_approval' || error.reason === 'not_open'
       ? 409
-      : error.reason === 'self_approval_forbidden'
+      : error.reason === 'self_approval_forbidden' || error.reason === 'owner_identity_required'
         ? 403
         : 400;
   return reply.code(status).send({ schemaVersion: 'v1', errorCode: error.reason, message: error.message, traceId, retryable: false });

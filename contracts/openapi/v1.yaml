@@ -2570,7 +2570,11 @@ paths:
         (widget | module | feature | hub_lane | lobby_mode | ai_feature) - it does NOT contain
         marketing_section, which CTL-12 needs; see migration 0153's own header for why that is
         reported as a blocker rather than closed here. `marketingVisible: true` requires both
-        marketingLabel and marketingBlurb to be non-null (400 otherwise).
+        marketingLabel and marketingBlurb to be non-null (400 otherwise). MIGRATION 0155, JOB 3:
+        this single-admin entry point now only permits CREATING a brand-new capability - a call
+        targeting a capabilityKey that already exists is rejected (409, `governance_required`)
+        and must instead go through /v1/admin/capability-registry/changes (the two-person
+        propose/approve/apply workflow above), the bypass this job closes.
       parameters:
         - $ref: '#/components/parameters/CapabilityKey'
       requestBody:
@@ -2587,6 +2591,230 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/platform-owner/{userId}:
+    put:
+      tags: [CapabilityChangeManagement]
+      operationId: setPlatformOwner
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Migration 0155, Job 1 (owner decision 2026-09-17), platform staff only. The ONE write
+        path for app_users.is_platform_owner - "one owner for now, expandable later," carried by
+        a partial unique index admitting at most one true row (expanding later is a one-line
+        index drop, never a data migration). Never self-conferred - the acting admin cannot
+        target their own userId (403). A reason is required and every change is audited
+        (platform_owner_audit). is_platform_owner is orthogonal to is_platform_admin: an owner
+        who is not also a platform admin cannot reach this panel at all (the same
+        requirePlatformAdmin gate as every route here), and an `approvalKind: owner` on
+        /v1/admin/capability-registry/changes/{changeRequestId}/approve now requires BOTH flags,
+        not is_platform_admin alone.
+      parameters:
+        - $ref: '#/components/parameters/PlatformOwnerUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformOwnerRequest' }
+      responses:
+        '200':
+          description: The recorded ownership change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformOwnerChange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/{capabilityKey}/emergency-kill:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: fireEmergencyKill
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1 (migration 0155, Job 2), platform staff only. Fires the FULL emergency
+        global_kill path - a single admin, alone, immediate effect on this capability's
+        kill_switch, a mandatory reason, and a hard 24-hour expiry that auto-reverts to the
+        capability's exact pre-kill state at read time (no sweeper required). Distinct from
+        /v1/admin/capability-registry/{capabilityKey}/kill (migration 0152's ordinary,
+        no-expiry, no-ratification kill) - this is the fuller §20.6.1 subsystem with
+        ratification, extension and mandatory post-incident review. `affectedChannelCount` /
+        `liveChannelCount` are caller-supplied (the admin panel's own impact-preview feature is a
+        separate, out-of-scope concern - this endpoint does not compute them live). A previous
+        kill fired by this same admin with no post-incident review on file blocks this call
+        (409, `blocked_on_missing_review`) until that review is filed. Never a tier, limit or
+        pricing change - structurally: this request has no such field to set.
+      parameters:
+        - $ref: '#/components/parameters/CapabilityKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FireEmergencyKillRequest' }
+      responses:
+        '201':
+          description: The fired kill event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityKillEvent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/emergency-kills:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: listEmergencyKills
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1, platform staff only. Every due kill event is auto-reverted (read-time
+        correctness) before this list is built, so a listing is never stale.
+      parameters:
+        - name: capabilityKey
+          in: query
+          required: false
+          schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Kill events, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityKillEventListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/emergency-kills/{killEventId}:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: getEmergencyKill
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1, platform staff only. Reading this kill event auto-reverts it first if its
+        effective expiry has already passed - the returned `reverted` already reflects that, with
+        no separate apply/sweep call required. `escalatedToOwner` reads true once unratified past
+        the 4-hour mark and clears the moment it is ratified.
+      parameters:
+        - $ref: '#/components/parameters/KillEventId'
+      responses:
+        '200':
+          description: The kill event's current state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityKillEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/emergency-kills/{killEventId}/ratify:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: ratifyEmergencyKill
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1 "Ratification", platform staff only. A second, DISTINCT platform admin - never
+        the admin who fired this kill (403) - ratifying it. A kill event may only be ratified
+        once (409 on a second attempt).
+      parameters:
+        - $ref: '#/components/parameters/KillEventId'
+      responses:
+        '200':
+          description: The kill event with ratification recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityKillEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/emergency-kills/{killEventId}/extensions:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: proposeEmergencyKillExtension
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1 "Extension", propose half - platform staff only. Proposes a new expiry for a
+        still-active kill event; must move the expiry forward and is capped at this request's
+        own time plus 24 hours (there is no indefinite kill). Takes effect only once a SECOND,
+        distinct admin approves via
+        /v1/admin/emergency-kills/extensions/{extensionRequestId}/approve.
+      parameters:
+        - $ref: '#/components/parameters/KillEventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposeKillExtensionRequest' }
+      responses:
+        '201':
+          description: The proposed (not yet effective) extension request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KillExtensionRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/emergency-kills/extensions/{extensionRequestId}/approve:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: approveEmergencyKillExtension
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1 "Extension", approve half - platform staff only. A SECOND, DISTINCT admin from
+        the one who proposed this extension (403 otherwise) finalises it - only then does the
+        kill event's effective expiry actually move. An extension request may only be approved
+        once (409 on a second attempt).
+      parameters:
+        - $ref: '#/components/parameters/KillExtensionRequestId'
+      responses:
+        '200':
+          description: The kill event with its expiry extended.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityKillEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/emergency-kills/{killEventId}/review:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: fileEmergencyKillReview
+      security: [{ bearerAuth: [] }]
+      description: >-
+        §20.6.1 "Post-incident review", platform staff only. Files the mandatory written review
+        attached to this kill event. A kill event may only be reviewed once (409 on a second
+        attempt). Filing unblocks this admin's next
+        /v1/admin/capability-registry/{capabilityKey}/emergency-kill call.
+      parameters:
+        - $ref: '#/components/parameters/KillEventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FileKillReviewRequest' }
+      responses:
+        '200':
+          description: The kill event with its review recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityKillEvent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/channels/{channelId}/safety/corpus-terms:
     get:
@@ -3393,6 +3621,21 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+    PlatformOwnerUserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    KillEventId:
+      name: killEventId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    KillExtensionRequestId:
+      name: extensionRequestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     SafetyCorpusTermId:
       name: termId
       in: path
@@ -4003,6 +4246,109 @@ components:
         marketingVisible: { type: boolean }
         marketingLabel: { oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }] }
         marketingBlurb: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+    SetPlatformOwnerRequest:
+      type: object
+      additionalProperties: false
+      required: [isPlatformOwner, reason]
+      description: >-
+        Migration 0155, Job 1 (owner decision 2026-09-17). A reason is always required, whether
+        promoting or demoting - every change is audited identically.
+      properties:
+        isPlatformOwner: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    PlatformOwnerChange:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, userId, isPlatformOwner, changedBy, changedAt, reason]
+      description: One recorded change to app_users.is_platform_owner (public.platform_owner_audit, migration 0155).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        userId: { type: string, format: uuid }
+        isPlatformOwner: { type: boolean }
+        changedBy: { type: string, format: uuid }
+        changedAt: { type: string, format: date-time }
+        reason: { type: string, maxLength: 500 }
+    FireEmergencyKillRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, affectedChannelCount, liveChannelCount]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+        affectedChannelCount: { type: integer, minimum: 0 }
+        liveChannelCount: { type: integer, minimum: 0 }
+    CapabilityKillEvent:
+      type: object
+      additionalProperties: false
+      required: [
+        schemaVersion, id, capabilityKey, firedBy, firedAt, reason, affectedChannelCount,
+        liveChannelCount, expiresAt, ratifiedBy, ratifiedAt, escalatedToOwner, reverted,
+        reviewed, reviewedBy, reviewedAt, reviewText
+      ]
+      description: >-
+        §20.6.1 (migration 0155, Job 2). One emergency global_kill incident. `expiresAt` is the
+        CURRENT effective expiry (the base 24-hour deadline, or a later approved extension's
+        stated value, whichever is later) - reading this resource auto-reverts it first if that
+        moment has already passed, so `reverted: true` here always means the capability's
+        pre-kill state has ALREADY been restored, not merely that it is due.
+        `escalatedToOwner` is true exactly when unratified and now is past firedAt + 4 hours; it
+        is a read-time-derived fact, not a stored flag. The underlying log
+        (public.capability_kill_events and its four related tables) is immutable and append-only
+        - not editable by any admin, including the one who fired it, structurally.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        id: { type: string, format: uuid }
+        capabilityKey: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+        firedBy: { type: string, format: uuid }
+        firedAt: { type: string, format: date-time }
+        reason: { type: string, maxLength: 500 }
+        affectedChannelCount: { type: integer, minimum: 0 }
+        liveChannelCount: { type: integer, minimum: 0 }
+        expiresAt: { type: string, format: date-time }
+        ratifiedBy: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+        ratifiedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        escalatedToOwner: { type: boolean }
+        reverted: { type: boolean }
+        reviewed: { type: boolean }
+        reviewedBy: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+        reviewedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        reviewText: { oneOf: [{ type: 'null' }, { type: string, maxLength: 5000 }] }
+    CapabilityKillEventListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, events]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityKillEvent' }
+    ProposeKillExtensionRequest:
+      type: object
+      additionalProperties: false
+      required: [newExpiresAt, reason]
+      description: >-
+        §20.6.1 "Extension": must move the kill event's current effective expiry forward, and is
+        capped at this request's own time plus 24 hours (there is no indefinite kill).
+      properties:
+        newExpiresAt: { type: string, format: date-time }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    KillExtensionRequest:
+      type: object
+      additionalProperties: false
+      required: [id, killEventId, requestedBy, requestedAt, newExpiresAt, reason]
+      description: The propose half of §20.6.1's two-person extension path - not yet effective until a second, distinct admin approves it.
+      properties:
+        id: { type: string, format: uuid }
+        killEventId: { type: string, format: uuid }
+        requestedBy: { type: string, format: uuid }
+        requestedAt: { type: string, format: date-time }
+        newExpiresAt: { type: string, format: date-time }
+        reason: { type: string, maxLength: 500 }
+    FileKillReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [reviewText]
+      properties:
+        reviewText: { type: string, minLength: 1, maxLength: 5000 }
     SafetyDecisionValue:
       type: string
       description: >-

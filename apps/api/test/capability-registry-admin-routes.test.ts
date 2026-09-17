@@ -176,6 +176,21 @@ test('capability registry admin: CapabilityRegistryAdminError maps to 400', asyn
   await app.close();
 });
 
+test('capability registry admin: migration 0155 Job 3 -- changing an existing capability maps to 409, not 400 or a crash', async () => {
+  const app = await buildApp(config, {
+    sessions, admin,
+    capabilityRegistryAdmin: fakeStore({
+      async setEntry() {
+        throw new CapabilityRegistryAdminError('governance_required', 'changing an EXISTING capability must go through the two-person capability_change_requests workflow');
+      },
+    }),
+  });
+  const response = await app.inject({ method: 'PUT', url: '/v1/admin/capability-registry/entries/ctl_route_registry_probe', headers, payload: fullBody() });
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().errorCode, 'governance_required');
+  await app.close();
+});
+
 test('capability registry admin: an unexpected store failure degrades to a clean, retryable 503, never a crash', async () => {
   const app = await buildApp(config, {
     sessions, admin,

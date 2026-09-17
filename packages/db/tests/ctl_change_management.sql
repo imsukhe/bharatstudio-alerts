@@ -40,14 +40,27 @@
 -- -- capability_registry (and this governance layer over it) is
 -- platform-wide, not per-channel. 00_base_world.sql is not touched by
 -- this file or by migration 0152.
+--
+-- UPDATED BY MIGRATION 0155 (Job 1): app_private.staff_approve_
+-- capability_change now requires REAL owner identity
+-- (app_private.is_platform_owner()) for approval_kind='owner', not
+-- merely is_platform_admin(). Delta ('...6c04') is marked
+-- is_platform_owner=true below so this file's own pre-existing
+-- "two staff + one owner" proof (further down) keeps proving what it
+-- always claimed to prove -- an owner approval succeeding -- rather than
+-- now failing on the identity check this file did not used to exercise.
+-- A NEW sixth user ('...6c05', platform admin, NOT owner) is added so a
+-- non-owner admin attempting an 'owner' approval can be proven rejected,
+-- which this file could not previously distinguish from "any platform
+-- admin can approve as owner" (0152's own documented identity gap).
 \set ON_ERROR_STOP on
 
-insert into app_users (id, external_subject, display_name, created_at, updated_at, is_platform_admin)
+insert into app_users (id, external_subject, display_name, created_at, updated_at, is_platform_admin, is_platform_owner)
 values
-  ('00000000-0000-4000-8000-000000006c00', 'google-ctl06-staff-alpha', 'CTL06 Staff Alpha', current_timestamp, current_timestamp, true),
-  ('00000000-0000-4000-8000-000000006c01', 'google-ctl06-staff-beta', 'CTL06 Staff Beta', current_timestamp, current_timestamp, true),
-  ('00000000-0000-4000-8000-000000006c02', 'google-ctl06-staff-gamma', 'CTL06 Staff Gamma', current_timestamp, current_timestamp, true),
-  ('00000000-0000-4000-8000-000000006c03', 'google-ctl06-non-staff', 'CTL06 Non-Staff', current_timestamp, current_timestamp, false),
+  ('00000000-0000-4000-8000-000000006c00', 'google-ctl06-staff-alpha', 'CTL06 Staff Alpha', current_timestamp, current_timestamp, true, false),
+  ('00000000-0000-4000-8000-000000006c01', 'google-ctl06-staff-beta', 'CTL06 Staff Beta', current_timestamp, current_timestamp, true, false),
+  ('00000000-0000-4000-8000-000000006c02', 'google-ctl06-staff-gamma', 'CTL06 Staff Gamma', current_timestamp, current_timestamp, true, false),
+  ('00000000-0000-4000-8000-000000006c03', 'google-ctl06-non-staff', 'CTL06 Non-Staff', current_timestamp, current_timestamp, false, false),
   -- A 5th platform admin. UNIQUE(change_request_id, approver_id) on
   -- capability_change_approvals means the SAME person can never record
   -- both a 'staff' and an 'owner' approval on the same change -- a
@@ -55,8 +68,14 @@ values
   -- separate owner sign-off), never two people wearing three hats. This
   -- delta user exists so that requirement can be exercised honestly
   -- without reusing an approver who already voted 'staff' on the same
-  -- change.
-  ('00000000-0000-4000-8000-000000006c04', 'google-ctl06-staff-delta', 'CTL06 Staff Delta', current_timestamp, current_timestamp, true)
+  -- change. Migration 0155: marked is_platform_owner=true -- the ONLY
+  -- user in this fixture who is the real platform owner, matching the
+  -- singleton constraint (app_users_platform_owner_singleton_idx).
+  ('00000000-0000-4000-8000-000000006c04', 'google-ctl06-staff-delta', 'CTL06 Staff Delta', current_timestamp, current_timestamp, true, true),
+  -- Migration 0155: a 6th platform admin, deliberately NOT the owner --
+  -- proves an 'owner' approval is rejected for identity, not merely
+  -- permitted by admin status.
+  ('00000000-0000-4000-8000-000000006c05', 'google-ctl06-staff-epsilon', 'CTL06 Staff Epsilon', current_timestamp, current_timestamp, true, false)
 on conflict (id) do nothing;
 
 -- =========================================================================
@@ -459,13 +478,44 @@ begin
 end
 $$;
 
+-- MIGRATION 0155, Job 1: a platform admin who is NOT the owner
+-- ('...6c05', epsilon) attempts approval_kind='owner' on this SAME
+-- still-pending paid->Free change. Must be rejected -- real owner
+-- identity, not admin status alone, is what authorises an 'owner'
+-- approval now. 42501 (insufficient_privilege), not 22023 -- this is an
+-- identity/authority failure, the same SQLSTATE every is_platform_admin()
+-- gate in this schema already uses, not a business-rule violation.
+do $$
+declare v_id uuid;
+begin
+  select id into v_id from public.capability_change_requests where capability_key = 'ctl07_paid_widget' and change_kind = 'update';
+  perform set_config('app.user_id', '00000000-0000-4000-8000-000000006c05', false);
+  begin
+    perform app_private.staff_approve_capability_change(v_id, 'owner');
+    raise exception 'CTL-07 rule 2 / Job 1: a non-owner platform admin must not be able to record an owner approval';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('app.user_id', '00000000-0000-4000-8000-000000006c00', false);
+
+  -- And the change must still be exactly where it was -- the rejected
+  -- attempt recorded NO approval row (the insert is inside the same
+  -- function call the identity check aborts, before any insert).
+  perform 1 from public.capability_change_approvals a
+   where a.change_request_id = v_id and a.approver_id = '00000000-0000-4000-8000-000000006c05';
+  if found then
+    raise exception 'Job 1: a rejected owner-identity approval must not leave an approval row behind';
+  end if;
+end
+$$;
+
 -- Back to ctl07_paid_widget: a THIRD, PREVIOUSLY UNINVOLVED approver
 -- (delta -- beta and gamma already recorded 'staff' approvals on this
 -- same change above, and UNIQUE(change_request_id, approver_id) means
 -- neither of them can also record the 'owner' approval), this time
--- approval_kind='owner', completes it. See this migration's header for
--- the identity gap this still has -- delta is authorised the same way
--- as any other platform staff member, not verified as THE owner.
+-- approval_kind='owner', completes it. Migration 0155, Job 1: delta IS
+-- the real platform owner (is_platform_owner=true in this file's own
+-- fixture) -- this is now a genuine identity-verified owner approval,
+-- not merely an admin-authorised one.
 -- This change was proposed with no explicit effective_at, so it
 -- defaults to "now" (CTL-06: staging is opt-in, not forced) -- once the
 -- full CTL-07 approval set is satisfied, capability_change_row's own

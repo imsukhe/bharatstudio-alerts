@@ -107,6 +107,14 @@ export function createSqlCapabilityRegistryAdminStore(sql: Sql): CapabilityRegis
         return fromRow(row);
       } catch (error) {
         if (hasSqlstate(error, '23514')) throw new CapabilityRegistryAdminError('invalid_input', errorMessage(error));
+        // Migration 0155, Job 3: changing an EXISTING capability through
+        // this single-admin entry point is rejected (42501) -- it must
+        // go through the two-person capability_change_requests workflow
+        // instead. Distinct from the plain admin-gate 42501 the pre-
+        // handler already intercepts before the store is ever called.
+        if (hasSqlstate(error, '42501') && errorMessage(error).includes('must go through the two-person capability_change_requests workflow')) {
+          throw new CapabilityRegistryAdminError('governance_required', errorMessage(error));
+        }
         throw error;
       }
     },

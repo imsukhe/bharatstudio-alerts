@@ -351,12 +351,20 @@ end
 $$;
 
 -- ALLOWLIST NEVER BEATS KILL either (kill is the absolute first stage).
+-- MIGRATION 0155, Job 3: staff_set_capability_registry_entry now
+-- rejects any call targeting an EXISTING capability (single-admin
+-- writes are permitted only to CREATE a new one -- see 0155's own
+-- header). 'ctl_spec_studio_gated' already exists (set above), so this
+-- probe switches to app_private.staff_kill_capability_now (0152's own
+-- single-admin kill path, untouched by Job 3 -- it calls 0149's
+-- staff_upsert_capability_registry_entry, a different function
+-- entirely) to engage the kill switch instead. That function preserves
+-- every field it does not itself mention (capacity_class/description/
+-- rollout_percentage/min_tier, read from the current row), so this
+-- substitution is behaviourally equivalent for what this test checks.
 select set_config('app.user_id', '00000000-0000-4000-8000-000000006d00', false);
 delete from public.capability_denylist where capability_key = 'ctl_spec_studio_gated' and channel_id = '00000000-0000-4000-8000-000000006d01';
-select * from app_private.staff_set_capability_registry_entry(
-  'ctl_spec_studio_gated', 'automation_volume', 'kill switch engaged', true, 100, 'studio',
-  null, null, null, null, null, null
-);
+select * from app_private.staff_kill_capability_now('ctl_spec_studio_gated', 'kill switch engaged');
 select set_config('app.user_id', '00000000-0000-4000-8000-000000000001', false);
 
 do $$
@@ -440,7 +448,23 @@ end
 $$;
 
 -- Lift the kill so the revert test below is not confounded by it.
-select * from app_private.staff_set_capability_registry_entry(
+-- MIGRATION 0155, Job 3: staff_set_capability_registry_entry now
+-- rejects any call targeting an EXISTING capability -- 'ctl_spec_full_
+-- widget' already exists, and this step needs full ad hoc control over
+-- every §20.2 field (not just kill_switch, which staff_kill_capability_
+-- now/staff_revert_capability_registry_entry would give), purely to
+-- construct a specific intermediate STATE for the CTL-08 revert proof
+-- below. It therefore calls app_private.set_capability_registry_entry_
+-- unchecked directly -- the internal, ungoverned helper Job 3
+-- introduced, reachable here only because this test file runs as the
+-- database superuser (which bypasses the REVOKE the same way it already
+-- bypasses the table-level REVOKEs this file relies on elsewhere, e.g.
+-- the direct `insert into public.capability_allowlist` above). This
+-- does not exercise, and does not weaken, the PUBLIC guarded entry
+-- point's new gate -- that gate is proven directly, both positively
+-- (new capability succeeds) and negatively (existing capability
+-- rejected), in packages/db/tests/ctl_emergency_kill_and_owner.sql.
+select * from app_private.set_capability_registry_entry_unchecked(
   'ctl_spec_full_widget', 'active_widget', 'kill lifted before revert test', false, 100, 'free',
   'widget', '{"max_instances": 3, "max_duration_ms": 8000}'::jsonb, true, true,
   'Wins This Season', 'Track your season record live on stream.'
@@ -450,9 +474,13 @@ select * from app_private.staff_set_capability_registry_entry(
 -- 0152 STILL WORKS, path 3: CTL-08 revert (the ONE 0152 function this
 -- migration touches) now restores kind/limits/beta/marketing_* from the
 -- immediately-previous version -- not just capacity_class/description/
--- kill_switch/rollout_percentage/min_tier.
+-- kill_switch/rollout_percentage/min_tier. (Migration 0155 also touches
+-- staff_revert_capability_registry_entry, body-only, to call the new
+-- internal helper instead of the now-guarded public one -- see 0155's
+-- own Job 3 header. Its signature/output and restore semantics are
+-- otherwise identical, so this proof still holds unchanged.)
 -- =========================================================================
-select * from app_private.staff_set_capability_registry_entry(
+select * from app_private.set_capability_registry_entry_unchecked(
   'ctl_spec_full_widget', 'active_widget', 'about to be reverted', false, 100, 'free',
   'module', '{"max_instances": 9}'::jsonb, false, false, null, null
 );

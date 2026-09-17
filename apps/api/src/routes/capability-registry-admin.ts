@@ -116,7 +116,12 @@ export async function registerCapabilityRegistryAdminRoutes(
       return reply.code(200).send(entry);
     } catch (error) {
       if (error instanceof CapabilityRegistryAdminError) {
-        return reply.code(400).send({ schemaVersion: 'v1', errorCode: error.reason, message: error.message, traceId: request.id, retryable: false });
+        // Migration 0155, Job 3: 'governance_required' means the request
+        // conflicts with the capability's current (already-existing)
+        // state -- the correct path is the two-person workflow, not a
+        // malformed request -- so it maps to 409, not 400.
+        const status = error.reason === 'governance_required' ? 409 : 400;
+        return reply.code(status).send({ schemaVersion: 'v1', errorCode: error.reason, message: error.message, traceId: request.id, retryable: false });
       }
       logSafeError(request, 'capability_registry_set_failed', error);
       return unavailable(reply, request.id);

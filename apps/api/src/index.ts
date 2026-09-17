@@ -85,6 +85,10 @@ import { createSqlCapabilityChangeManagementStore } from './db/capability-change
 // own posture), not the two-staff-approved staged workflow above -- see
 // db/capability-registry-admin-store.ts's own header.
 import { createSqlCapabilityRegistryAdminStore } from './db/capability-registry-admin-store.js';
+// Migration 0155, Job 1/2: real platform-owner identity and §20.6.1's
+// emergency global_kill path. Both single-admin-reachable, main pool.
+import { createSqlPlatformOwnerStore } from './db/platform-owner-store.js';
+import { createSqlCapabilityKillEventStore } from './db/capability-kill-events-store.js';
 // SAF phase 1 (migration 0151): moderation pipeline spine, corpus
 // management only. ONE file, TWO pools -- the list read is wired to
 // derivedReadSql (RT-10/RT-11), create/remove stay on the main `sql`
@@ -363,6 +367,8 @@ const app = await buildApp(config, {
   staffCreatorPackReview: sql ? createSqlStaffCreatorPackReviewStore(sql) : undefined,
   capabilityChangeManagement: sql ? createSqlCapabilityChangeManagementStore(sql) : undefined,
   capabilityRegistryAdmin: sql ? createSqlCapabilityRegistryAdminStore(sql) : undefined,
+  platformOwner: sql ? createSqlPlatformOwnerStore(sql) : undefined,
+  capabilityKillEvents: sql ? createSqlCapabilityKillEventStore(sql) : undefined,
   assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,
   derivedReadSql,

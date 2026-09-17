@@ -71,7 +71,15 @@ export type SetCapabilityRegistryEntryInput = {
 // with no marketing_label/marketing_blurb (migration 0153's own added
 // guard). The store classifies the underlying postgres error; the route
 // layer maps it to 400.
-export type CapabilityRegistryAdminErrorReason = 'invalid_input';
+//
+// Migration 0155, Job 3: this single-admin entry point now rejects any
+// call targeting an EXISTING capability (app_private.
+// staff_set_capability_registry_entry raises 42501) -- closing the
+// bypass where a single platform admin could change min_tier/
+// kill_switch/rollout_percentage/limits/capacity_class on a LIVE
+// capability without §20.6's two-person approval. Creating a brand-new
+// capability is unaffected. See migration 0155's own Job 3 header.
+export type CapabilityRegistryAdminErrorReason = 'invalid_input' | 'governance_required';
 
 export class CapabilityRegistryAdminError extends Error {
   readonly reason: CapabilityRegistryAdminErrorReason;

@@ -187,6 +187,7 @@ test('capability change management: CapabilityChangeManagementError reasons map 
     { reason: 'not_open', expected: 409 },
     { reason: 'duplicate_approval', expected: 409 },
     { reason: 'self_approval_forbidden', expected: 403 },
+    { reason: 'owner_identity_required', expected: 403 },
     { reason: 'owner_signoff_not_required', expected: 400 },
     { reason: 'no_previous_version', expected: 400 },
     { reason: 'invalid_input', expected: 400 },

@@ -134,6 +134,17 @@ import { registerCapabilityChangeManagementRoutes } from './routes/capability-ch
 // for why. Its own file, its own registrar.
 import type { CapabilityRegistryAdminStore } from './domain/capability-registry-admin.js';
 import { registerCapabilityRegistryAdminRoutes } from './routes/capability-registry-admin.js';
+// Migration 0155, Job 1: real platform-owner identity -- the ONE write
+// path for app_users.is_platform_owner (never self-conferred, always
+// audited). Its own file, its own registrar.
+import type { PlatformOwnerStore } from './domain/platform-owner.js';
+import { registerPlatformOwnerRoutes } from './routes/platform-owner.js';
+// Migration 0155, Job 2: §20.6.1's emergency global_kill path in full --
+// fire/ratify/extend/review, distinct from routes/capability-change-
+// management.ts's existing (migration 0152) ordinary kill. Its own file,
+// its own registrar.
+import type { CapabilityKillEventStore } from './domain/capability-kill-events.js';
+import { registerCapabilityKillEventRoutes } from './routes/capability-kill-events.js';
 // SAF phase 1 (migration 0151): the moderation pipeline spine's only
 // phase-1 route -- corpus management (list/add/remove a term in THIS
 // channel's own corpus). Its own file, not folded into any overlay
@@ -284,6 +295,11 @@ export type AppDependencies = {
   // §20.2 field writes -- see the import site above for why this is a
   // separate surface from capabilityChangeManagement.
   capabilityRegistryAdmin?: CapabilityRegistryAdminStore;
+  // Migration 0155, Job 1. The one write path for app_users.
+  // is_platform_owner.
+  platformOwner?: PlatformOwnerStore;
+  // Migration 0155, Job 2. §20.6.1's emergency global_kill path.
+  capabilityKillEvents?: CapabilityKillEventStore;
   // SAF phase 1 (migration 0151). Corpus management only -- the pipeline
   // itself (domain/safety-pipeline.ts) is not wired to any dependency
   // here, because nothing calls it live yet.
@@ -524,6 +540,8 @@ export async function buildApp(
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
   await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
   await registerCapabilityRegistryAdminRoutes(app, dependencies.sessions, dependencies.capabilityRegistryAdmin, dependencies.admin);
+  await registerPlatformOwnerRoutes(app, dependencies.sessions, dependencies.platformOwner, dependencies.admin);
+  await registerCapabilityKillEventRoutes(app, dependencies.sessions, dependencies.capabilityKillEvents, dependencies.admin);
   await registerSafetyCorpusRoutes(app, dependencies.sessions, dependencies.safetyCorpus);
   await registerUrlDomainRuleRoutes(app, dependencies.sessions, dependencies.safetyDomainRules);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);

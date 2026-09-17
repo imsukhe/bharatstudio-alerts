@@ -77,6 +77,15 @@ export type CapabilityChangeErrorReason =
   | 'not_open'
   | 'self_approval_forbidden'
   | 'owner_signoff_not_required'
+  // Migration 0155, Job 1: an approval_kind='owner' call by a platform
+  // admin who is not the real platform owner (app_private.is_platform_
+  // owner()). Distinct from self_approval_forbidden -- this is an
+  // identity failure, not a maker-checker one -- and reachable via
+  // legitimate app traffic (requirePlatformAdmin only checks
+  // is_platform_admin, not is_platform_owner), unlike the SQL layer's
+  // defense-in-depth is_platform_admin() re-checks elsewhere in this
+  // file, which the app-level gate already makes unreachable.
+  | 'owner_identity_required'
   | 'no_previous_version'
   | 'duplicate_approval'
   | 'invalid_input';

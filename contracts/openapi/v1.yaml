@@ -7047,13 +7047,19 @@ components:
     CompanionState:
       type: object
       additionalProperties: false
-      required: [schemaVersion, channelId, overlayConnected, pendingAlerts, lastUpdatedAt]
+      required: [schemaVersion, channelId, overlayConnected, pendingAlerts, lastUpdatedAt, helperPaired, obsConnected, obsStatusReportedAt, paymentAccountConnected, mirrorReachable, streamPaired]
       properties:
         schemaVersion: { type: string, const: v1 }
         channelId: { type: string, format: uuid }
         overlayConnected: { type: boolean }
         pendingAlerts: { type: integer, minimum: 0 }
         lastUpdatedAt: { type: string, format: date-time }
+        helperPaired: { type: boolean, description: 'A desktop helper currently holds a valid, unexpired control-session lease.' }
+        obsConnected: { type: boolean, description: 'That helper''s most recent OBS heartbeat is fresh (<= 45s old) and says connected; a stale or missing heartbeat reads false.' }
+        obsStatusReportedAt: { type: [string, 'null'], format: date-time, description: 'The heartbeat timestamp itself (may be stale relative to now -- see obsConnected); null if never reported.' }
+        paymentAccountConnected: { type: boolean, description: 'An active payment account exists for this channel.' }
+        mirrorReachable: { type: boolean, description: 'Mirror reports no liveness signal to this API today; always false.' }
+        streamPaired: { type: boolean, description: 'Stream reports no liveness signal to this API today; always false.' }
     CompanionActionSlot:
       type: object
       additionalProperties: false
@@ -7062,8 +7068,9 @@ components:
         slotIndex: { type: integer, minimum: 1, maximum: 64 }
         page: { type: integer, minimum: 1, maximum: 16 }
         label: { type: string, minLength: 1, maxLength: 80 }
-        action: { type: string, enum: [pause_queue, resume_queue, send_test_alert] }
+        action: { type: string, enum: [pause_queue, resume_queue, send_test_alert, obs_set_scene, obs_toggle_source, obs_toggle_mute, obs_start_stream, obs_stop_stream, obs_start_record, obs_stop_record, obs_save_replay_buffer, obs_set_transition, mirror_start, mirror_stop, mirror_screenshot, stream_go_live, stream_end] }
         targetId: { type: string, format: uuid }
+        targetLabel: { type: string, minLength: 1, maxLength: 200 }
     CompanionLayout:
       type: object
       additionalProperties: false
@@ -7086,8 +7093,9 @@ components:
       additionalProperties: false
       required: [action, targetId]
       properties:
-        action: { type: string, enum: [pause_queue, resume_queue, send_test_alert] }
-        targetId: { type: string, format: uuid, description: Queue target required for every v1 Companion action. }
+        action: { type: string, enum: [pause_queue, resume_queue, send_test_alert, obs_set_scene, obs_toggle_source, obs_toggle_mute, obs_start_stream, obs_stop_stream, obs_start_record, obs_stop_record, obs_save_replay_buffer, obs_set_transition, mirror_start, mirror_stop, mirror_screenshot, stream_go_live, stream_end] }
+        targetId: { type: string, minLength: 1, maxLength: 200, description: A queue UUID for alerts actions; an OBS scene/source/input/transition identifier for obs actions; unused but still bounded for mirror/stream actions. }
+        targetLabel: { type: string, minLength: 1, maxLength: 200, description: Required for obs actions (names the scene/source/input/transition); rejected for alerts actions; optional and bounded for mirror/stream actions. }
     CompanionActionResult:
       type: object
       additionalProperties: false

@@ -53,6 +53,10 @@ import { createSqlLobbyStatusOverlayStore } from './db/lobby-status-overlay-stor
 // Two files, two pools, deliberately -- see each store file's own header.
 import { createSqlGiveawayTournamentStore } from './db/giveaway-tournament-store.js';
 import { createSqlGiveawayTournamentOverlayStore } from './db/giveaway-tournament-overlay-store.js';
+// PRF-02 slice 7, §6 catalogue module #10 (QR Smart Card). Two files, two
+// pools, deliberately -- see each store file's own header.
+import { createSqlQrSmartCardStore } from './db/qr-smart-card-store.js';
+import { createSqlQrSmartCardOverlayStore } from './db/qr-smart-card-overlay-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -212,6 +216,12 @@ const app = await buildApp(config, {
   // the SQL test can prove it, and nothing here may add a second copy.
   giveawayTournaments: sql ? createSqlGiveawayTournamentStore(sql) : undefined,
   overlayGiveawayTournament: sql ? createSqlGiveawayTournamentOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 7, module #10. The creator store carries writes, so it
+  // uses the main pool exactly as streamMissions/giveawayTournaments do;
+  // the overlay store is a derived read and uses derivedReadSql, which is
+  // also what makes it visible to rule 3 of scan-required-queries.mjs.
+  qrSmartCards: sql ? createSqlQrSmartCardStore(sql) : undefined,
+  overlayQrSmartCard: sql ? createSqlQrSmartCardOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;
   // the overlay store is a derived read and uses derivedReadSql, which is

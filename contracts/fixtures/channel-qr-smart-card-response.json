@@ -1,0 +1,12 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-qr-smart-card-response.schema.json",
+  "schemaVersion": "v1",
+  "card": {
+    "schemaVersion": "v1",
+    "destination": "https://bharatstudio.in/creator/synthetic-a",
+    "label": "Follow on BharatStudio",
+    "isEnabled": true,
+    "createdAt": "2026-09-17T10:00:00.000Z",
+    "updatedAt": "2026-09-17T10:05:00.000Z"
+  }
+}

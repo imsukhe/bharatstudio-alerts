@@ -204,6 +204,8 @@ import { createLobbyStatusModule } from '../modules/lobby-status-module';
 import { isLobbyStatus, type LobbyStatus } from '../modules/lobby-status-logic';
 import { createGiveawayTournamentModule } from '../modules/giveaway-tournament-module';
 import { isGiveawayTournamentState, type GiveawayTournamentState } from '../modules/giveaway-tournament-logic';
+import { createQrSmartCardModule } from '../modules/qr-smart-card-module';
+import { isOverlayQrSmartCard, type OverlayQrSmartCard } from '../modules/qr-smart-card-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -235,6 +237,12 @@ const BUILT_MODULE_KEYS = [
   // that its countdown ticks on the SHARED rAF loop rather than on a
   // timer of its own.
   'giveaway_tournament_card',
+  // PRF-02 slice 7, §6 #10 (QR Smart Card). A plain snapshot module --
+  // no ordering requirement. Its "toggle" is the read itself: the
+  // overlay endpoint returns a row only when the creator's card is
+  // enabled (migration 0144), so there is no second enabled/disabled
+  // branch on this page either.
+  'qr_smart_card',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -260,6 +268,7 @@ export default function MasterCanvasPage() {
   const reactionCloudContainerRef = useRef<HTMLDivElement>(null);
   const lobbyStatusContainerRef = useRef<HTMLDivElement>(null);
   const giveawayTournamentContainerRef = useRef<HTMLDivElement>(null);
+  const qrSmartCardContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -465,6 +474,30 @@ export default function MasterCanvasPage() {
       return isGiveawayTournamentState(body.giveawayTournament) ? body.giveawayTournament : null;
     }
 
+    // QR Smart Card (§6 #10, PRF-02 slice 7). The response carries TWO
+    // STRINGS and nothing else -- no scan count, view count, impression
+    // count, exposure count or card id exists on this path at all,
+    // because app_private.list_overlay_qr_smart_card (migration 0144)
+    // returns exactly destination and label. `isOverlayQrSmartCard` is
+    // the client's own last-line check on top of that, not the
+    // guarantee itself.
+    //
+    // `qrSmartCard: null` is every "nothing to paint" case at once: an
+    // unrecognised, expired, revoked or foreign token, a channel that
+    // has never configured a card, AND a channel whose card is
+    // configured but disabled -- the single toggle the owner decision
+    // names is enforced by the read itself (migration 0144's
+    // `where is_enabled`), not by a second field this page would have to
+    // branch on.
+    async function fetchQrSmartCardSnapshot(): Promise<OverlayQrSmartCard | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/qr-smart-card`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { qrSmartCard?: unknown };
+      return isOverlayQrSmartCard(body.qrSmartCard) ? body.qrSmartCard : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -613,6 +646,26 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
+    if (qrSmartCardContainerRef.current) {
+      // QR Smart Card (§6 #10). One more plain snapshot module on the
+      // SAME shared `connection` and the SAME shared rAF loop -- no
+      // second session, no second transport, no timer of its own.
+      //
+      // The QR code image is generated first-party by
+      // modules/qr-smart-card-logic.ts (§9.1.1: no third-party QR
+      // library, no remote QR-image service). Nothing about scenes,
+      // CMP-17, a destination allow-list, link shortening or scan
+      // counting is wired here and nothing may be -- the owner's
+      // 2026-09-17 decision is "one destination, one label, one toggle.
+      // That is the entire feature," and this module paints exactly
+      // that.
+      runtime.registerModule(createQrSmartCardModule({
+        container: qrSmartCardContainerRef.current,
+        connection,
+        fetchSnapshot: fetchQrSmartCardSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -712,6 +765,14 @@ export default function MasterCanvasPage() {
         .master-canvas-giveaway [data-role="tournament-line"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
         .master-canvas-giveaway [data-role="tournament-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
         .master-canvas-giveaway [data-role="tournament-fill"] { background: linear-gradient(90deg, #f59e0b, #38bdf8); border-radius: 999px; }
+        /* QR Smart Card (§6 #10). The QR code is one <svg><path> pair;
+           render() writes only opacity/transform for the card's
+           entrance and the path's "d"/label text when the
+           destination/label actually change (PRF-03). */
+        .master-canvas-qr-card { position: absolute; bottom: 20px; right: 20px; color: #fff; }
+        .master-canvas-qr-card [data-role="qr-smart-card"] { padding: 12px; border-radius: 12px; background: rgba(255,255,255,.94); }
+        .master-canvas-qr-card [data-role="qr-smart-card-code"] { display: block; }
+        .master-canvas-qr-card [data-role="qr-smart-card-label"] { font-size: 13px; font-weight: 600; color: #111827; text-align: center; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -725,6 +786,7 @@ export default function MasterCanvasPage() {
       <div ref={reactionCloudContainerRef} className="master-canvas-module master-canvas-reaction-cloud" aria-hidden="true" />
       <div ref={lobbyStatusContainerRef} className="master-canvas-module master-canvas-lobby" aria-live="polite" />
       <div ref={giveawayTournamentContainerRef} className="master-canvas-module master-canvas-giveaway" aria-live="polite" />
+      <div ref={qrSmartCardContainerRef} className="master-canvas-module master-canvas-qr-card" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

@@ -14,6 +14,7 @@ import { createModeratorStatusModule } from './modules/moderator-status-module';
 import { createReactionCloudModule } from './modules/reaction-cloud-module';
 import { createLobbyStatusModule } from './modules/lobby-status-module';
 import { createGiveawayTournamentModule } from './modules/giveaway-tournament-module';
+import { createQrSmartCardModule } from './modules/qr-smart-card-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -880,7 +881,7 @@ test('a Reaction Cloud that throws twice goes down while every other module keep
   assert.ok(neighbourRenders >= 2, 'the neighbour keeps rendering on the same loop after the failure');
 });
 
-test('with all eleven modules registered (Lobby Status included): still exactly one connection and one rAF chain', async () => {
+test('with all thirteen modules registered (QR Smart Card included): still exactly one connection and one rAF chain', async () => {
   let fetchCalls = 0;
   const connection = createMasterCanvasConnection({
     overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
@@ -901,6 +902,7 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   const reactionCloudContainer = document.createElement('div');
   const lobbyStatusContainer = document.createElement('div');
   const giveawayTournamentContainer = document.createElement('div');
+  const qrSmartCardContainer = document.createElement('div');
 
   const fetchGoalSnapshot = async () => null;
   const fetchVoteSnapshot = async () => null;
@@ -942,6 +944,9 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.registerModule(createGiveawayTournamentModule({
     container: giveawayTournamentContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
   }));
+  runtime.registerModule(createQrSmartCardModule({
+    container: qrSmartCardContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
 
   runtime.start();
   runtime.setModuleEntitled('support_theater', true);
@@ -956,11 +961,12 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.setModuleEntitled('reaction_cloud', true);
   runtime.setModuleEntitled('lobby_status', true);
   runtime.setModuleEntitled('giveaway_tournament_card', true);
+  runtime.setModuleEntitled('qr_smart_card', true);
   await flush();
 
-  assert.equal(fetchCalls, 1, 'twelve entitled modules must still open exactly one transport connection — the Giveaway / Tournament card adds an endpoint, never a session');
-  assert.equal(connection.getSubscriberCount(), 12, 'all twelve modules are subscribers on the one shared connection');
-  assert.equal(scheduler.pendingFrameCount(), 1, 'all twelve active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
+  assert.equal(fetchCalls, 1, 'thirteen entitled modules must still open exactly one transport connection — the QR Smart Card adds an endpoint, never a session');
+  assert.equal(connection.getSubscriberCount(), 13, 'all thirteen modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all thirteen active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
 });
 
 test('PRF-02: the Lobby Status card paints on the SAME shared connection and rAF loop, and the whole canvas keeps one of each', async () => {

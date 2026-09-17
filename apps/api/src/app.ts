@@ -92,6 +92,12 @@ import { registerLobbySessionRoutes } from './routes/lobby-session.js';
 // routes/master-canvas.ts.
 import type { GiveawayTournamentStore, GiveawayTournamentOverlayStore } from './domain/giveaway-tournament-store.js';
 import { registerGiveawayTournamentRoutes } from './routes/giveaway-tournament.js';
+// PRF-02 slice 7, §6 catalogue module #10 (QR Smart Card). The creator's
+// own destination/label/toggle read-writes are their own route file; the
+// OVERLAY read is a Master Canvas module read and lives in
+// routes/master-canvas.ts.
+import type { QrSmartCardStore, QrSmartCardOverlayStore } from './domain/qr-smart-card-store.js';
+import { registerQrSmartCardRoutes } from './routes/qr-smart-card.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -182,6 +188,14 @@ export type AppDependencies = {
   // app_private.list_overlay_giveaway_tournament (migration 0142) alone.
   giveawayTournaments?: GiveawayTournamentStore;
   overlayGiveawayTournament?: GiveawayTournamentOverlayStore;
+  // PRF-02 slice 7, §6 catalogue module #10 (QR Smart Card). The creator
+  // store is a write/read surface on the main pool; the overlay store is
+  // a derived read on RT-10/RT-11's derivedReadSql pool. Neither is
+  // tier-gated: 'qr_smart_card' is one of 0131's own twenty catalogue
+  // keys, and §30.3's render cap is the only gate -- there is no second
+  // one here.
+  qrSmartCards?: QrSmartCardStore;
+  overlayQrSmartCard?: QrSmartCardOverlayStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -393,11 +407,12 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
-  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlayQrSmartCard);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerSafeModeRoutes(app, dependencies.sessions, dependencies.safeMode, dependencies.account);
   await registerLobbySessionRoutes(app, dependencies.sessions, dependencies.lobbySessions, dependencies.account);
   await registerGiveawayTournamentRoutes(app, dependencies.sessions, dependencies.giveawayTournaments, dependencies.account);
+  await registerQrSmartCardRoutes(app, dependencies.sessions, dependencies.qrSmartCards, dependencies.account);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

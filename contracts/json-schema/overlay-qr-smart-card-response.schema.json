@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-qr-smart-card-response.schema.json",
+  "title": "Overlay QR smart card response (PRF-02, catalogue module #10)",
+  "description": "The overlay/browser-source-facing read. Two fields, 12.7-bounded: destination and label. No card id, no timestamp and no enabled flag -- the underlying read (app_private.list_overlay_qr_smart_card, migration 0144) returns a row ONLY when the card's own is_enabled is true, so the row's presence already carries the toggle's true state. A disabled card and a channel that has never configured one answer with the identical null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "qrSmartCard"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "qrSmartCard": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "destination", "label"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "destination": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "label": { "type": "string", "minLength": 1, "maxLength": 120 }
+          }
+        }
+      ]
+    }
+  }
+}

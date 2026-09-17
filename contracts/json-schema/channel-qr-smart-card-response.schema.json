@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-qr-smart-card-response.schema.json",
+  "title": "Channel QR smart card response (PRF-02, catalogue module #10)",
+  "description": "The creator-facing read/write response for the QR Smart Card. Owner decision, 2026-09-17: 'The creator sets one destination and one label. The card shows or hides on a single toggle. That is the entire feature.' No scene profile, no CMP-17 (Clutch Mode) dependency, no destination allow-list, no link shortening, and no scan/view/impression/exposure counter field exists anywhere in this contract, and additionalProperties false is what keeps it that way.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "card"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "card": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "destination", "label", "isEnabled", "createdAt", "updatedAt"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "destination": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "description": "Rendered client-side as a first-party QR code image. Data, never a link the Master Canvas runtime fetches, navigates to or embeds (9.1.1)."
+            },
+            "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "isEnabled": { "type": "boolean", "description": "The single toggle." },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

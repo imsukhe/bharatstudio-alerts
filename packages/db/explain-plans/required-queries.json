@@ -6,7 +6,7 @@
     "every entry MUST have a current EXPLAIN artefact (enforced by check-plans.mjs). The scan half",
     "(scan-required-queries.mjs) finds every app_private.list_overlay_* call actually present in",
     "apps/api/src/db/*.ts and apps/api/src/routes/*.ts and fails the build if one of them is missing",
-    "from the 'function' list below — so forgetting to add an entry here is not a silent gap, it is a",
+    "from the 'function' list below \u2014 so forgetting to add an entry here is not a silent gap, it is a",
     "failed build. See scan-required-queries.mjs's own header for exactly what the scan does and does",
     "not catch.",
     "",
@@ -151,6 +151,11 @@
       "function": "app_private.get_overlay_events",
       "artifact": "overlay-events.explain.md",
       "note": "does not follow the list_overlay_* convention (dropped and recreated as a plain function in migration 0127 to add an OUT column, which is why it was invisible to the old convention-only scan) -- the alert stream itself, read on every overlay wake; see reviews/2026-09-16-rt-12-scan-convention-independence.md"
+    },
+    {
+      "function": "app_private.list_overlay_qr_smart_card",
+      "artifact": "qr-smart-card.explain.md",
+      "note": "new in PRF-02 slice 7, migration 0144 -- module #10 (QR Smart Card). All three scan rules cover this call independently: rule 1 by the list_overlay_* name, rule 2 because apps/api/src/db/qr-smart-card-overlay-store.ts matches the overlay filename rule, and rule 3 because apps/api/src/index.ts constructs createSqlQrSmartCardOverlayStore with derivedReadSql. The read returns exactly destination and label and nothing else -- the 2026-09-17 owner decision's \"no scan counting, and no claim about how many people scanned anything\" is enforced on the declared result type (there is no counter column to select), asserted in packages/db/tests/prf02_slice7_qr_smart_card.sql the same way 0136, 0139, 0140 and 0142 enforce theirs. The row is returned ONLY when is_enabled is true (checked inside this function, alongside the overlay_sessions gate) -- a disabled card and a channel that never configured one answer with the identical zero rows. The CREATOR-facing read/writes (app_private.upsert_qr_smart_card, set_qr_smart_card_enabled, list_channel_qr_smart_card, migration 0144) are deliberately NOT listed here: apps/api/src/db/qr-smart-card-store.ts is constructed with the main sql pool rather than derivedReadSql, its basename matches neither the overlay nor the master-canvas filename rule, and its functions are not list_overlay_*, so no scan rule reaches them -- the same structural position db/stream-mission-store.ts, db/lobby-status-store.ts and db/safe-mode-store.ts occupy"
     }
   ],
   "exemptions": [

@@ -20,6 +20,7 @@ tags:
   - name: Billing
   - name: Overlay
   - name: Companion
+  - name: CapabilityChangeManagement
   - name: Internal
 paths:
   /healthz:
@@ -2316,6 +2317,205 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/changes:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: proposeCapabilityChange
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-06/07/09 (migration 0152), platform staff only. Proposes a governed change to a
+        capability_registry row (CTL-01, migration 0149) - a brand-new capability or a change to
+        an existing one. `effectiveAt` omitted defaults to now (an unstaged change); a future
+        timestamp stages it (CTL-06) - a staged change is applied automatically the moment it is
+        both approved and due, on the next read through this plane, never by a separate
+        trigger call. `capacityClass` accepts only the same closed whitelist as the registry
+        itself (CTL-09/CTL-14): a value naming a durable-creator-record concept (payment,
+        receipt, refund, audit trail, etc.) is rejected with 400 before any row is written -
+        this panel cannot represent a correctness dimension, not merely refuse one by
+        convention. Moving an EXISTING capability from a paid min_tier (pro/creator/studio) to
+        null/free requires an additional owner sign-off approval (CTL-07 rule 2) before this
+        change can complete - see `requiresOwnerSignoff` on the response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposeCapabilityChangeRequest' }
+      responses:
+        '201':
+          description: The created (and, if immediately due, already-applied) change request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: listCapabilityChanges
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-06, platform staff only. Every due-and-approved change is applied (CTL-06's
+        read-time correctness) before this list is built, so a listing is never stale even if
+        nothing ever swept it separately.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [pending_approval, approved, applied, rejected] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Change requests, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/changes/{changeRequestId}:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: getCapabilityChange
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-06/07/08, platform staff only. Reading this change applies it first if it is
+        approved and its effectiveAt has already passed (CTL-06) - the returned `status` already
+        reflects that. `approvals` lists every recorded approval (CTL-07), including which were
+        `staff` and which was `owner`.
+      parameters:
+        - $ref: '#/components/parameters/ChangeRequestId'
+      responses:
+        '200':
+          description: The change request and its recorded approvals.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeDetailResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/changes/{changeRequestId}/approve:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: approveCapabilityChange
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-07 rule 1 (two-staff, maker-checker) and rule 2 (owner sign-off). Records one
+        approval of the given kind from the caller. The proposer of a change may never approve
+        their own change (403). `approvalKind: owner` is rejected (400) when the change does not
+        require owner sign-off (`requiresOwnerSignoff: false`). Status becomes `approved` only
+        once two DISTINCT `staff` approvals exist, plus one `owner` approval when required - and
+        immediately becomes `applied` in the same response if the change's effectiveAt has
+        already passed (CTL-06).
+      parameters:
+        - $ref: '#/components/parameters/ChangeRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveCapabilityChangeRequest' }
+      responses:
+        '200':
+          description: The change request after recording this approval.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/changes/{changeRequestId}/reject:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: rejectCapabilityChange
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Rejects a change still pending approval; a reason is required. A change that already
+        left pending_approval (approved, applied, or already rejected) cannot be rejected (409).
+      parameters:
+        - $ref: '#/components/parameters/ChangeRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectCapabilityChangeRequest' }
+      responses:
+        '200':
+          description: The rejected change request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeRequest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/{capabilityKey}/kill:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: killCapability
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-07 rule 3: single-admin global_kill. ONE platform admin, no approval round -
+        applied to the capability's kill_switch immediately, in this same call, for incident
+        response. "global_kill" here reaches the existing per-capability kill_switch
+        (capability_registry.kill_switch, migration 0149) through a fast single-admin path;
+        there is no separate all-capabilities-at-once master switch. Recorded in the same
+        change-request ledger as every governed change for one unified audit trail, but this
+        action never enters the pending_approval/staff-approval machinery.
+      parameters:
+        - $ref: '#/components/parameters/CapabilityKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KillCapabilityRequest' }
+      responses:
+        '200':
+          description: The kill change request, already applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/{capabilityKey}/revert:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: revertCapability
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-08: one-action revert to the capability's immediately-previous version, restored
+        from its own capability_registry_audit trail (migration 0149) and applied immediately by
+        ONE platform admin - no approval round. This is always a NEW forward version (never a
+        mutation or deletion of any existing audit row): reverting version 3 back to version 2's
+        values produces version 4, whose values happen to match version 2's. A capability with
+        only ever one version (nothing to revert to), or that does not exist, is a 404.
+      parameters:
+        - $ref: '#/components/parameters/CapabilityKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevertCapabilityRequest' }
+      responses:
+        '200':
+          description: The revert change request, already applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityChangeRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-widgets/{overlayId}/canvas-layout:
     get:
       tags: [Overlay]
@@ -2965,6 +3165,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ChangeRequestId:
+      name: changeRequestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CapabilityKey:
+      name: capabilityKey
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
     LobbySessionId:
       name: lobbyId
       in: path
@@ -3370,6 +3580,118 @@ components:
         capabilities:
           type: object
           additionalProperties: { type: boolean }
+    CapabilityChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [
+        schemaVersion, id, capabilityKey, changeKind, status, proposedCapacityClass,
+        proposedDescription, proposedKillSwitch, proposedRolloutPercentage, proposedMinTier,
+        effectiveAt, requiresOwnerSignoff, staffApprovalCount, ownerApprovalCount, createdBy,
+        createdAt, appliedAt, decidedAt, reason
+      ]
+      description: >-
+        CTL-06/07/08/09 (migration 0152). A single proposed-or-applied governance action over
+        public.capability_registry (migration 0149). `changeKind: update` goes through the
+        CTL-07 approval machinery; `kill` (rule 3) and `revert` (CTL-08) are always immediately
+        `status: applied` and carry zero approvals by construction. `effectiveAt` may be in the
+        future for a staged `update` (CTL-06) - it is applied automatically, on the next read
+        through this plane, the moment it is both `approved` and past `effectiveAt`.
+        `requiresOwnerSignoff` is computed once, at propose time, and never changes afterward.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        id: { type: string, format: uuid }
+        capabilityKey: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+        changeKind: { type: string, enum: [update, kill, revert] }
+        status: { type: string, enum: [pending_approval, approved, applied, rejected] }
+        proposedCapacityClass:
+          type: string
+          enum: [active_connector, active_widget, ai_usage, media_upload, custom_asset, team_seat, automation_volume, master_canvas_module]
+        proposedDescription: { type: string, minLength: 1, maxLength: 500 }
+        proposedKillSwitch: { type: boolean }
+        proposedRolloutPercentage: { type: integer, minimum: 0, maximum: 100 }
+        proposedMinTier: { oneOf: [{ type: 'null' }, { type: string, enum: [free, pro, creator, studio] }] }
+        effectiveAt: { type: string, format: date-time }
+        requiresOwnerSignoff: { type: boolean }
+        staffApprovalCount: { type: integer, minimum: 0 }
+        ownerApprovalCount: { type: integer, minimum: 0 }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        appliedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        decidedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        reason: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+    CapabilityChangeApproval:
+      type: object
+      additionalProperties: false
+      required: [id, approvalKind, approverId, approvedAt]
+      properties:
+        id: { type: string, format: uuid }
+        approvalKind: { type: string, enum: [staff, owner] }
+        approverId: { type: string, format: uuid }
+        approvedAt: { type: string, format: date-time }
+    CapabilityChangeDetailResponse:
+      description: A CapabilityChangeRequest plus every approval recorded against it (CTL-07 audit visibility).
+      allOf:
+        - $ref: '#/components/schemas/CapabilityChangeRequest'
+        - type: object
+          additionalProperties: false
+          required: [approvals]
+          properties:
+            approvals:
+              type: array
+              items: { $ref: '#/components/schemas/CapabilityChangeApproval' }
+    CapabilityChangeListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, changes]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityChangeRequest' }
+    ProposeCapabilityChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [capabilityKey, capacityClass, description]
+      description: >-
+        CTL-09: capacityClass accepts only the closed whitelist - the same nine §12.6.1
+        durable-record classes rejected by the registry itself (CTL-14) are unrepresentable
+        here too, not merely disallowed by a convention this schema could drift from.
+      properties:
+        capabilityKey: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+        capacityClass:
+          type: string
+          enum: [active_connector, active_widget, ai_usage, media_upload, custom_asset, team_seat, automation_volume, master_canvas_module]
+        description: { type: string, minLength: 1, maxLength: 500 }
+        killSwitch: { type: boolean, default: false }
+        rolloutPercentage: { type: integer, minimum: 0, maximum: 100, default: 100 }
+        minTier: { oneOf: [{ type: 'null' }, { type: string, enum: [free, pro, creator, studio] }] }
+        effectiveAt:
+          type: string
+          format: date-time
+          description: Omit for an unstaged change effective immediately (CTL-06); a future timestamp stages it.
+        reason: { type: string, maxLength: 500 }
+    ApproveCapabilityChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [approvalKind]
+      properties:
+        approvalKind: { type: string, enum: [staff, owner] }
+    RejectCapabilityChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    KillCapabilityRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string, maxLength: 500 }
+    RevertCapabilityRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: { type: string, maxLength: 500 }
     OverlayCanvasLayout:
       type: object
       additionalProperties: false

@@ -120,6 +120,12 @@ import { registerCanvasLayoutRoutes } from './routes/canvas-layout.js';
 // dashboard analytics read that happens to share a shape).
 import type { CapabilityStore } from './domain/capability-store.js';
 import { registerCapabilityRoutes } from './routes/capabilities.js';
+// CTL phase 2, Lane A (migration 0152): change management over the
+// phase-1 plane above -- staged effective-time changes, two-staff/
+// owner/single-admin approval, one-action revert. Its own file, its own
+// registrar, same posture as CTL phase 1's own capabilities.ts.
+import type { CapabilityChangeManagementStore } from './domain/capability-change-management.js';
+import { registerCapabilityChangeManagementRoutes } from './routes/capability-change-management.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -246,6 +252,9 @@ export type AppDependencies = {
   // CTL phase 1 (migration 0149). Creator/dashboard read only -- no
   // overlay counterpart in phase 1.
   capabilities?: CapabilityStore;
+  // CTL phase 2, Lane A (migration 0152). Platform-staff governance
+  // over the same registry -- staged changes, approvals, kill, revert.
+  capabilityChangeManagement?: CapabilityChangeManagementStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -476,6 +485,7 @@ export async function buildApp(
   await registerQrSmartCardRoutes(app, dependencies.sessions, dependencies.qrSmartCards, dependencies.account);
   await registerCanvasLayoutRoutes(app, dependencies.sessions, dependencies.canvasLayout, dependencies.account);
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
+  await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

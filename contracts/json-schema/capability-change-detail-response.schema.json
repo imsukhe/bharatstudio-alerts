@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/capability-change-detail-response.schema.json",
+  "title": "Capability change request detail response (CTL phase 2 Lane A, change management, migration 0152)",
+  "description": "GET /v1/admin/capability-registry/changes/{changeRequestId}. CTL-06/07/08/09's governance layer over the phase-1 capability control plane (migration 0149) -- a single proposed-or-applied change plus every approval recorded against it. changeKind 'update' goes through the CTL-07 approval machinery (staffApprovalCount/ownerApprovalCount, requiresOwnerSignoff); 'kill' (rule 3, single-admin) and 'revert' (CTL-08, one action) are always status 'applied' with zero approvals by construction. effectiveAt may be in the future for a staged 'update' (CTL-06) -- it is applied automatically on the next read through this plane once both approved and past effectiveAt, never by a separate sweep call this response shape would need to represent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema", "schemaVersion", "id", "capabilityKey", "changeKind", "status",
+    "proposedCapacityClass", "proposedDescription", "proposedKillSwitch",
+    "proposedRolloutPercentage", "proposedMinTier", "effectiveAt", "requiresOwnerSignoff",
+    "staffApprovalCount", "ownerApprovalCount", "createdBy", "createdAt", "appliedAt",
+    "decidedAt", "reason", "approvals"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "id": { "type": "string", "format": "uuid" },
+    "capabilityKey": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,99}$" },
+    "changeKind": { "enum": ["update", "kill", "revert"] },
+    "status": { "enum": ["pending_approval", "approved", "applied", "rejected"] },
+    "proposedCapacityClass": {
+      "enum": [
+        "active_connector", "active_widget", "ai_usage", "media_upload",
+        "custom_asset", "team_seat", "automation_volume", "master_canvas_module"
+      ]
+    },
+    "proposedDescription": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "proposedKillSwitch": { "type": "boolean" },
+    "proposedRolloutPercentage": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "proposedMinTier": {
+      "oneOf": [{ "type": "null" }, { "enum": ["free", "pro", "creator", "studio"] }]
+    },
+    "effectiveAt": { "type": "string", "format": "date-time" },
+    "requiresOwnerSignoff": { "type": "boolean" },
+    "staffApprovalCount": { "type": "integer", "minimum": 0 },
+    "ownerApprovalCount": { "type": "integer", "minimum": 0 },
+    "createdBy": { "type": "string", "format": "uuid" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "appliedAt": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }] },
+    "decidedAt": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }] },
+    "reason": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 500 }] },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "approvalKind", "approverId", "approvedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "approvalKind": { "enum": ["staff", "owner"] },
+          "approverId": { "type": "string", "format": "uuid" },
+          "approvedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

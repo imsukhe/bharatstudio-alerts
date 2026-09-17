@@ -1,0 +1,36 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/capability-change-detail-response.schema.json",
+  "schemaVersion": "v1",
+  "id": "00000000-0000-4000-8000-000000006c10",
+  "capabilityKey": "ctl_seat_extra_producer",
+  "changeKind": "update",
+  "status": "approved",
+  "proposedCapacityClass": "team_seat",
+  "proposedDescription": "Extra producer seat beyond plan default",
+  "proposedKillSwitch": false,
+  "proposedRolloutPercentage": 100,
+  "proposedMinTier": "pro",
+  "effectiveAt": "2026-09-18T09:00:00.000Z",
+  "requiresOwnerSignoff": false,
+  "staffApprovalCount": 2,
+  "ownerApprovalCount": 0,
+  "createdBy": "00000000-0000-4000-8000-000000006c00",
+  "createdAt": "2026-09-17T09:00:00.000Z",
+  "appliedAt": null,
+  "decidedAt": null,
+  "reason": "staged for next release window",
+  "approvals": [
+    {
+      "id": "00000000-0000-4000-8000-000000006c11",
+      "approvalKind": "staff",
+      "approverId": "00000000-0000-4000-8000-000000006c01",
+      "approvedAt": "2026-09-17T09:10:00.000Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000006c12",
+      "approvalKind": "staff",
+      "approverId": "00000000-0000-4000-8000-000000006c02",
+      "approvedAt": "2026-09-17T09:20:00.000Z"
+    }
+  ]
+}

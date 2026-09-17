@@ -75,6 +75,10 @@ import { createSqlCanvasLayoutOverlayStore } from './db/canvas-layout-overlay-st
 // widget/dashboard read (RT-10/RT-11) -- see db/capability-store.ts's
 // own header.
 import { createSqlCapabilityStore } from './db/capability-store.js';
+// CTL phase 2, Lane A (migration 0152): change management. A WRITE
+// surface (propose/approve/reject/kill/revert), so it takes the MAIN
+// pool `sql`, not derivedReadSql -- see db/capability-change-management-store.ts's own header.
+import { createSqlCapabilityChangeManagementStore } from './db/capability-change-management-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -339,6 +343,7 @@ const app = await buildApp(config, {
   creatorPackSelections: sql ? createSqlCreatorPackSelectionStore(sql) : undefined,
   ingestFailures: sql ? createSqlIngestFailureStore(sql) : undefined,
   staffCreatorPackReview: sql ? createSqlStaffCreatorPackReviewStore(sql) : undefined,
+  capabilityChangeManagement: sql ? createSqlCapabilityChangeManagementStore(sql) : undefined,
   assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,
   derivedReadSql,

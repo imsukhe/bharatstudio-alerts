@@ -822,6 +822,44 @@ function fakeOverlays(): OverlayStore {
   };
 }
 
+// Harness-only fix, Node <=22 (confirmed on the exact CI-pinned 22.17.0;
+// Node 20 shows the identical symptom, Node 24 does not; a real
+// http.listen()/http.request() run of the same fallback path on 22.17.0
+// completes normally -- see the disconnected-fallback and RT-02.1/RT-02.7
+// tests below for what independently needed this).
+//
+// Two production timers are deliberately unref'd so a real deployment's
+// already-live client socket -- never a timer -- is what keeps the event
+// loop open while a connection is idle:
+//   - src/domain/abortable-sleep.ts's fallback-jitter sleep
+//   - src/db/overlay-wakeup.ts's per-wait timeout (createOverlayWakeup)
+// That's correct: in production reply.raw is backed by a real TCP socket,
+// which always holds its own ref regardless of what any given timer does.
+// `app.inject()` (light-my-request) instead uses a mock socket that holds
+// no ref at all. When one of the above unref'd timers becomes the only
+// pending handle, Node considers the event loop "empty" before the timer
+// fires; the node:test runner then cancels the still-pending test with
+// "Promise resolution is still pending but the event loop has already
+// resolved", even though the route itself is correct and would complete
+// normally against a live client. Node 24 happens not to exhibit this
+// (something else there keeps the loop non-empty), which is exactly why
+// this was invisible locally and only surfaced in CI's pinned 22.17.0.
+//
+// The fix is scoped to the harness: hold one ordinary ref'd handle for the
+// duration of the inject() call, exactly mirroring what a real socket
+// already guarantees for free in production. This changes no timing, no
+// assertion, and no production code -- the 1s interval never fires within
+// any of these tests' short (<=200ms) windows; its only effect is stopping
+// Node from misreporting the loop as drained.
+async function keepEventLoopAliveForInject<T>(run: () => Promise<T>): Promise<T> {
+  const keepAlive = setInterval(() => {}, 1_000);
+  try {
+    return await run();
+  } finally {
+    clearInterval(keepAlive);
+  }
+}
+
 // RT-02: OverlayWakeup is now channel-keyed (`subscribe(channelId)` ->
 // { wait, release }) rather than a flat `waitForNotification(overlayId, ...)`.
 // Every pre-RT-02 test only ever cared about the timing/looping behaviour of
@@ -925,7 +963,9 @@ test('disconnected fallback replays durably with deterministic bounded jitter, t
   );
   const started = Date.now();
   const app = await buildApp({ ...config, overlayStreamWindowMs: 80, overlayPollMs: 10 }, { sessions: fakeSessions(), overlays, overlayWakeup: wakeup, overlayNow: () => Date.now(), overlayRandom: () => 0 });
-  const response = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+  // See keepEventLoopAliveForInject's doc comment: this test's fallback
+  // sleeps (abortable-sleep.ts) run their real, intentionally-unref'd timer.
+  const response = await keepEventLoopAliveForInject(() => app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } }));
   assert.equal(response.statusCode, 200);
   assert.equal(replayCalls, 3, 'initial replay plus two bounded disconnected fallbacks');
   assert.equal((response.body.match(/rt01-first/g) ?? []).length, 1);
@@ -1155,14 +1195,18 @@ test('overlay replay remains correct when the notification wake-up is unavailabl
     async acknowledge() { return true; },
   };
   const app = await buildApp({ ...config, overlayStreamWindowMs: 35, overlayPollMs: 5 }, { overlays: durableStore });
-  const stream = app.inject({
-    method: 'GET',
-    url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events',
-    headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' },
+  // See keepEventLoopAliveForInject's doc comment: no wakeup is configured
+  // here, so every wait uses abortable-sleep.ts's real, intentionally-unref'd
+  // timer.
+  const response = await keepEventLoopAliveForInject(async () => {
+    const stream = app.inject({
+      method: 'GET',
+      url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events',
+      headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' },
+    });
+    await new Promise<void>((resolve) => setTimeout(() => { committed = true; resolve(); }, 8));
+    return stream;
   });
-  await new Promise<void>((resolve) => setTimeout(() => { committed = true; resolve(); }, 8));
-
-  const response = await stream;
   assert.equal(response.statusCode, 200);
   assert.equal((response.body.match(/notification-outage-replay/g) ?? []).length, 1);
   assert.match(response.body, /Durable replay without notification/);
@@ -1310,12 +1354,18 @@ test('RT-02.1: a notification for one channel never wakes a sibling channel\'s s
     overlayWakeup: wakeup,
   });
 
-  const streamA = app.inject({ method: 'GET', url: `/v1/overlays/${overlayA}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
-  const streamB = app.inject({ method: 'GET', url: `/v1/overlays/${overlayB}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  notify?.(JSON.stringify({ channelId: channelA, eventId: 'notify-a' }));
+  // See keepEventLoopAliveForInject's doc comment: streamB is never notified,
+  // so it idles out every poll via overlay-wakeup.ts's real, intentionally
+  // unref'd per-wait timer (createOverlayWakeup is the production wakeup,
+  // used directly here, not a fake).
+  await keepEventLoopAliveForInject(async () => {
+    const streamA = app.inject({ method: 'GET', url: `/v1/overlays/${overlayA}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+    const streamB = app.inject({ method: 'GET', url: `/v1/overlays/${overlayB}/events`, headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    notify?.(JSON.stringify({ channelId: channelA, eventId: 'notify-a' }));
 
-  await Promise.all([streamA, streamB]);
+    await Promise.all([streamA, streamB]);
+  });
   await app.close();
 
   assert.equal(callsByOverlay.get(overlayA), 2, 'channel A: initial replay plus exactly one wake-triggered replay');
@@ -1398,17 +1448,23 @@ test('RT-02.7: a reached admission ceiling returns 503 overlay_admission_limited
     overlayWakeup: wakeup,
   });
 
-  const held = app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // See keepEventLoopAliveForInject's doc comment: `held` never gets a
+  // notification, so it idles out its full 200ms window via
+  // overlay-wakeup.ts's real, intentionally unref'd per-wait timer
+  // (createOverlayWakeup is the production wakeup, used directly here).
+  await keepEventLoopAliveForInject(async () => {
+    const held = app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
-  const rejected = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
-  assert.equal(rejected.statusCode, 503);
-  const body = rejected.json();
-  assert.equal(body.errorCode, 'overlay_admission_limited');
-  assert.equal(body.retryable, true);
-  assert.ok(body.traceId);
+    const rejected = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
+    assert.equal(rejected.statusCode, 503);
+    const body = rejected.json();
+    assert.equal(body.errorCode, 'overlay_admission_limited');
+    assert.equal(body.retryable, true);
+    assert.ok(body.traceId);
 
-  await held; // the first stream's window closes and releases its slot
+    await held; // the first stream's window closes and releases its slot
+  });
 
   const admittedAfterRelease = await app.inject({ method: 'GET', url: '/v1/overlays/00000000-0000-4000-8000-000000000061/events', headers: { authorization: 'Bearer synthetic-overlay-token-000000000000000000000000000000' } });
   assert.equal(admittedAfterRelease.statusCode, 200);

@@ -1066,7 +1066,25 @@ paths:
         - name: Last-Event-ID
           in: header
           required: false
-          description: Durable replay cursor returned by the previous SSE event.
+          description: >-
+            Accepted, and DELIBERATELY NOT a resume point. `EventSource` sends this header
+            automatically on every reconnect, so most clients send it without choosing to; it is
+            read, validated for shape, and then has no effect on which events come back. Replay is
+            not positional. A client must not assume events before this cursor are withheld, and
+            must remain able to receive one it has already seen.
+
+            Why, because the alternative looks safer and is not: deliveries are published out of
+            order (task enqueueing, network delivery and worker execution all complete out of
+            order), so filtering by cursor POSITION can strand an older, still-unacknowledged
+            delivery permanently once a newer one is acknowledged. Acknowledgement, not position,
+            is the eligibility filter - the read admits only 'ready' and 'displayed' deliveries and
+            excludes 'acknowledged' outright. See migration 0055, whose header states the rule, and
+            0137, which removed the two cursor parameters the SQL had ignored since 0064.
+
+            Documented here by owner decision 2026-09-16 after this field's previous description
+            ("Durable replay cursor returned by the previous SSE event") was found to assert the
+            opposite of the behaviour. Nothing about the behaviour changed; the contract had been
+            wrong, not the server.
           schema: { type: string, maxLength: 256 }
         - name: limit
           in: query

@@ -275,6 +275,29 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '503':
           $ref: '#/components/responses/RetryableFailure'
+  /v1/public/capability-matrix:
+    get:
+      tags: [Public]
+      operationId: getPublicCapabilityMatrix
+      description: >-
+        CTL-10 (migration 0160), §20.4. The one capability surface with NO token at all. Serves the
+        LATEST published, versioned snapshot (never a live query over capability_registry) - only
+        capabilities and marketing-section flags with marketingVisible = true and killSwitch = false
+        at publish time. Never capacityClass, limits, rollout, killSwitch, beta, audit rows, or
+        channel-specific data - that leak-proofing is a property of the response schema
+        (additionalProperties: false at every level) and of the underlying database function's own
+        declared return type, not a serializer trim. isMarketingSection (CTL-12) distinguishes a
+        page-region flag from a capability entry in this one shared snapshot. snapshotVersion and
+        publishedAt repeat on every entry so a caller (or a stale CDN copy) can identify which
+        published version it is looking at without a second request.
+      responses:
+        '200':
+          description: The latest published capability matrix. An empty entries array both when nothing has ever been published and when the latest snapshot has zero marketing_visible rows.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCapabilityMatrix' }
+        '503':
+          $ref: '#/components/responses/RetryableFailure'
   /v1/public/channels/{handle}/paid-votes:
     get:
       tags: [Public]
@@ -2788,6 +2811,55 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-matrix/publish:
+    post:
+      tags: [CapabilityChangeManagement]
+      operationId: publishCapabilityMatrixSnapshot
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-10/CTL-11 (migration 0160), platform staff only. Publishes a new, immutable, versioned
+        snapshot of every capability_registry row where marketingVisible and not killSwitch,
+        projected to exactly capabilityId/marketingLabel/marketingBlurb/minTier/isMarketingSection -
+        the ONLY write path for what GET /v1/public/capability-matrix serves. version is strictly
+        increasing; a caller comparing snapshotVersion across two reads of the public route can
+        identify a stale copy without a second field. After the database publish succeeds, this
+        also triggers the marketing site's own revalidation webhook (CTL-11) - a version-number
+        trigger signal only, never capability data - and reports whether that call was attempted and
+        delivered; a webhook failure never fails this request, since the snapshot is already durable
+        and already servable the moment the publish itself returns.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishCapabilityMatrixRequest' }
+      responses:
+        '200':
+          description: The newly published snapshot's summary, plus webhook delivery diagnostics.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityMatrixSnapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-matrix/snapshots:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: listCapabilityMatrixSnapshots
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL-10 (migration 0160), platform staff only. Every published snapshot's summary, newest
+        first - an internal accountability trail, not the public surface (that is
+        GET /v1/public/capability-matrix, which reads only the LATEST one of these).
+      responses:
+        '200':
+          description: Every published snapshot's summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityMatrixSnapshotList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/admin/platform-owner/{userId}:
     put:
       tags: [CapabilityChangeManagement]
@@ -4733,6 +4805,84 @@ components:
         marketingVisible: { type: boolean }
         marketingLabel: { oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }] }
         marketingBlurb: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+    PublicCapabilityMatrixEntry:
+      type: object
+      additionalProperties: false
+      required: [capabilityId, marketingLabel, marketingBlurb, minTier, isMarketingSection, snapshotVersion, publishedAt]
+      description: >-
+        CTL-10 (migration 0160). Deliberately narrower than CapabilityRegistryEntry: no
+        capacityClass, limits, beta, killSwitch, rolloutPercentage, version, or any audit field -
+        additionalProperties: false makes that a contract-level guarantee, not merely a documentation
+        claim, the same idiom this file's own FeaturedCreator schema already uses for the same
+        reason.
+      properties:
+        capabilityId: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+        marketingLabel: { oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }] }
+        marketingBlurb: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+        minTier: { oneOf: [{ type: 'null' }, { type: string, enum: [free, pro, creator, studio] }] }
+        isMarketingSection: { type: boolean, description: 'CTL-12: true means this entry is a marketing page-region flag, not a capability a creator is entitled to.' }
+        snapshotVersion: { type: integer, minimum: 1 }
+        publishedAt: { type: string, format: date-time }
+    PublicCapabilityMatrix:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, entries]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/PublicCapabilityMatrixEntry' }
+    CapabilityMatrixSnapshotSummary:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, id, version, publishedAt, publishedBy, reason, rowCount]
+      description: >-
+        CTL-10 (migration 0160). One published snapshot's summary, as listed by
+        GET /v1/admin/capability-matrix/snapshots (an internal accountability trail - never the
+        public surface).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        publishedAt: { type: string, format: date-time }
+        publishedBy: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+        reason: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+        rowCount: { type: integer, minimum: 0 }
+    CapabilityMatrixSnapshot:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, id, version, publishedAt, publishedBy, reason, rowCount, webhookAttempted, webhookDelivered]
+      description: >-
+        CTL-10/CTL-11 (migration 0160). Returned by POST /v1/admin/capability-matrix/publish only -
+        CapabilityMatrixSnapshotSummary plus this ONE call's webhook delivery diagnostics.
+        webhookAttempted/webhookDelivered are diagnostic only - a false webhookDelivered never means
+        the publish itself failed; the snapshot is already durable and already servable from
+        GET /v1/public/capability-matrix regardless.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        publishedAt: { type: string, format: date-time }
+        publishedBy: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+        reason: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+        rowCount: { type: integer, minimum: 0 }
+        webhookAttempted: { type: boolean }
+        webhookDelivered: { type: boolean }
+    CapabilityMatrixSnapshotList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, snapshots]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        snapshots:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityMatrixSnapshotSummary' }
+    PublishCapabilityMatrixRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
     SetPlatformOwnerRequest:
       type: object
       additionalProperties: false

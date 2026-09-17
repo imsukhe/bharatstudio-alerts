@@ -80,6 +80,16 @@ export type RuntimeConfig = {
   resendApiKey?: string;
   resendFromAddress?: string;
   resendEndpoint?: string;
+  // CTL-11 (migration 0160): the marketing build's own revalidation
+  // endpoint. CONFIGURED BUT UNSET -- no marketing deployment URL is
+  // invented here (same posture as mediaCdnBaseUrl above). Unset means
+  // the webhook call is a deliberate no-op after a publish, never a
+  // silent failure.
+  marketingRevalidateWebhookUrl?: string;
+  // A shared secret sent as a header on the outbound call so the
+  // marketing endpoint can verify the call came from this API -- never
+  // capability data. CONFIGURED BUT UNSET.
+  marketingRevalidateWebhookSecret?: string;
 };
 
 const allowedEnvironments = new Set<RuntimeConfig['nodeEnv']>([
@@ -281,6 +291,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       throw new Error('RESEND_ENDPOINT must be an HTTPS URL');
     }
   }
+  // CTL-11: the marketing build's revalidation endpoint. Unset in every
+  // environment today -- no marketing deployment URL has been decided or
+  // provisioned. See the RuntimeConfig field comment above.
+  const marketingRevalidateWebhookUrl = env.MARKETING_REVALIDATE_WEBHOOK_URL;
+  if (marketingRevalidateWebhookUrl) {
+    try {
+      if (new URL(marketingRevalidateWebhookUrl).protocol !== 'https:') throw new Error('not https');
+    } catch {
+      throw new Error('MARKETING_REVALIDATE_WEBHOOK_URL must be an HTTPS URL');
+    }
+  }
+  const marketingRevalidateWebhookSecret = env.MARKETING_REVALIDATE_WEBHOOK_SECRET;
 
   return {
     nodeEnv,
@@ -307,6 +329,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     paymentServiceAudience,
     internalServiceAudiences,
     notificationTokenEncryptionKey,
+    marketingRevalidateWebhookUrl,
+    marketingRevalidateWebhookSecret,
     publicPaymentTurnstileRequired,
     publicPaymentTurnstileSecret,
     sarvamApiKey,

@@ -85,6 +85,12 @@ import { createSqlCapabilityChangeManagementStore } from './db/capability-change
 // own posture), not the two-staff-approved staged workflow above -- see
 // db/capability-registry-admin-store.ts's own header.
 import { createSqlCapabilityRegistryAdminStore } from './db/capability-registry-admin-store.js';
+// CTL-10/CTL-11 (migration 0160): the public capability matrix (read),
+// its staff publish/list surface, and the outbound marketing-
+// revalidation webhook trigger.
+import { createSqlPublicCapabilityMatrixRepository } from './db/public-capability-matrix-store.js';
+import { createSqlCapabilityMatrixAdminStore } from './db/capability-matrix-admin-store.js';
+import { createFetchMarketingRevalidateWebhook } from './notifications/marketing-revalidate-webhook.js';
 // Migration 0155, Job 1/2: real platform-owner identity and §20.6.1's
 // emergency global_kill path. Both single-admin-reachable, main pool.
 import { createSqlPlatformOwnerStore } from './db/platform-owner-store.js';
@@ -375,6 +381,12 @@ const app = await buildApp(config, {
   staffCreatorPackReview: sql ? createSqlStaffCreatorPackReviewStore(sql) : undefined,
   capabilityChangeManagement: sql ? createSqlCapabilityChangeManagementStore(sql) : undefined,
   capabilityRegistryAdmin: sql ? createSqlCapabilityRegistryAdminStore(sql) : undefined,
+  publicCapabilityMatrix: sql ? createSqlPublicCapabilityMatrixRepository(sql) : undefined,
+  capabilityMatrixAdmin: sql ? createSqlCapabilityMatrixAdminStore(sql) : undefined,
+  // Constructed unconditionally (does not depend on `sql`) -- a missing
+  // MARKETING_REVALIDATE_WEBHOOK_URL makes every call a deliberate
+  // no-op, not a missing dependency. See config.ts's own field comment.
+  marketingRevalidateWebhook: createFetchMarketingRevalidateWebhook(config.marketingRevalidateWebhookUrl, config.marketingRevalidateWebhookSecret),
   platformOwner: sql ? createSqlPlatformOwnerStore(sql) : undefined,
   platformAdmin: sql ? createSqlPlatformAdminStore(sql) : undefined,
   capabilityKillEvents: sql ? createSqlCapabilityKillEventStore(sql) : undefined,

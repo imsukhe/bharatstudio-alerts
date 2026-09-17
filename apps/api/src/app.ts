@@ -140,6 +140,19 @@ import { registerCapabilityChangeManagementRoutes } from './routes/capability-ch
 // for why. Its own file, its own registrar.
 import type { CapabilityRegistryAdminStore } from './domain/capability-registry-admin.js';
 import { registerCapabilityRegistryAdminRoutes } from './routes/capability-registry-admin.js';
+// CTL-10 (migration 0160): the public, unauthenticated capability
+// matrix -- §20.4. Own file, own store, no auth pre-handler at all --
+// see routes/public-capability-matrix.ts for why that omission is the
+// contract.
+import type { PublicCapabilityMatrixRepository } from './domain/public-capability-matrix.js';
+import { registerPublicCapabilityMatrixRoutes } from './routes/public-capability-matrix.js';
+// CTL-10/CTL-11 (migration 0160): the staff publish surface behind the
+// public matrix, plus the outbound marketing-revalidation webhook
+// trigger. Its own file, its own registrar -- the staff half of the
+// same plane routes/public-capability-matrix.ts serves publicly.
+import type { CapabilityMatrixAdminStore } from './domain/capability-matrix-admin.js';
+import type { MarketingRevalidateWebhook } from './domain/marketing-revalidate-webhook.js';
+import { registerCapabilityMatrixAdminRoutes } from './routes/capability-matrix-admin.js';
 // Migration 0155, Job 1: real platform-owner identity -- the ONE write
 // path for app_users.is_platform_owner (never self-conferred, always
 // audited). Its own file, its own registrar.
@@ -307,6 +320,13 @@ export type AppDependencies = {
   // §20.2 field writes -- see the import site above for why this is a
   // separate surface from capabilityChangeManagement.
   capabilityRegistryAdmin?: CapabilityRegistryAdminStore;
+  // CTL-10 (migration 0160). The public, unauthenticated read.
+  publicCapabilityMatrix?: PublicCapabilityMatrixRepository;
+  // CTL-10/CTL-11 (migration 0160). Staff publish + snapshot listing.
+  capabilityMatrixAdmin?: CapabilityMatrixAdminStore;
+  // CTL-11 (migration 0160). Outbound trigger only, called after a
+  // successful publish -- see domain/marketing-revalidate-webhook.ts.
+  marketingRevalidateWebhook?: MarketingRevalidateWebhook;
   // Migration 0155, Job 1. The one write path for app_users.
   // is_platform_owner.
   platformOwner?: PlatformOwnerStore;
@@ -557,6 +577,8 @@ export async function buildApp(
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
   await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
   await registerCapabilityRegistryAdminRoutes(app, dependencies.sessions, dependencies.capabilityRegistryAdmin, dependencies.admin);
+  await registerPublicCapabilityMatrixRoutes(app, dependencies.publicCapabilityMatrix);
+  await registerCapabilityMatrixAdminRoutes(app, dependencies.sessions, dependencies.capabilityMatrixAdmin, dependencies.marketingRevalidateWebhook, dependencies.admin);
   await registerPlatformOwnerRoutes(app, dependencies.sessions, dependencies.platformOwner, dependencies.admin);
   await registerPlatformAdminRoutes(app, dependencies.sessions, dependencies.platformAdmin, dependencies.admin);
   await registerCapabilityKillEventRoutes(app, dependencies.sessions, dependencies.capabilityKillEvents, dependencies.admin);

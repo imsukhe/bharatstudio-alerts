@@ -69,6 +69,7 @@ const fixtureToSchema = {
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',
   'public-receipt-response.json': 'public-receipt-response.schema.json',
   'public-featured-creators.json': 'public-featured-creators.schema.json',
+  'public-capability-matrix.json': 'public-capability-matrix.schema.json',
   'public-profile-response.json': 'public-profile-response.schema.json',
   'public-vote-response.json': 'public-vote-response.schema.json',
   'public-paid-vote-list.json': 'public-paid-vote-list.schema.json',
@@ -1074,6 +1075,29 @@ const featuredWithInternalIdentifier = JSON.parse(await fs.readFile(path.join(fi
 featuredWithInternalIdentifier.creators[0].channelId = '00000000-0000-4000-8000-000000000011';
 if (featuredCreatorsValidator(featuredWithInternalIdentifier)) {
   failures.push('public-featured-creators.json: internal channel identifier was accepted');
+}
+
+const publicCapabilityMatrixSchema = await loadSchema('public-capability-matrix.schema.json');
+const publicCapabilityMatrixValidator = ajv.getSchema(publicCapabilityMatrixSchema.$id);
+const capabilityMatrixWithCapacityClass = JSON.parse(await fs.readFile(path.join(fixtureDir, 'public-capability-matrix.json'), 'utf8'));
+capabilityMatrixWithCapacityClass.entries[0].capacityClass = 'active_widget';
+if (publicCapabilityMatrixValidator(capabilityMatrixWithCapacityClass)) {
+  failures.push('public-capability-matrix.json: capacityClass (CTL-14 internal taxonomy) was accepted in the public capability matrix');
+}
+const capabilityMatrixWithLimits = JSON.parse(await fs.readFile(path.join(fixtureDir, 'public-capability-matrix.json'), 'utf8'));
+capabilityMatrixWithLimits.entries[0].limits = { max_instances: 3 };
+if (publicCapabilityMatrixValidator(capabilityMatrixWithLimits)) {
+  failures.push('public-capability-matrix.json: limits was accepted in the public capability matrix');
+}
+const capabilityMatrixWithKillSwitch = JSON.parse(await fs.readFile(path.join(fixtureDir, 'public-capability-matrix.json'), 'utf8'));
+capabilityMatrixWithKillSwitch.entries[0].killSwitch = false;
+if (publicCapabilityMatrixValidator(capabilityMatrixWithKillSwitch)) {
+  failures.push('public-capability-matrix.json: killSwitch was accepted in the public capability matrix');
+}
+const capabilityMatrixWithRollout = JSON.parse(await fs.readFile(path.join(fixtureDir, 'public-capability-matrix.json'), 'utf8'));
+capabilityMatrixWithRollout.entries[0].rolloutPercentage = 50;
+if (publicCapabilityMatrixValidator(capabilityMatrixWithRollout)) {
+  failures.push('public-capability-matrix.json: rolloutPercentage was accepted in the public capability matrix');
 }
 
 const publicVoteSchema = await loadSchema('public-vote-response.schema.json');

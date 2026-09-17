@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/public-capability-matrix.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "entries"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capabilityId", "marketingLabel", "marketingBlurb", "minTier", "isMarketingSection", "snapshotVersion", "publishedAt"],
+        "properties": {
+          "capabilityId": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[a-z][a-z0-9_]{0,99}$" },
+          "marketingLabel": { "type": ["string", "null"], "maxLength": 200 },
+          "marketingBlurb": { "type": ["string", "null"], "maxLength": 500 },
+          "minTier": { "enum": ["free", "pro", "creator", "studio", null] },
+          "isMarketingSection": { "type": "boolean" },
+          "snapshotVersion": { "type": "integer", "minimum": 1 },
+          "publishedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

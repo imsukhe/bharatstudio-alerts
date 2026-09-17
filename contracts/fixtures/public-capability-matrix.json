@@ -1,0 +1,24 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/public-capability-matrix.schema.json",
+  "schemaVersion": "v1",
+  "entries": [
+    {
+      "capabilityId": "widget_wins_this_season",
+      "marketingLabel": "Wins This Season",
+      "marketingBlurb": "Shows the creator's win count for the current season on stream.",
+      "minTier": "pro",
+      "isMarketingSection": false,
+      "snapshotVersion": 1,
+      "publishedAt": "2026-09-17T09:00:00.000Z"
+    },
+    {
+      "capabilityId": "marketing_pricing_hero",
+      "marketingLabel": "Pricing Hero",
+      "marketingBlurb": "The pricing page hero section.",
+      "minTier": null,
+      "isMarketingSection": true,
+      "snapshotVersion": 1,
+      "publishedAt": "2026-09-17T09:00:00.000Z"
+    }
+  ]
+}

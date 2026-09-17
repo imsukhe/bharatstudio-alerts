@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after, before } from 'node:test';
 import http from 'node:http';
 import { buildApp } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
@@ -851,13 +851,18 @@ function fakeOverlays(): OverlayStore {
 // assertion, and no production code -- the 1s interval never fires within
 // any of these tests' short (<=200ms) windows; its only effect is stopping
 // Node from misreporting the loop as drained.
+// Scoped to the whole FILE, not to individual calls. Per-call wrapping was the
+// first attempt and it is not enough: which test is holding the only pending
+// handle when Node decides the loop is drained depends on machine speed, so a
+// wrapped set that passed on a 16-core laptop still cancelled twelve tests on
+// a GitHub runner. A file-scoped ref'd handle removes the timing dependence
+// entirely. `after` releases it, so the process still exits normally.
+let keepEventLoopAlive: ReturnType<typeof setInterval> | undefined;
+before(() => { keepEventLoopAlive = setInterval(() => {}, 1_000); });
+after(() => { if (keepEventLoopAlive) clearInterval(keepEventLoopAlive); });
+
 async function keepEventLoopAliveForInject<T>(run: () => Promise<T>): Promise<T> {
-  const keepAlive = setInterval(() => {}, 1_000);
-  try {
-    return await run();
-  } finally {
-    clearInterval(keepAlive);
-  }
+  return run();
 }
 
 // RT-02: OverlayWakeup is now channel-keyed (`subscribe(channelId)` ->

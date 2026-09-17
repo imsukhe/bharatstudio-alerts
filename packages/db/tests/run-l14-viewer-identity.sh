@@ -23,7 +23,17 @@ docker run --rm --detach --name "$CONTAINER" \
 
 ready=0
 for _attempt in $(seq 1 60); do
-  if docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+  # A fresh postgres image runs a TEMPORARY server during initdb, and this
+  # pg_isready can catch that server's brief readiness window moments before
+  # its socket disappears -- the next psql then fails with "No such file or
+  # directory" while nothing is actually broken. It is a race, so it passes
+  # most runs and fails some; it took CI's first two runs ever to expose it.
+  # Every fresh container logs "database system is ready to accept
+  # connections" exactly twice (temporary, then real); only the second one,
+  # confirmed by a following pg_isready, is the real server. Same guard as
+  # packages/db/tests/run-sql-suite.sh.
+  if [ "$(docker logs "$CONTAINER" 2>&1 | grep -c 'database system is ready to accept connections')" -ge 2 ] \
+    && docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -43,8 +53,21 @@ psql < "$ROOT/packages/db/migrations/0001_v1_baseline.sql" >/dev/null
 psql < "$ROOT/packages/db/migrations/0002_v1_security_rls_archive.sql" >/dev/null
 psql < "$ROOT/packages/db/tests/l02_security_remediations.sql"
 
+# The ceiling used to be hardcoded at 85, which silently froze this suite at
+# the schema of the day it was written. Migration 0112 later bounded
+# app_private.list_viewer_sessions to 100 rows; this harness never applied it,
+# so its own "must cap at 100 rows" assertion failed against 0085's unbounded
+# function -- and because this script is wired into neither CI nor
+# `pnpm verify:local`, nothing ever reported it. Default to every committed
+# migration, exactly as run-l03-application-behavior.sh does, and keep the
+# explicit numeric filter (never an unbounded directory glob) so a mid-write
+# file above the intended baseline can still be excluded on demand via
+# MAX_MIGRATION.
+MAX_MIGRATION_NUMBER=${MAX_MIGRATION:-$(ls "$ROOT"/packages/db/migrations/*.sql | sed 's#.*/##' | cut -c1-4 | sort -n | tail -1)}
+MAX_MIGRATION_NUMBER=$((10#$MAX_MIGRATION_NUMBER))
+
 n=3
-while [ "$n" -le 85 ]; do
+while [ "$n" -le "$MAX_MIGRATION_NUMBER" ]; do
   padded=$(printf '%04d' "$n")
   match=$(find "$ROOT/packages/db/migrations" -maxdepth 1 -name "${padded}_*.sql" | head -1)
   if [ -n "$match" ]; then

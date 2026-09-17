@@ -21,7 +21,17 @@ docker run --rm --detach --name "$CONTAINER" \
 
 ready=0
 for _attempt in $(seq 1 60); do
-  if docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+  # A fresh postgres image runs a TEMPORARY server during initdb, and this
+  # pg_isready can catch that server's brief readiness window moments before
+  # its socket disappears -- the next psql then fails with "No such file or
+  # directory" while nothing is actually broken. It is a race, so it passes
+  # most runs and fails some; it took CI's first two runs ever to expose it.
+  # Every fresh container logs "database system is ready to accept
+  # connections" exactly twice (temporary, then real); only the second one,
+  # confirmed by a following pg_isready, is the real server. Same guard as
+  # packages/db/tests/run-sql-suite.sh.
+  if [ "$(docker logs "$CONTAINER" 2>&1 | grep -c 'database system is ready to accept connections')" -ge 2 ] \
+    && docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
     ready=1
     break
   fi

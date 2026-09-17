@@ -176,6 +176,20 @@ jobs:
         run: pnpm db:test:all
       - name: db:test:l03
         run: pnpm db:test:l03
+      # These four suites existed, passed and were wired into nothing -- not
+      # this workflow and not `pnpm verify:local`. run-l14-viewer-identity.sh
+      # was in fact FAILING the whole time (its hardcoded migration ceiling of
+      # 0085 predated migration 0112's 100-row bound, so its own cap assertion
+      # ran against the unbounded function) and nothing reported it. The §2
+      # pattern applied to the test harness itself.
+      - name: db:test:l14-viewer-identity
+        run: sh packages/db/tests/run-l14-viewer-identity.sh
+      - name: db:test:l14-viewer-password-reset
+        run: sh packages/db/tests/run-l14-viewer-password-reset.sh
+      - name: db:test:l15-youtube-connectors
+        run: sh packages/db/tests/run-l15-youtube-connectors.sh
+      - name: fixtures self-test
+        run: sh scripts/fixtures/run-self-test.sh
 
   # sh scripts/load/run-l09-load-self-test.sh · run-l09-fault-self-test.sh —
   # each boots its own disposable postgres:16-alpine container.

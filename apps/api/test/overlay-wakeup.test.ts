@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after, before } from 'node:test';
 import { createOverlayWakeup } from '../src/db/overlay-wakeup.js';
 
 test('direct overlay wake-up reconnects after listener failure and reports health', async () => {
@@ -98,15 +98,15 @@ test('listener rejection rejects every outstanding waiter across every channel, 
 // handle for the test's duration, standing in for the socket production always
 // has. No timing, no assertion and no production code changes -- the 1s
 // interval cannot fire inside these millisecond-scale tests.
+// File-scoped rather than per-test: see app.test.ts's note -- which test holds
+// the last pending handle is machine-speed dependent, so per-test wrapping
+// passed locally and still cancelled tests on a slower CI runner.
+let keepEventLoopAlive: ReturnType<typeof setInterval> | undefined;
+before(() => { keepEventLoopAlive = setInterval(() => {}, 1_000); });
+after(() => { if (keepEventLoopAlive) clearInterval(keepEventLoopAlive); });
+
 function refdTest(name: string, fn: () => Promise<void>): void {
-  test(name, async () => {
-    const keepAlive = setInterval(() => {}, 1_000);
-    try {
-      await fn();
-    } finally {
-      clearInterval(keepAlive);
-    }
-  });
+  test(name, fn);
 }
 
 refdTest('RT-02.1: a notification wakes only the subscribers of its own channel', async () => {

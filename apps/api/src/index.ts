@@ -53,6 +53,8 @@ import { createSqlLobbyStatusOverlayStore } from './db/lobby-status-overlay-stor
 // Two files, two pools, deliberately -- see each store file's own header.
 import { createSqlGiveawayTournamentStore } from './db/giveaway-tournament-store.js';
 import { createSqlGiveawayTournamentOverlayStore } from './db/giveaway-tournament-overlay-store.js';
+import { createSqlSafeSoundboardStore } from './db/safe-soundboard-store.js';
+import { createSqlSafeSoundboardOverlayStore } from './db/safe-soundboard-overlay-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -212,6 +214,30 @@ const app = await buildApp(config, {
   // the SQL test can prove it, and nothing here may add a second copy.
   giveawayTournaments: sql ? createSqlGiveawayTournamentStore(sql) : undefined,
   overlayGiveawayTournament: sql ? createSqlGiveawayTournamentOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 7, §6 module #6 (Safe Soundboard Alert).
+  //
+  // The creator store carries writes, so it uses the MAIN pool exactly
+  // as giveawayTournaments/lobbySessions do -- which also keeps it
+  // correctly outside rule 3 of the RT-12 required-queries scan. The
+  // overlay store is a derived read on the RT-10/RT-11 derivedReadSql
+  // pool like every other widget/overlay read, which is what puts it
+  // INSIDE rule 3. Neither is constructed with a tier: the §30.3 Pro+
+  // module gate is app_private.soundboard_module_entitled, called from
+  // inside app_private.list_overlay_soundboard_play (migration 0143),
+  // where the SQL test proves it.
+  //
+  // `mediaCdnBaseUrl` is CONFIGURED BUT UNSET in every environment
+  // today (§19.1) -- the overlay store resolves a null playbackUrl until
+  // it is set.
+  safeSoundboard: sql ? createSqlSafeSoundboardStore(sql) : undefined,
+  overlaySafeSoundboard: sql ? createSqlSafeSoundboardOverlayStore(derivedReadSql!, config.mediaCdnBaseUrl) : undefined,
+  // Duration/byte-size upload caps, CONFIGURED BUT UNSET in every
+  // environment today -- no decided value exists (migration 0143's
+  // header). No `??` fallback here and there must not be one.
+  safeSoundboardUploadCaps: {
+    maxDurationSeconds: config.soundboardUploadMaxDurationSeconds,
+    maxByteSize: config.soundboardUploadMaxByteSize,
+  },
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;
   // the overlay store is a derived read and uses derivedReadSql, which is

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-safe-soundboard-response.schema.json",
+  "title": "Overlay safe soundboard response (PRF-02 slice 7, catalogue module #6)",
+  "description": "The overlay-facing projection of a channel's single most recent creator-triggered soundboard play, scoped by the overlay session token. The module name describes the PLAYBACK being safe for a broadcast, never the CONTENT being vetted -- no field here, and no field anywhere in this schema, may claim a clip is safe, approved, checked, reviewed, vetted or curated. Seven fields and nothing else: no viewer, supporter or session identifier exists on this path, and none exists in the schema behind it either -- playId is an opaque event id for client-side de-duplication only, never an identity. playbackUrl is resolved by the API from a content-addressed GCS object key against the server's OWN configured CDN base (19.1), never a caller- or database-supplied URL, and is null whenever that base is not configured -- which is every environment today. Duration and file-size upload caps are likewise configured but unset: the upload path they gate is inert until a value exists, never treated as unlimited. This returns the single most recent trigger, not a never-drop queue, and no cooldown is applied -- none is decided anywhere in this repository. A null soundboardPlay is what an unrecognised, expired, revoked or foreign overlay token returns, what a channel that has triggered nothing returns, and what a channel without the 30.3 Pro+ entitlement returns -- all of them mean paint nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "soundboardPlay"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "soundboardPlay": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "playId", "clipKind", "displayName", "playbackUrl", "mimeType", "durationSeconds", "triggeredAt"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "playId": { "type": "string", "format": "uuid" },
+            "clipKind": { "type": "string", "enum": ["catalogue", "upload"] },
+            "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "playbackUrl": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "format": "uri" }
+              ]
+            },
+            "mimeType": { "type": "string", "pattern": "^audio/[a-z0-9.+-]+$" },
+            "durationSeconds": { "type": "integer", "minimum": 1 },
+            "triggeredAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

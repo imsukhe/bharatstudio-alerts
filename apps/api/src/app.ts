@@ -91,6 +91,8 @@ import { registerLobbySessionRoutes } from './routes/lobby-session.js';
 // route file; the OVERLAY read is a Master Canvas module read and lives in
 // routes/master-canvas.ts.
 import type { GiveawayTournamentStore, GiveawayTournamentOverlayStore } from './domain/giveaway-tournament-store.js';
+import type { SafeSoundboardStore, SafeSoundboardOverlayStore } from './domain/safe-soundboard-store.js';
+import { registerSafeSoundboardRoutes, type SafeSoundboardUploadCaps } from './routes/safe-soundboard.js';
 import { registerGiveawayTournamentRoutes } from './routes/giveaway-tournament.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
@@ -182,6 +184,18 @@ export type AppDependencies = {
   // app_private.list_overlay_giveaway_tournament (migration 0142) alone.
   giveawayTournaments?: GiveawayTournamentStore;
   overlayGiveawayTournament?: GiveawayTournamentOverlayStore;
+  // PRF-02 slice 7, §6 catalogue module #6 (Safe Soundboard Alert). The
+  // creator store is a write/read surface on the main pool; the overlay
+  // store is a derived read on RT-10/RT-11's derivedReadSql pool. Neither
+  // is tier-gated in TypeScript: the §30.3 Pro+ module gate is
+  // app_private.soundboard_module_entitled, called from inside
+  // app_private.list_overlay_soundboard_play (migration 0143) alone.
+  safeSoundboard?: SafeSoundboardStore;
+  overlaySafeSoundboard?: SafeSoundboardOverlayStore;
+  // Duration/byte-size upload caps, CONFIGURED BUT UNSET in every
+  // environment today (no decided value exists -- see migration 0143's
+  // header). Threaded from config.ts through index.ts.
+  safeSoundboardUploadCaps?: SafeSoundboardUploadCaps;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -393,11 +407,12 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
-  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlaySafeSoundboard);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerSafeModeRoutes(app, dependencies.sessions, dependencies.safeMode, dependencies.account);
   await registerLobbySessionRoutes(app, dependencies.sessions, dependencies.lobbySessions, dependencies.account);
   await registerGiveawayTournamentRoutes(app, dependencies.sessions, dependencies.giveawayTournaments, dependencies.account);
+  await registerSafeSoundboardRoutes(app, dependencies.sessions, dependencies.safeSoundboard, dependencies.account, dependencies.safeSoundboardUploadCaps);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

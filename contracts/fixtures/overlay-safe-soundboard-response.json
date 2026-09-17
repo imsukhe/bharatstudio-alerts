@@ -1,0 +1,14 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-safe-soundboard-response.schema.json",
+  "schemaVersion": "v1",
+  "soundboardPlay": {
+    "schemaVersion": "v1",
+    "playId": "00000000-0000-4000-8000-000000005c91",
+    "clipKind": "catalogue",
+    "displayName": "Air Horn",
+    "playbackUrl": "https://cdn.bharatstudio.in/soundboard/catalogue/sb-air-horn",
+    "mimeType": "audio/mpeg",
+    "durationSeconds": 3,
+    "triggeredAt": "2026-09-17T10:00:00.000Z"
+  }
+}

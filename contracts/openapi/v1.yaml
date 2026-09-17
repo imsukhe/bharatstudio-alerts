@@ -1642,6 +1642,181 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/safe-soundboard:
+    get:
+      tags: [Overlay]
+      operationId: getOverlaySafeSoundboard
+      summary: The single most recent creator-triggered soundboard play.
+      description: >-
+        Master Canvas module #6 (Safe Soundboard Alert). The name describes the PLAYBACK
+        being safe for a broadcast, never the CONTENT being vetted - no field here, and no
+        field anywhere in this API, may claim a clip is safe, approved, checked, reviewed,
+        vetted or curated. A creator's own uploaded clip plays with no review step.
+
+        Seven fields and nothing else: playId (an opaque event id for client-side
+        de-duplication only, never an identity), clipKind, displayName, playbackUrl,
+        mimeType, durationSeconds and triggeredAt. No viewer, supporter or session identifier
+        exists on this path, and none exists in the schema behind it either.
+
+        playbackUrl is resolved by the API from a content-addressed GCS object key against
+        the server's OWN configured CDN base (19.1) - never a caller- or database-supplied
+        URL - and is null whenever that base is not configured, which is every environment
+        today. Duration and file-size upload caps are likewise configured but unset: the
+        upload path they gate is inert until a value exists, never treated as unlimited.
+
+        QUEUE, STATED PLAINLY: this returns the single most recent trigger, not a never-drop
+        queue - the overlay client remembers the last playId it has played and treats a
+        repeat as a no-op. No cooldown is applied; none is decided anywhere in this
+        repository. There is no supporter-triggered path in this slice (AUD-03 stays open) -
+        every trigger here is the creator's own.
+
+        Entitlement is Pro or above (30.3 "Sound Moments (catalogue)"): the check is
+        migration 0143's app_private.soundboard_module_entitled, called from inside this
+        read rather than reimplemented, so an unentitled channel's valid overlay token
+        returns null - as do an unrecognised, expired, revoked or foreign token and a
+        channel that has triggered nothing.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: The most recent soundboard play for this overlay, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlaySafeSoundboardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/soundboard/catalogue:
+    get:
+      tags: [Soundboard]
+      operationId: getChannelSoundboardCatalogue
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The full first-party soundboard catalogue with this channel's enable/disable state.
+        Available at every tier (12.6): storing, viewing and managing a durable creator
+        record is never tier-gated - the 30.3 Pro+ entitlement governs only whether the
+        Master Canvas renders the card, and lives in the overlay read alone.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Every catalogue entry, resolved against this channel's disables.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoundboardCatalogueListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/soundboard/catalogue/{entryId}:
+    put:
+      tags: [Soundboard]
+      operationId: setChannelSoundboardCatalogueEntryEnabled
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Enables or disables one catalogue entry for this channel. Owner/admin only, and not
+        tier-gated. A single insert/delete, live on the very next read - no cache, no
+        propagation step.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SoundboardEntryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ToggleSoundboardCatalogueEntryRequest' }
+      responses:
+        '200':
+          description: The full catalogue after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoundboardCatalogueListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/soundboard/uploads:
+    get:
+      tags: [Soundboard]
+      operationId: getChannelSoundboardUploads
+      security: [{ bearerAuth: [] }]
+      description: This channel's own uploaded clips. Available at every tier (12.6).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: This channel's uploaded clips.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoundboardUploadListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Soundboard]
+      operationId: uploadChannelSoundboardClip
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Uploads a creator's own clip. Owner/admin only. NO REVIEW STEP: a successful 201
+        means the clip is immediately triggerable - there is no status, moderationState,
+        approved or reviewedAt field anywhere in this API for a clip to be pending in.
+
+        Duration and file-size caps are read from server configuration, never from this
+        request, and are CONFIGURED BUT UNSET in every environment today - the mechanism
+        exists and reads its value from config, and with no value set, every upload is
+        refused with soundboard_uploads_not_configured regardless of the clip. Unset never
+        means unlimited.
+
+        rightsAttested is a positive rights attestation (18.2, AUD-06), recorded with a
+        timestamp; a missing or false attestation is refused before any cap is even checked.
+        additionalProperties is false deliberately: a body carrying a status, moderation or
+        review field, or a client-supplied cap, is rejected before the store is reached.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadSoundboardClipRequest' }
+      responses:
+        '201':
+          description: The uploaded clip.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SoundboardUploadResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/soundboard/play:
+    post:
+      tags: [Soundboard]
+      operationId: triggerChannelSoundboardPlay
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The creator triggers playback of one of their own available clips - a first-party
+        catalogue entry (tier-eligible and not disabled) or one of their own uploads. Owner/
+        admin only. Exactly one of catalogueEntryId / uploadId is required; a body carrying
+        both, neither, or a supporter/viewer field is rejected before the store is reached.
+        No cooldown is applied - none is decided anywhere in this repository. There is no
+        supporter-triggered path in this slice (AUD-03 stays open); every trigger here is
+        the creator's own.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriggerSoundboardPlayRequest' }
+      responses:
+        '201':
+          description: The triggered play's id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TriggerSoundboardPlayResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -2270,6 +2445,11 @@ components:
       schema: { type: string, format: uuid }
     TournamentId:
       name: tournamentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SoundboardEntryId:
+      name: entryId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -2923,6 +3103,161 @@ components:
       properties:
         currentRound: { type: integer, minimum: 1, maximum: 3 }
         completedMatchesInRound: { type: integer, minimum: 0, maximum: 4 }
+    OverlaySoundboardPlay:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, playId, clipKind, displayName, playbackUrl, mimeType, durationSeconds, triggeredAt]
+      description: >-
+        The single most recent creator-triggered soundboard play (6, module #6). Seven fields,
+        12.7-bounded to the current trigger only - not a never-drop queue. No viewer, supporter
+        or session identifier exists on this path, and none exists in the schema behind it
+        either. playId is an opaque event id for client-side de-duplication only, never an
+        identity.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        playId: { type: string, format: uuid }
+        clipKind: { type: string, enum: [catalogue, upload] }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        playbackUrl:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: uri
+          description: >-
+            Resolved by the API from a content-addressed GCS object key against the server's
+            OWN configured CDN base (19.1) - never a caller- or database-supplied URL. Null
+            whenever that base is not configured, which is every environment today.
+        mimeType: { type: string, pattern: '^audio/[a-z0-9.+-]+$' }
+        durationSeconds: { type: integer, minimum: 1 }
+        triggeredAt: { type: string, format: date-time }
+    OverlaySafeSoundboardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, soundboardPlay]
+      description: >-
+        A null soundboardPlay is a valid answer, and is what an unrecognised, expired, revoked
+        or foreign overlay token returns, what a channel that has triggered nothing returns,
+        and what a channel without the 30.3 Pro+ entitlement returns.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        soundboardPlay:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlaySoundboardPlay'
+    SoundboardCatalogueEntry:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, id, externalKey, displayName, category, minTier, byteSize, durationSeconds, enabled, updatedAt]
+      description: >-
+        A first-party catalogue entry BharatStudio authors, metadata only (19.1: GCS/CDN,
+        Postgres never holds the bytes - there is no byte payload anywhere on this schema).
+        enabled reflects only this channel's own presence-based disable; it is never
+        tier-gated (12.6) - what 30.3's Pro+ entitlement gates is whether the CANVAS renders
+        the card, on the overlay read alone.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        id: { type: string, format: uuid }
+        externalKey: { type: string, minLength: 1, maxLength: 64 }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        category: { type: string, minLength: 1, maxLength: 60 }
+        minTier: { type: string, enum: [free, pro, creator, studio] }
+        byteSize: { type: integer, minimum: 1 }
+        durationSeconds: { type: integer, minimum: 1 }
+        enabled: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+    SoundboardCatalogueListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, entries]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/SoundboardCatalogueEntry' }
+    ToggleSoundboardCatalogueEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    SoundboardUpload:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, id, displayName, byteSize, durationSeconds, uploadedAt]
+      description: >-
+        A creator's own uploaded clip, metadata only (19.1). Playable the instant this record
+        exists - there is no status, moderationState, approved or reviewedAt field anywhere in
+        this schema for a clip to be pending in (2026-09-17 decision).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        id: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        byteSize: { type: integer, minimum: 1 }
+        durationSeconds: { type: integer, minimum: 1 }
+        uploadedAt: { type: string, format: date-time }
+    SoundboardUploadListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, uploads]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        uploads:
+          type: array
+          items: { $ref: '#/components/schemas/SoundboardUpload' }
+    SoundboardUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, upload]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        upload: { $ref: '#/components/schemas/SoundboardUpload' }
+    UploadSoundboardClipRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName, contentSha256, mimeType, byteSize, durationSeconds, rightsAttested]
+      description: >-
+        additionalProperties is false deliberately: a status, moderationState, approved,
+        reviewed or reviewedAt field is a 400 before the store is reached - there is no state
+        between "uploaded" and "playable" for a client to set. A client-supplied duration or
+        size cap is likewise rejected; the server's own configured (today: unset) caps are the
+        only ones that apply. byteSize/durationSeconds maxima are PostgreSQL integer's own
+        range, a storage bound rather than a product one - the real cap is enforced server-side
+        against configuration.
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        mimeType: { type: string, pattern: '^audio/[a-z0-9.+-]+$', maxLength: 100 }
+        byteSize: { type: integer, minimum: 1, maximum: 2147483647 }
+        durationSeconds: { type: integer, minimum: 1, maximum: 2147483647 }
+        rightsAttested:
+          type: boolean
+          description: A positive rights attestation (18.2, AUD-06), recorded with a timestamp. false is a valid, explicit request the server refuses.
+    TriggerSoundboardPlayRequest:
+      type: object
+      description: >-
+        Exactly one of catalogueEntryId / uploadId - enforced by oneOf here and again in SQL
+        (migration 0143's trigger_soundboard_play), which is the authority the SQL test proves
+        against. Neither a supporter/viewer field nor a cooldown override exists here: every
+        trigger in this slice is the creator's own, and no cooldown is decided anywhere in this
+        repository.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [catalogueEntryId]
+          properties:
+            catalogueEntryId: { type: string, format: uuid }
+        - type: object
+          additionalProperties: false
+          required: [uploadId]
+          properties:
+            uploadId: { type: string, format: uuid }
+    TriggerSoundboardPlayResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, playId]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        playId: { type: string, format: uuid }
     StreamMission:
       type: object
       additionalProperties: false

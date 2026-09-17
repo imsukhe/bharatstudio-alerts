@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-soundboard-catalogue-list-response.schema.json",
+  "title": "Channel soundboard catalogue list response (PRF-02 slice 7, catalogue module #6)",
+  "description": "The full first-party soundboard catalogue with this channel's own enable/disable state resolved in. Metadata only (19.1: GCS/CDN, Postgres never holds the bytes -- there is no byte payload anywhere in this schema). Never tier-gated (12.6): every catalogue entry is listed at every tier, with enabled reflecting only this channel's presence-based disable. The 30.3 Pro+ entitlement gates only whether the Master Canvas renders the card, on the overlay read alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "entries"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "id", "externalKey", "displayName", "category", "minTier", "byteSize", "durationSeconds", "enabled", "updatedAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "id": { "type": "string", "format": "uuid" },
+          "externalKey": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "category": { "type": "string", "minLength": 1, "maxLength": 60 },
+          "minTier": { "type": "string", "enum": ["free", "pro", "creator", "studio"] },
+          "byteSize": { "type": "integer", "minimum": 1 },
+          "durationSeconds": { "type": "integer", "minimum": 1 },
+          "enabled": { "type": "boolean" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

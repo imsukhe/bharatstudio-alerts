@@ -30,12 +30,12 @@ import {
 
 const current: MediaQueueEntry = {
   schemaVersion: 'v1', queueSlot: 'current', title: 'First meme', mediaKind: 'image',
-  mimeType: 'image/png', storageUrl: 'https://cdn.example.com/a.png', thumbnailUrl: null, durationMs: null,
+  mimeType: 'image/png', playbackUrl: 'https://cdn.example.com/a.png', thumbnailPlaybackUrl: null, durationMs: null,
 };
 
 const next: MediaQueueEntry = {
   schemaVersion: 'v1', queueSlot: 'next', title: 'Second clip', mediaKind: 'video',
-  mimeType: 'video/mp4', storageUrl: 'https://cdn.example.com/b.mp4', thumbnailUrl: 'https://cdn.example.com/b-thumb.png', durationMs: 5000,
+  mimeType: 'video/mp4', playbackUrl: 'https://cdn.example.com/b.mp4', thumbnailPlaybackUrl: 'https://cdn.example.com/b-thumb.png', durationMs: 5000,
 };
 
 test('isMediaQueueEntry accepts a well-formed entry and rejects a malformed one', () => {
@@ -47,8 +47,9 @@ test('isMediaQueueEntry accepts a well-formed entry and rejects a malformed one'
   assert.equal(isMediaQueueEntry({ ...current, mediaKind: 'audio' }), false);
   assert.equal(isMediaQueueEntry({ ...current, mimeType: 'text/html' }), false, 'text/html must be refused (§9.1.1)');
   assert.equal(isMediaQueueEntry({ ...current, mimeType: 'image/svg+xml' }), false, 'image/svg+xml must be refused -- SVG can carry inline script');
-  assert.equal(isMediaQueueEntry({ ...current, storageUrl: 'http://cdn.example.com/a.png' }), false, 'a non-https storage url must be refused');
-  assert.equal(isMediaQueueEntry({ ...current, thumbnailUrl: 'http://cdn.example.com/thumb.png' }), false, 'a non-https thumbnail url must be refused');
+  assert.equal(isMediaQueueEntry({ ...current, playbackUrl: 'http://cdn.example.com/a.png' }), false, 'a non-https playback url must be refused');
+  assert.equal(isMediaQueueEntry({ ...current, thumbnailPlaybackUrl: 'http://cdn.example.com/thumb.png' }), false, 'a non-https thumbnail playback url must be refused');
+  assert.equal(isMediaQueueEntry({ ...current, playbackUrl: null }), true, 'a null playbackUrl is a valid, honest "not resolvable yet" state (migration 0148)');
   assert.equal(isMediaQueueEntry({ ...current, durationMs: -1 }), false);
   assert.equal(isMediaQueueEntry(null), false);
   assert.equal(isMediaQueueEntry('not an object'), false);
@@ -91,9 +92,14 @@ test('currentEntry / nextEntry select by slot regardless of array order', () => 
   assert.equal(nextEntry([current]), null, 'a single live item has no next entry to preload');
 });
 
-test('hasSomethingToShow is true only when a current entry exists', () => {
+test('hasSomethingToShow is true only when a current entry exists AND its playbackUrl is resolved', () => {
   assert.equal(hasSomethingToShow([]), false);
   assert.equal(hasSomethingToShow([next]), false, 'a next-only snapshot never happens server-side, but the renderer must still show nothing for it');
   assert.equal(hasSomethingToShow([current]), true);
   assert.equal(hasSomethingToShow([current, next]), true);
+  assert.equal(
+    hasSomethingToShow([{ ...current, playbackUrl: null }]),
+    false,
+    'a null playbackUrl (migration 0148: mediaCdnBaseUrl unset) must render nothing, the same honest posture Sponsor Card and Soundboard already have',
+  );
 });

@@ -250,7 +250,11 @@ const app = await buildApp(config, {
   // (app_private.enqueue_media_queue_item) rather than shaping every
   // query the store issues.
   mediaQueue: sql ? createSqlMediaQueueStore(sql) : undefined,
-  overlayMediaQueue: sql ? createSqlMediaQueueOverlayStore(derivedReadSql!) : undefined,
+  // `mediaCdnBaseUrl` is CONFIGURED BUT UNSET in every environment today
+  // (§19.1) -- the overlay store resolves a null playbackUrl until it is
+  // set. The SAME config value the soundboard overlay store below reads;
+  // migration 0148's url-hardening introduces no second one.
+  overlayMediaQueue: sql ? createSqlMediaQueueOverlayStore(derivedReadSql!, config.mediaCdnBaseUrl) : undefined,
   // PRF-02 slice 7, §6 module #6 (Safe Soundboard Alert).
   //
   // The creator store carries writes, so it uses the MAIN pool exactly

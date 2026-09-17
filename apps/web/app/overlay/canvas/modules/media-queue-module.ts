@@ -1,6 +1,8 @@
 /*
  * Media / Meme Queue module — §6 catalogue module #20, with the minimum
- * schema behind it (migration 0146).
+ * schema behind it (migration 0146, URL-hardened by migration 0148 — see
+ * that migration's header for the finding this file's `playbackUrl`
+ * posture fixes).
  *
  * Reads the `/v1/overlay-widgets/:overlayId/media-queue` snapshot
  * (`app_private.list_overlay_media_queue`) through the host page's
@@ -17,19 +19,33 @@
  * module. There is no submission endpoint, no approval queue and no
  * viewer-facing write surface anywhere near this file.
  *
- * NO THIRD-PARTY CODE, EVER (§9.1.1, PRF-13). `storageUrl` /
- * `thumbnailUrl` are handed ONLY to an `<img>` or `<video>` element's
- * `src` attribute below — never to a script, an iframe or a stylesheet,
- * and there is no code path in this file capable of doing so. §9.1.1's
- * rule bans embedding an ARBITRARY THIRD-PARTY browser-source URL, HTML,
- * JavaScript, CSS or iframe; an `<img>`/`<video>` source is a decode-only
- * capability that grants the serving host no code execution and no DOM
- * access inside this page, which is what makes it categorically
- * different from the iframe/script/stylesheet the rule actually
- * forbids. `isMediaQueueState` (./media-queue-logic.ts) additionally
- * rejects any mime type outside the closed image/video allow-list before
- * this file ever sees a URL, so nothing here can even be asked to render
- * something else.
+ * NO THIRD-PARTY CODE, EVER, AND NO ARBITRARY THIRD-PARTY ORIGIN EITHER
+ * (§9.1.1, §19.1, PRF-13). Before migration 0148, this module rendered a
+ * creator-supplied URL to ANY host on the internet — an <img>/<video> src
+ * is decode-only (no script execution, no DOM access), so that was never
+ * an XSS hole, but it let the canvas contact an origin BharatStudio never
+ * chose, degrading OBS reliability/performance, leaking the creator's IP
+ * to that host on every poll, and letting served bytes change after the
+ * creator queued them. `playbackUrl` / `thumbnailPlaybackUrl` are now
+ * resolved SERVER-SIDE ONLY (apps/api/src/db/media-queue-overlay-
+ * store.ts) from a content-key fragment against the API's own configured
+ * CDN base (`config.mediaCdnBaseUrl`) — never a caller- or
+ * database-supplied host. That base is CONFIGURED BUT UNSET in every
+ * environment today, so `playbackUrl` is null for every item until it is
+ * provisioned, and `hasSomethingToShow` (./media-queue-logic.ts) treats a
+ * null playbackUrl exactly like "nothing live": THIS MODULE RENDERS
+ * NOTHING until a real CDN base exists, the same honest posture the
+ * Sponsor Card and Soundboard modules already have — it does not
+ * degrade gracefully into rendering a broken image; it paints nothing at
+ * all, which is the true state of an asset with no resolvable location.
+ *
+ * `playbackUrl` / `thumbnailPlaybackUrl` are handed ONLY to an `<img>` or
+ * `<video>` element's `src` attribute below — never to a script, an
+ * iframe or a stylesheet, and there is no code path in this file capable
+ * of doing so. `isMediaQueueState` (./media-queue-logic.ts) additionally
+ * rejects any mime type outside the closed image/video allow-list, and
+ * any non-https/non-null playbackUrl, before this file ever sees one, so
+ * nothing here can even be asked to render something else.
  *
  * "CURRENT AND NEXT" AS A PRELOAD MECHANISM, NOT A DISPLAY ONE. The
  * snapshot carries at most one 'next' entry alongside 'current' — this
@@ -152,19 +168,22 @@ export function createMediaQueueModule(options: MediaQueueModuleOptions): Canvas
   }
 
   function applyPreload(entry: MediaQueueEntry | null) {
-    const url = entry?.storageUrl ?? null;
+    // No playbackUrl (migration 0148: mediaCdnBaseUrl unset) means
+    // nothing to preload -- same honest "cannot display" posture as the
+    // visible render path below.
+    const url = entry?.playbackUrl ?? null;
     if (url === lastRenderedNextUrl) return;
     lastRenderedNextUrl = url;
-    if (!entry) {
+    if (!entry || !url) {
       preloadImgEl.removeAttribute('src');
       preloadVideoEl.removeAttribute('src');
       return;
     }
     if (entry.mediaKind === 'video') {
-      preloadVideoEl.src = entry.storageUrl;
+      preloadVideoEl.src = url;
       preloadImgEl.removeAttribute('src');
     } else {
-      preloadImgEl.src = entry.storageUrl;
+      preloadImgEl.src = url;
       preloadVideoEl.removeAttribute('src');
     }
   }
@@ -185,19 +204,27 @@ export function createMediaQueueModule(options: MediaQueueModuleOptions): Canvas
       const live = currentEntry(latestState);
       applyPreload(nextEntry(latestState));
 
-      if (!hasSomethingToShow(latestState) || !live) {
+      // hasSomethingToShow is false both when there is no live entry AND
+      // when the live entry's playbackUrl is null (migration 0148:
+      // mediaCdnBaseUrl unset today) -- render nothing in either case,
+      // the same honest "cannot display until GCS/CDN exists" posture
+      // the Sponsor Card and Soundboard already have. `live.playbackUrl`
+      // is re-checked explicitly right below (not merely inferred from
+      // the helper) so this file never assigns a null src.
+      if (!hasSomethingToShow(latestState) || !live || !live.playbackUrl) {
         if (options.container.style.opacity !== '0') options.container.style.opacity = '0';
         if (wrapperEl.style.transform !== 'translateY(-4px)') wrapperEl.style.transform = 'translateY(-4px)';
         if (currentImgEl.style.opacity !== '0') currentImgEl.style.opacity = '0';
         if (currentVideoEl.style.opacity !== '0') currentVideoEl.style.opacity = '0';
         return;
       }
+      const playbackUrl = live.playbackUrl;
 
-      if (live.storageUrl !== lastRenderedCurrentUrl) {
-        lastRenderedCurrentUrl = live.storageUrl;
+      if (playbackUrl !== lastRenderedCurrentUrl) {
+        lastRenderedCurrentUrl = playbackUrl;
         if (live.mediaKind === 'video') {
-          currentVideoEl.src = live.storageUrl;
-          if (live.thumbnailUrl) currentVideoEl.poster = live.thumbnailUrl;
+          currentVideoEl.src = playbackUrl;
+          if (live.thumbnailPlaybackUrl) currentVideoEl.poster = live.thumbnailPlaybackUrl;
           // `play()` can be refused (autoplay policy, before the first
           // user gesture) or, in a test DOM without real media decoding,
           // simply not return a promise at all -- guarded rather than
@@ -209,7 +236,7 @@ export function createMediaQueueModule(options: MediaQueueModuleOptions): Canvas
           }
           currentImgEl.removeAttribute('src');
         } else {
-          currentImgEl.src = live.storageUrl;
+          currentImgEl.src = playbackUrl;
           currentImgEl.alt = live.title;
           currentVideoEl.removeAttribute('src');
         }

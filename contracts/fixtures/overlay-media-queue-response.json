@@ -8,8 +8,8 @@
       "title": "First meme",
       "mediaKind": "image",
       "mimeType": "image/png",
-      "storageUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/first-meme.png",
-      "thumbnailUrl": null,
+      "playbackUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/first-meme.png",
+      "thumbnailPlaybackUrl": null,
       "durationMs": null
     },
     {
@@ -18,8 +18,8 @@
       "title": "Second clip",
       "mediaKind": "video",
       "mimeType": "video/mp4",
-      "storageUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/second-clip.mp4",
-      "thumbnailUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/second-clip-thumb.png",
+      "playbackUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/second-clip.mp4",
+      "thumbnailPlaybackUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/second-clip-thumb.png",
       "durationMs": 5000
     }
   ]

@@ -1,6 +1,7 @@
 // PRF-02 slice 7, §6 catalogue module #20 (Media / Meme Queue) and the
 // minimum schema behind it
-// (packages/db/migrations/0146_v1_prf02_media_queue.sql).
+// (packages/db/migrations/0146_v1_prf02_media_queue.sql,
+// URL-hardened by packages/db/migrations/0148_v1_prf02_slice7_media_queue_url_hardening.sql).
 //
 // CREATOR-ONLY. VIEWERS CANNOT SUBMIT. This is the owner's decision of
 // 2026-09-17 (bharatstudio-requirements/reviews/
@@ -13,15 +14,29 @@
 // (the creator's own, session-authenticated one) and MediaQueueOverlayStore,
 // which has exactly one READ method and no write method of any kind.
 //
-// STORAGE: §19.1, METADATA ONLY. `storageUrl` and `thumbnailUrl` point at
-// an already-hosted GCS/CDN asset; there is no byte payload, no upload
+// STORAGE: §19.1, METADATA ONLY, AND NO ARBITRARY ORIGIN (§9.1.1, hostile
+// review finding fixed by migration 0148). `gcsObjectKey` /
+// `thumbnailGcsObjectKey` are content-KEY fragments -- never a URL, never
+// a caller-chosen host -- restricted to migration 0143's exact character
+// set (mirrored by this migration's own CHECK constraint), which cannot
+// express a scheme or a host at all. There is no byte payload, no upload
 // pipeline and no bytea anywhere in this type or the migration behind it
 // (MED-21: the bytea path is legacy and this module never uses it).
+// `OverlayMediaQueueEntry.playbackUrl` / `thumbnailPlaybackUrl` are the
+// SEPARATE, server-RESOLVED projection -- built only in
+// apps/api/src/db/media-queue-overlay-store.ts by concatenating the key
+// onto the server's OWN configured CDN base (`config.mediaCdnBaseUrl`,
+// the SAME value db/safe-soundboard-overlay-store.ts already reads), null
+// whenever that base is unset (every environment today). No caller- or
+// database-supplied host can ever reach either field.
 //
 // §9.1.1: `mimeType` is restricted to a closed allow-list at both this
 // layer and the database's own CHECK constraint -- no text/html, no
 // image/svg+xml (inline script), no application/* of any kind. Nothing in
-// this type has a slot for a script, an iframe or a stylesheet.
+// this type has a slot for a script, an iframe or a stylesheet. This was
+// never the mechanism migration 0148 changed, and it still is not: this
+// migration hardens WHICH ORIGIN can be contacted, not what an <img>/
+// <video> src is permitted to decode.
 //
 // NEVER TIER-GATED (§12.6). Storing, viewing, editing and changing the
 // status of a durable creator record is available at every tier; the only
@@ -39,8 +54,8 @@ export type MediaQueueItem = {
   title: string;
   mediaKind: 'image' | 'gif' | 'video';
   mimeType: string;
-  storageUrl: string;
-  thumbnailUrl: string | null;
+  gcsObjectKey: string;
+  thumbnailGcsObjectKey: string | null;
   durationMs: number | null;
   status: 'queued' | 'played' | 'skipped';
   enabled: boolean;
@@ -56,6 +71,12 @@ export type MediaQueueItem = {
  * depth, never a second item deeper in the queue"). There is deliberately
  * no item id, no submitter, no viewer identity and no channel-wide
  * queue-depth count anywhere in this type.
+ *
+ * `playbackUrl` / `thumbnailPlaybackUrl` are resolved by the API layer
+ * from `gcsObjectKey` / `thumbnailGcsObjectKey` against the configured CDN
+ * base (§19.1) -- see db/media-queue-overlay-store.ts. Null whenever that
+ * base is not configured, which today is every environment (migration
+ * 0148).
  */
 export type OverlayMediaQueueEntry = {
   schemaVersion: 'v1';
@@ -63,13 +84,22 @@ export type OverlayMediaQueueEntry = {
   title: string;
   mediaKind: 'image' | 'gif' | 'video';
   mimeType: string;
-  storageUrl: string;
-  thumbnailUrl: string | null;
+  playbackUrl: string | null;
+  thumbnailPlaybackUrl: string | null;
   durationMs: number | null;
 };
 
 export const MEDIA_QUEUE_TITLE_MAX = 120;
-export const MEDIA_QUEUE_URL_MAX = 2048;
+/**
+ * Migration 0143's exact gcs_object_key bound and character set, mirrored
+ * rather than reinvented (migration 0148). A key fragment matching this
+ * pattern cannot carry a scheme, a host or a `..` traversal segment.
+ */
+export const MEDIA_QUEUE_OBJECT_KEY_MAX = 255;
+export const MEDIA_QUEUE_OBJECT_KEY_PATTERN = /^[A-Za-z0-9/_.-]{1,255}$/;
+/** Resolved playback URL bound -- unchanged from the prior storage_url
+ *  column's own bound, still reused for the server-resolved projection. */
+export const MEDIA_QUEUE_PLAYBACK_URL_MAX = 2048;
 /**
  * PostgreSQL `integer`'s own upper bound. A STORAGE bound, not a product
  * bound -- this module names no maximum duration and this codebase will
@@ -91,8 +121,8 @@ export type EnqueueMediaQueueItemInput = {
   title: string;
   mediaKind: (typeof MEDIA_QUEUE_KINDS)[number];
   mimeType: (typeof MEDIA_QUEUE_MIME_TYPES)[number];
-  storageUrl: string;
-  thumbnailUrl?: string | null;
+  gcsObjectKey: string;
+  thumbnailGcsObjectKey?: string | null;
   durationMs?: number | null;
   /**
    * CONFIGURED BUT UNSET. Threaded through from deployment configuration
@@ -196,8 +226,12 @@ export function projectOverlayMediaQueue(value: unknown): OverlayMediaQueueEntry
     if (typeof row.title !== 'string' || row.title.length < 1 || row.title.length > MEDIA_QUEUE_TITLE_MAX) continue;
     if (!isMediaKind(row.mediaKind)) continue;
     if (!isMimeType(row.mimeType)) continue;
-    if (!isHttpsUrl(row.storageUrl, MEDIA_QUEUE_URL_MAX)) continue;
-    if (!isNullableHttpsUrl(row.thumbnailUrl, MEDIA_QUEUE_URL_MAX)) continue;
+    // playbackUrl/thumbnailPlaybackUrl are the API's own server-resolved
+    // origin (§19.1, migration 0148) -- re-validated https-or-null here a
+    // SECOND, independent time, the same posture
+    // projectOverlaySoundboardPlay takes for its own playbackUrl.
+    if (!isNullableHttpsUrl(row.playbackUrl, MEDIA_QUEUE_PLAYBACK_URL_MAX)) continue;
+    if (!isNullableHttpsUrl(row.thumbnailPlaybackUrl, MEDIA_QUEUE_PLAYBACK_URL_MAX)) continue;
     if (!isNullableDuration(row.durationMs)) continue;
     out.push({
       schemaVersion: 'v1',
@@ -205,8 +239,8 @@ export function projectOverlayMediaQueue(value: unknown): OverlayMediaQueueEntry
       title: row.title,
       mediaKind: row.mediaKind,
       mimeType: row.mimeType,
-      storageUrl: row.storageUrl,
-      thumbnailUrl: row.thumbnailUrl as string | null,
+      playbackUrl: row.playbackUrl as string | null,
+      thumbnailPlaybackUrl: row.thumbnailPlaybackUrl as string | null,
       durationMs: row.durationMs as number | null,
     });
   }

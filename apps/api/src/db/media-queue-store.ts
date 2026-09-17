@@ -43,8 +43,8 @@ type MediaQueueItemRow = {
   title: string;
   media_kind: string;
   mime_type: string;
-  storage_url: string;
-  thumbnail_url: string | null;
+  gcs_object_key: string;
+  thumbnail_gcs_object_key: string | null;
   duration_ms: number | null;
   status: string;
   enabled: boolean;
@@ -59,8 +59,8 @@ function toItem(row: MediaQueueItemRow): MediaQueueItem {
     title: row.title,
     mediaKind: row.media_kind as MediaQueueItem['mediaKind'],
     mimeType: row.mime_type,
-    storageUrl: row.storage_url,
-    thumbnailUrl: row.thumbnail_url,
+    gcsObjectKey: row.gcs_object_key,
+    thumbnailGcsObjectKey: row.thumbnail_gcs_object_key,
     durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
     status: row.status as MediaQueueItem['status'],
     enabled: row.enabled,
@@ -87,7 +87,7 @@ function isPgErrorWithMessage(error: unknown, substring: string): boolean {
 export function createSqlMediaQueueStore(sql: Sql): MediaQueueStore {
   async function readItems(userId: string, channelId: string, limit?: number): Promise<MediaQueueItem[]> {
     const rows = await inUserTransaction(sql, userId, (tx) => tx<MediaQueueItemRow[]>`
-      select media_queue_item_id, title, media_kind, mime_type, storage_url, thumbnail_url,
+      select media_queue_item_id, title, media_kind, mime_type, gcs_object_key, thumbnail_gcs_object_key,
              duration_ms, status, enabled, created_at, updated_at
         from app_private.list_channel_media_queue_items(${channelId}::uuid, ${limit ?? null})
     `);
@@ -111,8 +111,8 @@ export function createSqlMediaQueueStore(sql: Sql): MediaQueueStore {
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<{ enqueue_media_queue_item: string }[]>`
           select app_private.enqueue_media_queue_item(
-            ${channelId}::uuid, ${input.title}, ${input.mediaKind}, ${input.mimeType}, ${input.storageUrl},
-            ${input.thumbnailUrl ?? null}, ${input.durationMs ?? null},
+            ${channelId}::uuid, ${input.title}, ${input.mediaKind}, ${input.mimeType}, ${input.gcsObjectKey},
+            ${input.thumbnailGcsObjectKey ?? null}, ${input.durationMs ?? null},
             ${input.maxDurationMs ?? null}, ${input.maxQueueItems ?? null}
           ) as enqueue_media_queue_item
         `);

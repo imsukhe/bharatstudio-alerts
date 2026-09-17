@@ -44,11 +44,11 @@ const statusUrl = `${itemUrl}/status`;
 const overlayEntries: OverlayMediaQueueEntry[] = [
   {
     schemaVersion: 'v1', queueSlot: 'current', title: 'First meme', mediaKind: 'image',
-    mimeType: 'image/png', storageUrl: 'https://cdn.example.com/a.png', thumbnailUrl: null, durationMs: null,
+    mimeType: 'image/png', playbackUrl: 'https://cdn.example.com/a.png', thumbnailPlaybackUrl: null, durationMs: null,
   },
   {
     schemaVersion: 'v1', queueSlot: 'next', title: 'Second clip', mediaKind: 'video',
-    mimeType: 'video/mp4', storageUrl: 'https://cdn.example.com/b.mp4', thumbnailUrl: 'https://cdn.example.com/b-thumb.png', durationMs: 5000,
+    mimeType: 'video/mp4', playbackUrl: 'https://cdn.example.com/b.mp4', thumbnailPlaybackUrl: 'https://cdn.example.com/b-thumb.png', durationMs: 5000,
   },
 ];
 
@@ -58,8 +58,8 @@ const item: MediaQueueItem = {
   title: 'First meme',
   mediaKind: 'image',
   mimeType: 'image/png',
-  storageUrl: 'https://cdn.example.com/a.png',
-  thumbnailUrl: null,
+  gcsObjectKey: 'media-queue/a.png',
+  thumbnailGcsObjectKey: null,
   durationMs: null,
   status: 'queued',
   enabled: true,
@@ -127,7 +127,7 @@ test('overlay: a valid read returns at most two entries, labelled current/next, 
   assert.equal(body.mediaQueue[1].queueSlot, 'next');
   for (const entry of body.mediaQueue) {
     assert.deepEqual(Object.keys(entry).sort(), [
-      'durationMs', 'mediaKind', 'mimeType', 'queueSlot', 'schemaVersion', 'storageUrl', 'thumbnailUrl', 'title',
+      'durationMs', 'mediaKind', 'mimeType', 'playbackUrl', 'queueSlot', 'schemaVersion', 'thumbnailPlaybackUrl', 'title',
     ]);
   }
   await app.close();
@@ -136,7 +136,7 @@ test('overlay: a valid read returns at most two entries, labelled current/next, 
 test('overlay: a store handing up MORE than two entries is still projected down to two', async () => {
   const three: OverlayMediaQueueEntry[] = [
     ...overlayEntries,
-    { schemaVersion: 'v1', queueSlot: 'next', title: 'Should never render', mediaKind: 'image', mimeType: 'image/png', storageUrl: 'https://cdn.example.com/c.png', thumbnailUrl: null, durationMs: null },
+    { schemaVersion: 'v1', queueSlot: 'next', title: 'Should never render', mediaKind: 'image', mimeType: 'image/png', playbackUrl: 'https://cdn.example.com/c.png', thumbnailPlaybackUrl: null, durationMs: null },
   ];
   const app = await buildOverlayApp({ async getForOverlay() { return three; } });
   const response = await app.inject({ method: 'GET', url: overlayUrl, headers: { authorization: 'Bearer tok' } });
@@ -179,7 +179,7 @@ test('enqueue: a body carrying a submitter/viewer/approval field is refused with
   ]) {
     const response = await app.inject({
       method: 'POST', url: mediaQueueUrl, headers: authHeaders,
-      payload: { title: 'x', mediaKind: 'image', mimeType: 'image/png', storageUrl: 'https://cdn.example.com/x.png', ...poison },
+      payload: { title: 'x', mediaKind: 'image', mimeType: 'image/png', gcsObjectKey: 'media-queue/x.png', ...poison },
     });
     assert.equal(response.statusCode, 400, `expected 400 for poisoned field ${JSON.stringify(poison)}`);
   }
@@ -192,20 +192,31 @@ test('enqueue: an unrecognised mime type (e.g. text/html, image/svg+xml) is refu
   for (const mimeType of ['text/html', 'image/svg+xml', 'application/javascript']) {
     const response = await app.inject({
       method: 'POST', url: mediaQueueUrl, headers: authHeaders,
-      payload: { title: 'x', mediaKind: 'image', mimeType, storageUrl: 'https://cdn.example.com/x.png' },
+      payload: { title: 'x', mediaKind: 'image', mimeType, gcsObjectKey: 'media-queue/x.png' },
     });
     assert.equal(response.statusCode, 400, `expected 400 for mime type ${mimeType}`);
   }
   await app.close();
 });
 
-test('enqueue: a non-https storage url is refused with 400', async () => {
+// THE ARBITRARY-URL FINDING'S ROUTE-LAYER FIX: gcsObjectKey must be a
+// content-key fragment, never a URL. Any value carrying a scheme and a
+// host is refused with 400 before the store is ever called, because
+// ':' and '//' are outside the allowed character set.
+test('enqueue: a value shaped like a URL (arbitrary remote origin) is refused as an object key with 400', async () => {
   const app = await buildCreatorApp({ async enqueueItem() { return { outcome: 'ok', item }; } });
-  const response = await app.inject({
-    method: 'POST', url: mediaQueueUrl, headers: authHeaders,
-    payload: { title: 'x', mediaKind: 'image', mimeType: 'image/png', storageUrl: 'http://cdn.example.com/x.png' },
-  });
-  assert.equal(response.statusCode, 400);
+  for (const badKey of [
+    'http://cdn.example.com/x.png',
+    'https://evil.example.net/payload.png',
+    'media-queue/../../etc/passwd',
+    'not a valid key!!',
+  ]) {
+    const response = await app.inject({
+      method: 'POST', url: mediaQueueUrl, headers: authHeaders,
+      payload: { title: 'x', mediaKind: 'image', mimeType: 'image/png', gcsObjectKey: badKey },
+    });
+    assert.equal(response.statusCode, 400, `expected 400 for object key ${JSON.stringify(badKey)}`);
+  }
   await app.close();
 });
 
@@ -234,7 +245,7 @@ test('creator: list returns the store items under the declared envelope', async 
 });
 
 test('enqueue: ok is 201, forbidden is 404 (never 403), invalid is 400, limit_reached is 409', async () => {
-  const payload = { title: 'x', mediaKind: 'image', mimeType: 'image/png', storageUrl: 'https://cdn.example.com/x.png' };
+  const payload = { title: 'x', mediaKind: 'image', mimeType: 'image/png', gcsObjectKey: 'media-queue/x.png' };
 
   const ok = await buildCreatorApp({ async enqueueItem() { return { outcome: 'ok', item }; } });
   const okResponse = await ok.inject({ method: 'POST', url: mediaQueueUrl, headers: authHeaders, payload });
@@ -268,7 +279,7 @@ test('enqueue: the two configured-but-unset caps are threaded through to the sto
   }, 60000, 25);
   await app.inject({
     method: 'POST', url: mediaQueueUrl, headers: authHeaders,
-    payload: { title: 'x', mediaKind: 'video', mimeType: 'video/mp4', storageUrl: 'https://cdn.example.com/x.mp4', durationMs: 1000 },
+    payload: { title: 'x', mediaKind: 'video', mimeType: 'video/mp4', gcsObjectKey: 'media-queue/x.mp4', durationMs: 1000 },
   });
   assert.equal(seenMax.maxDurationMs, 60000);
   assert.equal(seenMax.maxQueueItems, 25);
@@ -284,7 +295,7 @@ test('enqueue: the two configured-but-unset caps are threaded through to the sto
   });
   await appUnset.inject({
     method: 'POST', url: mediaQueueUrl, headers: authHeaders,
-    payload: { title: 'x', mediaKind: 'image', mimeType: 'image/png', storageUrl: 'https://cdn.example.com/x.png' },
+    payload: { title: 'x', mediaKind: 'image', mimeType: 'image/png', gcsObjectKey: 'media-queue/x.png' },
   });
   assert.equal(seenUnset.maxDurationMs, null);
   assert.equal(seenUnset.maxQueueItems, null);

@@ -146,3 +146,11 @@ fi
 (cd "$ROOT/apps/api" && \
   BSA_CHANNEL_STORE_SQL_DSN="postgres://postgres:test@127.0.0.1:${PORT}/postgres?sslmode=disable" \
   pnpm exec tsx ../../integration/channel-store-concurrency.integration.ts)
+
+# PRF-02 slice 7 hostile-review finding #2: the safe-soundboard store's
+# Postgres errcode 55000 -> outcome 'caps_not_configured' mapping,
+# exercised against a real database -- see that file's own header for why
+# neither the SQL suite above nor the route tests cover this seam.
+(cd "$ROOT/apps/api" && \
+  BSA_SAFE_SOUNDBOARD_SQL_DSN="postgres://postgres:test@127.0.0.1:${PORT}/postgres?sslmode=disable" \
+  pnpm exec tsx ../../integration/safe-soundboard-caps-not-configured.integration.ts)

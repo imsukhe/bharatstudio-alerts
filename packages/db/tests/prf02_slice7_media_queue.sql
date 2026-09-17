@@ -1,7 +1,12 @@
 -- PRF-02 slice 7, §6 catalogue module #20 (Media / Meme Queue):
 -- app_private.enqueue_media_queue_item, list_channel_media_queue_items,
 -- update_media_queue_item, set_media_queue_item_status and
--- list_overlay_media_queue (migration 0146).
+-- list_overlay_media_queue (migration 0146, url-hardened by migration
+-- 0148 -- enqueue_media_queue_item, list_channel_media_queue_items and
+-- list_overlay_media_queue now carry gcs_object_key /
+-- thumbnail_gcs_object_key in place of storage_url / thumbnail_url;
+-- update_media_queue_item and set_media_queue_item_status are unchanged
+-- by 0148).
 --
 -- This file owns id block ...5b00-...5bff (recorded in
 -- fixtures/00_base_world.sql's ID ALLOCATION REGISTRY). It seeds its OWN
@@ -219,7 +224,7 @@ begin
     begin
       perform app_private.enqueue_media_queue_item(
         '00000000-0000-4000-8000-000000005b11'::uuid, 'should be refused', 'image', 'image/png',
-        'https://cdn.example.com/refused.png', null, null, null, null
+        'refused/x.png', null, null, null, null
       );
       raise exception 'a % must not be able to enqueue a media item', probe.role_name;
     exception when sqlstate '42501' then null;
@@ -232,7 +237,8 @@ $$;
 
 -- =====================================================================
 -- MED20.5 / MED20.6 / MED20.7 / MED20.8 -- FIELD VALIDATION: title bound,
--- media_kind / mime_type allow-lists, storage/thumbnail URL shape,
+-- media_kind / mime_type allow-lists, gcs_object_key / thumbnail key
+-- shape (migration 0148's URL hardening -- see that migration's header),
 -- non-negative duration.
 -- =====================================================================
 do $$
@@ -240,49 +246,73 @@ begin
   perform set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true);
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, '', 'image', 'image/png', 'https://cdn.example.com/x.png', null, null, null, null);
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, '', 'image', 'image/png', 'ok/x.png', null, null, null, null);
     raise exception 'an empty title must be refused';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, repeat('x', 121), 'image', 'image/png', 'https://cdn.example.com/x.png', null, null, null, null);
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, repeat('x', 121), 'image', 'image/png', 'ok/x.png', null, null, null, null);
     raise exception 'a 121-character title must be refused -- the bound is 1-120 (0109_v1_l17_paid_challenges.sql:67)';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'audio', 'image/png', 'https://cdn.example.com/x.png', null, null, null, null);
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'audio', 'image/png', 'ok/x.png', null, null, null, null);
     raise exception 'an unrecognised media_kind must be refused';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'text/html', 'https://cdn.example.com/x.png', null, null, null, null);
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'text/html', 'ok/x.png', null, null, null, null);
     raise exception 'text/html must be refused -- §9.1.1: no script, iframe or stylesheet may ever reach the Master Canvas';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/svg+xml', 'https://cdn.example.com/x.png', null, null, null, null);
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/svg+xml', 'ok/x.png', null, null, null, null);
     raise exception 'image/svg+xml must be refused -- SVG can carry inline script (§9.1.1)';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'http://cdn.example.com/x.png', null, null, null, null);
-    raise exception 'a non-https storage url must be refused (0123_v1_l19d_provider_qr_codes.sql:192''s shape, reused)';
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'not a valid key!!', null, null, null, null);
+    raise exception 'a key containing disallowed characters must be refused (migration 0148, mirroring migration 0143''s gcs_object_key shape exactly)';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'https://cdn.example.com/x.png', 'http://cdn.example.com/thumb.png', null, null, null);
-    raise exception 'a non-https thumbnail url must be refused';
+    -- THE FINDING THIS MIGRATION FIXES: an arbitrary third-party URL must
+    -- be refused as an object key -- ':' and other URL punctuation are
+    -- outside the allowed character set, so a caller cannot smuggle a
+    -- scheme or a host through this parameter at all.
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'https://evil.example.net/payload.png', null, null, null, null);
+    raise exception 'a value shaped like a URL (carrying a scheme and a host) must be refused as an object key -- this is the arbitrary-remote-origin finding migration 0148 fixes';
   exception when sqlstate '22023' then null;
   end;
 
   begin
-    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'video', 'video/mp4', 'https://cdn.example.com/x.mp4', null, -1, null, null);
+    -- Path traversal must be refused even though every character
+    -- individually matches the allowed set.
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'ok/../../etc/passwd', null, null, null, null);
+    raise exception 'a key containing ".." must be refused regardless of character-set validity';
+  exception when sqlstate '22023' then null;
+  end;
+
+  begin
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'ok/x.png', 'not a valid thumb key!!', null, null, null);
+    raise exception 'a thumbnail key containing disallowed characters must be refused';
+  exception when sqlstate '22023' then null;
+  end;
+
+  begin
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'image', 'image/png', 'ok/x.png', 'https://evil.example.net/thumb.png', null, null, null);
+    raise exception 'a thumbnail key shaped like a URL must be refused, same as the primary key';
+  exception when sqlstate '22023' then null;
+  end;
+
+  begin
+    perform app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b11'::uuid, 'ok title', 'video', 'video/mp4', 'ok/x.mp4', null, -1, null, null);
     raise exception 'a negative duration must be refused';
   exception when sqlstate '22023' then null;
   end;
@@ -301,21 +331,21 @@ begin
   -- Unset duration cap: any non-negative duration is accepted.
   select app_private.enqueue_media_queue_item(
     '00000000-0000-4000-8000-000000005b11'::uuid, 'long clip, unset cap', 'video', 'video/mp4',
-    'https://cdn.example.com/long.mp4', null, 999999999, null, null
+    'ok/long.mp4', null, 999999999, null, null
   ) into unbounded_id;
   if unbounded_id is null then raise exception 'an unset duration cap must not refuse any non-negative duration'; end if;
 
   -- Set duration cap: a duration under it is accepted, and one over it is refused.
   select app_private.enqueue_media_queue_item(
     '00000000-0000-4000-8000-000000005b11'::uuid, 'short clip, capped', 'video', 'video/mp4',
-    'https://cdn.example.com/short.mp4', null, 500, 1000, null
+    'ok/short.mp4', null, 500, 1000, null
   ) into capped_ok_id;
   if capped_ok_id is null then raise exception 'a duration under a supplied cap must be accepted'; end if;
 
   begin
     perform app_private.enqueue_media_queue_item(
       '00000000-0000-4000-8000-000000005b11'::uuid, 'too long, capped', 'video', 'video/mp4',
-      'https://cdn.example.com/toolong.mp4', null, 1500, 1000, null
+      'ok/toolong.mp4', null, 1500, 1000, null
     );
     raise exception 'a duration over a supplied cap must be refused';
   exception when sqlstate '22023' then null;
@@ -332,7 +362,7 @@ begin
     begin
       perform app_private.enqueue_media_queue_item(
         '00000000-0000-4000-8000-000000005b11'::uuid, 'over the cap', 'image', 'image/png',
-        'https://cdn.example.com/overcap.png', null, null, null, current_queued
+        'ok/overcap.png', null, null, null, current_queued
       );
       raise exception 'a supplied queue-item-count cap at the current count must refuse one more item';
     exception when sqlstate '22023' then null;
@@ -341,7 +371,7 @@ begin
     -- One above the current count must be accepted.
     perform app_private.enqueue_media_queue_item(
       '00000000-0000-4000-8000-000000005b11'::uuid, 'right at the cap', 'image', 'image/png',
-      'https://cdn.example.com/atcap.png', null, null, null, current_queued + 1
+      'ok/atcap.png', null, null, null, current_queued + 1
     );
   end;
 end
@@ -424,11 +454,11 @@ on conflict (id) do nothing;
 -- assertion meaningless. Splitting them into separate statements plus a
 -- real sleep between each is what makes the FIFO order deterministic.
 select set_config('app.user_id', '00000000-0000-4000-8000-000000000001', false);
-select app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b13'::uuid, 'meme one', 'image', 'image/png', 'https://cdn.example.com/1.png', null, null, null, null) as id1 \gset
+select app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b13'::uuid, 'meme one', 'image', 'image/png', 'fifo/1.png', null, null, null, null) as id1 \gset
 select pg_sleep(0.05);
-select app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b13'::uuid, 'meme two', 'image', 'image/png', 'https://cdn.example.com/2.png', null, null, null, null) as id2 \gset
+select app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b13'::uuid, 'meme two', 'image', 'image/png', 'fifo/2.png', null, null, null, null) as id2 \gset
 select pg_sleep(0.05);
-select app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b13'::uuid, 'meme three', 'image', 'image/png', 'https://cdn.example.com/3.png', null, null, null, null) as id3 \gset
+select app_private.enqueue_media_queue_item('00000000-0000-4000-8000-000000005b13'::uuid, 'meme three', 'image', 'image/png', 'fifo/3.png', null, null, null, null) as id3 \gset
 
 do $$
 declare row1 record; row2 record; rows_seen integer;
@@ -503,8 +533,8 @@ begin
      and p.proname = 'list_overlay_media_queue';
 
   if declared_result is null then raise exception 'app_private.list_overlay_media_queue does not exist'; end if;
-  if declared_result <> 'TABLE(queue_slot text, title text, media_kind text, mime_type text, storage_url text, thumbnail_url text, duration_ms integer)' then
-    raise exception 'the overlay media queue read must return exactly queue_slot/title/media_kind/mime_type/storage_url/thumbnail_url/duration_ms and nothing else -- no item id, no submitter, no viewer identity, no queue-depth count. Declared result is "%"', declared_result;
+  if declared_result <> 'TABLE(queue_slot text, title text, media_kind text, mime_type text, gcs_object_key text, thumbnail_gcs_object_key text, duration_ms integer)' then
+    raise exception 'the overlay media queue read must return exactly queue_slot/title/media_kind/mime_type/gcs_object_key/thumbnail_gcs_object_key/duration_ms and nothing else -- a KEY, never a URL (migration 0148) -- no item id, no submitter, no viewer identity, no queue-depth count. Declared result is "%"', declared_result;
   end if;
 end
 $$;
@@ -520,8 +550,8 @@ begin
     from information_schema.columns
    where table_name = 'prf02s7_mediaqueue_returned_shape';
 
-  if actual_columns <> 'queue_slot text, title text, media_kind text, mime_type text, storage_url text, thumbnail_url text, duration_ms integer' then
-    raise exception 'the columns actually returned by a live call must be exactly the seven declared columns, got "%" -- any additional column is an identifier or a queue-depth count leaving the database on the overlay path', actual_columns;
+  if actual_columns <> 'queue_slot text, title text, media_kind text, mime_type text, gcs_object_key text, thumbnail_gcs_object_key text, duration_ms integer' then
+    raise exception 'the columns actually returned by a live call must be exactly the seven declared columns, got "%" -- any additional column is an identifier or a queue-depth count leaving the database on the overlay path, and this path must carry a KEY, never a URL (migration 0148)', actual_columns;
   end if;
 end
 $$;

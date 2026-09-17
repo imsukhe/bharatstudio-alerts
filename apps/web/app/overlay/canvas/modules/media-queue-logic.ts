@@ -28,15 +28,20 @@
  *      not withheld, but absent, because the type this file guards has
  *      no slot for one.
  *
- *   2. It is NOT third-party code reaching the Canvas (§9.1.1). Every
- *      URL this file accepts must be `https://`, and the module that
- *      consumes this file's output only ever hands `storageUrl` /
- *      `thumbnailUrl` to an `<img>` or `<video>` element's `src` — never
- *      to a script, an iframe or a stylesheet. `mimeType` is a closed
- *      allow-list (image/png, image/jpeg, image/webp, image/gif,
- *      video/mp4, video/webm); there is deliberately no `text/html`, no
- *      `image/svg+xml` (SVG can carry inline script) and no
- *      `application/*` of any kind.
+ *   2. It is NOT third-party code reaching the Canvas, AND it is not an
+ *      arbitrary third-party ORIGIN either (§9.1.1, §19.1 — hostile
+ *      review finding fixed by migration 0148). `playbackUrl` /
+ *      `thumbnailPlaybackUrl` are resolved SERVER-SIDE from a
+ *      content-key fragment against the API's own configured CDN base
+ *      (apps/api/src/db/media-queue-overlay-store.ts) — never a caller-
+ *      or database-supplied host. Every URL this file accepts must be
+ *      `https://` or `null`, and the module that consumes this file's
+ *      output only ever hands them to an `<img>` or `<video>` element's
+ *      `src` — never to a script, an iframe or a stylesheet. `mimeType`
+ *      is a closed allow-list (image/png, image/jpeg, image/webp,
+ *      image/gif, video/mp4, video/webm); there is deliberately no
+ *      `text/html`, no `image/svg+xml` (SVG can carry inline script) and
+ *      no `application/*` of any kind.
  *
  *   3. It is NOT a queue-depth display. There is no field here for how
  *      many items are queued behind what is shown, because the server
@@ -68,8 +73,10 @@ export type MediaQueueEntry = {
   title: string;
   mediaKind: MediaQueueKind;
   mimeType: MediaQueueMimeType;
-  storageUrl: string;
-  thumbnailUrl: string | null;
+  /** Server-resolved against the configured CDN base; null whenever that
+   *  base is unset (migration 0148) — see file header. */
+  playbackUrl: string | null;
+  thumbnailPlaybackUrl: string | null;
   durationMs: number | null;
 };
 
@@ -77,7 +84,7 @@ export type MediaQueueEntry = {
 export type MediaQueueState = MediaQueueEntry[];
 
 const ENTRY_KEYS = [
-  'schemaVersion', 'queueSlot', 'title', 'mediaKind', 'mimeType', 'storageUrl', 'thumbnailUrl', 'durationMs',
+  'schemaVersion', 'queueSlot', 'title', 'mediaKind', 'mimeType', 'playbackUrl', 'thumbnailPlaybackUrl', 'durationMs',
 ] as const;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -100,6 +107,13 @@ function isHttpsUrl(value: unknown, maxLength = 2048): value is string {
   return typeof value === 'string' && value.length >= 1 && value.length <= maxLength && value.startsWith('https://');
 }
 
+/**
+ * `playbackUrl` must be https or null. Never any other scheme — this is
+ * the client's own last-line refusal of anything the server projection
+ * (`projectOverlayMediaQueue`) should already have stripped, so the
+ * guarantee does not rest on one layer (§9.1.1), the identical posture
+ * ./safe-soundboard-logic.ts's isSafePlaybackUrl takes for its own field.
+ */
 function isNullableHttpsUrl(value: unknown): value is string | null {
   return value === null || isHttpsUrl(value);
 }
@@ -122,8 +136,8 @@ export function isMediaQueueEntry(value: unknown): value is MediaQueueEntry {
   if (typeof row.title !== 'string' || row.title.length < 1 || row.title.length > 120) return false;
   if (!isMediaKind(row.mediaKind)) return false;
   if (!isMimeType(row.mimeType)) return false;
-  if (!isHttpsUrl(row.storageUrl)) return false;
-  if (!isNullableHttpsUrl(row.thumbnailUrl)) return false;
+  if (!isNullableHttpsUrl(row.playbackUrl)) return false;
+  if (!isNullableHttpsUrl(row.thumbnailPlaybackUrl)) return false;
   if (!isNullableDuration(row.durationMs)) return false;
   return true;
 }
@@ -166,7 +180,18 @@ export function nextEntry(state: MediaQueueState): MediaQueueEntry | null {
  * overlay token returns, and also what a channel with nothing live in
  * rotation returns (every item played, skipped or disabled). Both mean
  * "paint nothing", and the renderer treats them identically.
+ *
+ * ALSO false when the current entry's `playbackUrl` is null (migration
+ * 0148) -- today's honest state whenever `mediaCdnBaseUrl` is unset
+ * (every environment currently), the same "cannot display until GCS/CDN
+ * exists" posture ./safe-soundboard-logic.ts's caption-without-audio case
+ * documents for its own module. There is nothing else this card can show
+ * for a media item with no resolved URL -- unlike the soundboard's
+ * caption, an image/video card has no meaningful content-free state, so
+ * this renders nothing rather than a broken `<img>`/`<video>` with no
+ * `src`.
  */
 export function hasSomethingToShow(state: MediaQueueState): boolean {
-  return currentEntry(state) !== null;
+  const live = currentEntry(state);
+  return live !== null && live.playbackUrl !== null;
 }

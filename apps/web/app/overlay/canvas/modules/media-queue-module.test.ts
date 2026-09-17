@@ -47,12 +47,12 @@ function mount(fetchSnapshot: () => Promise<MediaQueueState | null>, reducedMoti
 
 const image: MediaQueueEntry = {
   schemaVersion: 'v1', queueSlot: 'current', title: 'First meme', mediaKind: 'image',
-  mimeType: 'image/png', storageUrl: 'https://cdn.example.com/a.png', thumbnailUrl: null, durationMs: null,
+  mimeType: 'image/png', playbackUrl: 'https://cdn.example.com/a.png', thumbnailPlaybackUrl: null, durationMs: null,
 };
 
 const video: MediaQueueEntry = {
   schemaVersion: 'v1', queueSlot: 'next', title: 'Second clip', mediaKind: 'video',
-  mimeType: 'video/mp4', storageUrl: 'https://cdn.example.com/b.mp4', thumbnailUrl: 'https://cdn.example.com/b-thumb.png', durationMs: 5000,
+  mimeType: 'video/mp4', playbackUrl: 'https://cdn.example.com/b.mp4', thumbnailPlaybackUrl: 'https://cdn.example.com/b-thumb.png', durationMs: 5000,
 };
 
 test('the module key is the catalogue key migration 0131 already names', () => {
@@ -68,6 +68,21 @@ test('an empty snapshot renders nothing: the container stays at opacity 0', asyn
   assert.equal(container.style.opacity, '0');
 });
 
+// THE ARBITRARY-URL FINDING'S RENDER-LAYER FIX (migration 0148): a live
+// entry with no resolved playbackUrl (mediaCdnBaseUrl unset -- every
+// environment today) must render NOTHING, and must never assign a null
+// or missing src to the visible <img>/<video> elements.
+test('a current entry with playbackUrl: null renders nothing, same as no entry at all', async () => {
+  const unresolved: MediaQueueEntry = { ...image, playbackUrl: null };
+  const { container, connection, module } = mount(async () => [unresolved]);
+  connection.fireChange();
+  await flush();
+  module.render(0);
+  assert.equal(container.style.opacity, '0');
+  const img = container.querySelector('[data-role="media-queue-current-image"]') as HTMLImageElement;
+  assert.equal(img.getAttribute('src'), null, 'no src may ever be assigned from a null playbackUrl');
+});
+
 test('a current IMAGE entry is shown in the <img> element and the <video> element stays hidden', async () => {
   const { container, connection, module } = mount(async () => [image]);
   connection.fireChange();
@@ -76,7 +91,7 @@ test('a current IMAGE entry is shown in the <img> element and the <video> elemen
   assert.equal(container.style.opacity, '1');
   const img = container.querySelector('[data-role="media-queue-current-image"]') as HTMLImageElement;
   const videoEl = container.querySelector('[data-role="media-queue-current-video"]') as HTMLVideoElement;
-  assert.equal(img.src, image.storageUrl);
+  assert.equal(img.src, image.playbackUrl);
   assert.equal(img.alt, image.title);
   assert.equal(img.style.opacity, '1');
   assert.equal(videoEl.style.opacity, '0');
@@ -90,7 +105,7 @@ test('a current VIDEO entry is shown in the <video> element and the <img> elemen
   module.render(0);
   const img = container.querySelector('[data-role="media-queue-current-image"]') as HTMLImageElement;
   const videoEl = container.querySelector('[data-role="media-queue-current-video"]') as HTMLVideoElement;
-  assert.equal(videoEl.src, currentVideo.storageUrl);
+  assert.equal(videoEl.src, currentVideo.playbackUrl);
   assert.equal(videoEl.style.opacity, '1');
   assert.equal(img.style.opacity, '0');
 });
@@ -103,7 +118,7 @@ test('a "next" entry is loaded into the hidden preload elements and NEVER into t
 
   const preloadImg = container.querySelector('[data-role="media-queue-preload-image"]') as HTMLImageElement;
   const preloadVideo = container.querySelector('[data-role="media-queue-preload-video"]') as HTMLVideoElement;
-  assert.equal(preloadVideo.src, video.storageUrl, 'the next (video) entry must be preloaded');
+  assert.equal(preloadVideo.src, video.playbackUrl, 'the next (video) entry must be preloaded');
   assert.equal(preloadVideo.style.display, 'none', 'the preload element must never be visible');
   assert.equal(preloadImg.style.display, 'none');
 
@@ -111,8 +126,8 @@ test('a "next" entry is loaded into the hidden preload elements and NEVER into t
   // never the next one, by url or by content.
   const currentImg = container.querySelector('[data-role="media-queue-current-image"]') as HTMLImageElement;
   const currentVideoEl = container.querySelector('[data-role="media-queue-current-video"]') as HTMLVideoElement;
-  assert.equal(currentImg.src, image.storageUrl);
-  assert.notEqual(currentVideoEl.src, video.storageUrl, 'the video entry is "next", not "current", and must not be shown');
+  assert.equal(currentImg.src, image.playbackUrl);
+  assert.notEqual(currentVideoEl.src, video.playbackUrl, 'the video entry is "next", not "current", and must not be shown');
 });
 
 test('the rendered subtree contains no script, iframe, link or style element -- structurally, not by convention', async () => {

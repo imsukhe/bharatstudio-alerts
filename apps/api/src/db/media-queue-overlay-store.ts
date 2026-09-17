@@ -9,9 +9,9 @@ import type { Sql } from 'postgres';
 // lobby-status-overlay-store.ts and stream-mission-overlay-store.ts
 // exactly: sha256 fingerprint of the bearer token, matched against
 // overlay_sessions.token_fingerprint INSIDE the security-definer function
-// (packages/db/migrations/0146). Same overlay_sessions table, same gate
-// -- no second auth mechanism, and no scoping decision made in
-// TypeScript.
+// (packages/db/migrations/0146, url-hardened by migration 0148). Same
+// overlay_sessions table, same gate -- no second auth mechanism, and no
+// scoping decision made in TypeScript.
 //
 // RT-12: this file's name contains "overlay", so the required-queries
 // scan's rule 2 covers every app_private call in it regardless of the
@@ -21,6 +21,21 @@ import type { Sql } from 'postgres';
 // too. All three independently require the manifest entry in
 // packages/db/explain-plans/required-queries.json.
 //
+// ======================================================================
+// CDN URL RESOLUTION HAPPENS HERE, NOT IN SQL -- migration 0148's fix for
+// the "arbitrary remote origin" finding, mirroring
+// db/safe-soundboard-overlay-store.ts's resolveSoundboardPlaybackUrl
+// exactly. `gcsObjectKey` / `thumbnailGcsObjectKey` never leave this file
+// as raw keys: each is resolved against the server's OWN configured CDN
+// base (§19.1), `cdnBaseUrl` below, which is `config.mediaCdnBaseUrl` --
+// the SAME config value the soundboard overlay store already reads; this
+// file introduces no second one. That value is itself CONFIGURED BUT
+// UNSET in every environment today, so `playbackUrl` /
+// `thumbnailPlaybackUrl` are null for every entry until it is
+// provisioned, and apps/web/app/overlay/canvas/modules/media-queue-
+// module.ts renders nothing for an entry whose playbackUrl is null -- the
+// same honest "cannot display until GCS/CDN exists" posture the
+// soundboard card already has.
 // ======================================================================
 // AT MOST TWO ROWS. THAT IS THE WHOLE SURFACE.
 // ======================================================================
@@ -57,16 +72,31 @@ type OverlayRow = {
   title: string;
   media_kind: string;
   mime_type: string;
-  storage_url: string;
-  thumbnail_url: string | null;
+  gcs_object_key: string;
+  thumbnail_gcs_object_key: string | null;
   duration_ms: number | null;
 };
 
-export function createSqlMediaQueueOverlayStore(sql: Sql): MediaQueueOverlayStore {
+/**
+ * `objectKey` is a database-validated, narrow-character-set fragment (see
+ * migration 0148's check constraints, mirroring migration 0143's
+ * soundboard columns exactly) -- it can never itself carry a scheme or a
+ * host. `cdnBaseUrl`, when present, is validated https at config load
+ * time (apps/api/src/config.ts). Concatenation is therefore always OUR
+ * OWN origin, never a value either the database row or the caller
+ * controls -- the §9.1.1 guarantee this function exists to keep. Mirrors
+ * db/safe-soundboard-overlay-store.ts's resolveSoundboardPlaybackUrl.
+ */
+export function resolveMediaPlaybackUrl(cdnBaseUrl: string | undefined, objectKey: string | null): string | null {
+  if (!cdnBaseUrl || !objectKey) return null;
+  return `${cdnBaseUrl.replace(/\/+$/, '')}/${objectKey}`;
+}
+
+export function createSqlMediaQueueOverlayStore(sql: Sql, cdnBaseUrl: string | undefined): MediaQueueOverlayStore {
   return {
     async getForOverlay(token, overlayId): Promise<OverlayMediaQueueEntry[]> {
       const rows = await sql<OverlayRow[]>`
-        select queue_slot, title, media_kind, mime_type, storage_url, thumbnail_url, duration_ms
+        select queue_slot, title, media_kind, mime_type, gcs_object_key, thumbnail_gcs_object_key, duration_ms
           from app_private.list_overlay_media_queue(${overlayId}::uuid, ${fingerprint(token)})
       `;
       // Zero rows is the answer for an unrecognised, expired, revoked or
@@ -80,8 +110,8 @@ export function createSqlMediaQueueOverlayStore(sql: Sql): MediaQueueOverlayStor
         title: row.title,
         mediaKind: row.media_kind as OverlayMediaQueueEntry['mediaKind'],
         mimeType: row.mime_type,
-        storageUrl: row.storage_url,
-        thumbnailUrl: row.thumbnail_url,
+        playbackUrl: resolveMediaPlaybackUrl(cdnBaseUrl, row.gcs_object_key),
+        thumbnailPlaybackUrl: resolveMediaPlaybackUrl(cdnBaseUrl, row.thumbnail_gcs_object_key),
         durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
       }));
     },

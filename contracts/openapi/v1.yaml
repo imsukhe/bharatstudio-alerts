@@ -1693,11 +1693,14 @@ paths:
         of how many items are queued, so an overlay token cannot learn how deep the rotation
         is.
 
-        Metadata only (19.1): storageUrl and thumbnailUrl point at an already-hosted GCS/CDN
-        asset; no bytes are ever returned on this path, and MED-21 records the bytea path this
-        module never uses as legacy. mimeType is a closed allow-list - no text/html, no
-        image/svg+xml, no application/* of any kind (9.1.1) - so nothing on this path can ever
-        carry a script, an iframe or a stylesheet onto the Master Canvas.
+        Metadata only (19.1), and NO ARBITRARY THIRD-PARTY ORIGIN (9.1.1, migration 0148):
+        playbackUrl and thumbnailPlaybackUrl are resolved server-side from a content-key
+        fragment against the API's OWN configured CDN base - never a caller- or
+        database-supplied host - and are null whenever that base is unset, which is every
+        environment today; a null playbackUrl means the module renders nothing for that item.
+        mimeType is a closed allow-list - no text/html, no image/svg+xml, no application/* of
+        any kind (9.1.1) - so nothing on this path can ever carry a script, an iframe or a
+        stylesheet onto the Master Canvas.
 
         No item id, no submitter identity and no viewer identity exists on this path - not
         withheld, but absent from the underlying read's declared result type, so nothing here
@@ -1749,12 +1752,16 @@ paths:
         queue and no viewer-facing write anywhere else - additionalProperties: false means a
         body carrying submitterId, submittedBy, viewerId, approved, approvalStatus or
         rejectionReason is a 400 before the store is ever called, because none of those fields
-        is declared here. mimeType is a closed allow-list (9.1.1); storageUrl and
-        thumbnailUrl, when present, must be HTTPS (19.1, metadata only - no bytes are ever
-        accepted). durationMs and the maximum number of items a channel may queue at once are
-        each governed by a CONFIGURED-BUT-UNSET deployment cap: unset means today's behaviour,
-        with no additional ceiling beyond durationMs being non-negative. A cap being exceeded
-        is a 409, never a 400, so a client can tell "invalid" from "queue is full" apart.
+        is declared here. mimeType is a closed allow-list (9.1.1); gcsObjectKey and
+        thumbnailGcsObjectKey are content-KEY fragments, never URLs (19.1, 9.1.1, migration
+        0148) - mirroring migration 0143's soundboard character-set shape exactly, so a value
+        carrying a scheme or a host (any URL) is refused with 400 before the SQL layer's own
+        identical CHECK constraint is ever reached; this is the fix for a prior hostile-review
+        finding that this route accepted an arbitrary remote origin. durationMs and the
+        maximum number of items a channel may queue at once are each governed by a
+        CONFIGURED-BUT-UNSET deployment cap: unset means today's behaviour, with no additional
+        ceiling beyond durationMs being non-negative. A cap being exceeded is a 409, never a
+        400, so a client can tell "invalid" from "queue is full" apart.
       parameters:
         - $ref: '#/components/parameters/ChannelId'
       requestBody:
@@ -3685,10 +3692,12 @@ components:
     OverlayMediaQueueEntry:
       type: object
       additionalProperties: false
-      required: [schemaVersion, queueSlot, title, mediaKind, mimeType, storageUrl, thumbnailUrl, durationMs]
+      required: [schemaVersion, queueSlot, title, mediaKind, mimeType, playbackUrl, thumbnailPlaybackUrl, durationMs]
       description: >-
-        One "current" or "next" queued media item. Metadata only (19.1) - storageUrl and
-        thumbnailUrl point at an already-hosted GCS/CDN asset, never bytes. No item id, no
+        One "current" or "next" queued media item. Metadata only (19.1), and no arbitrary
+        third-party origin (9.1.1, migration 0148): playbackUrl / thumbnailPlaybackUrl are
+        resolved server-side from a content-key fragment against the API's own configured CDN
+        base, null whenever that base is unset (every environment today). No item id, no
         submitter and no viewer identity exists on this schema at all.
       properties:
         schemaVersion: { type: string, const: v1 }
@@ -3701,8 +3710,18 @@ components:
           description: >-
             A closed allow-list (9.1.1). No text/html, no image/svg+xml (inline script), no
             application/* of any kind.
-        storageUrl: { type: string, minLength: 1, maxLength: 2048, pattern: '^https://' }
-        thumbnailUrl:
+        playbackUrl:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 2048
+              pattern: '^https://'
+          description: >-
+            Resolved server-side against the API's OWN configured CDN base (19.1, migration
+            0148) - never a caller- or database-supplied host. Null until that base is
+            provisioned; the module renders nothing for an item with a null playbackUrl.
+        thumbnailPlaybackUrl:
           oneOf:
             - type: 'null'
             - type: string
@@ -3739,14 +3758,16 @@ components:
     MediaQueueItem:
       type: object
       additionalProperties: false
-      required: [schemaVersion, mediaQueueItemId, title, mediaKind, mimeType, storageUrl, thumbnailUrl, durationMs, status, enabled, createdAt, updatedAt]
+      required: [schemaVersion, mediaQueueItemId, title, mediaKind, mimeType, gcsObjectKey, thumbnailGcsObjectKey, durationMs, status, enabled, createdAt, updatedAt]
       description: >-
         Creator-facing media queue item. CREATOR-ONLY (owner decision, 2026-09-17; MED-20):
         there is no submitter identity field anywhere on this type, because there is no
         submitter other than the creator - every row is written through the role-gated
         enqueue route alone. status carries PLAYBACK values only (queued/played/skipped),
         never a moderation decision such as approved/rejected/pending_review. Never
-        tier-gated: available identically at every tier (12.6).
+        tier-gated: available identically at every tier (12.6). gcsObjectKey /
+        thumbnailGcsObjectKey are content-KEY fragments, never URLs (19.1, 9.1.1, migration
+        0148).
       properties:
         schemaVersion: { type: string, const: v1 }
         mediaQueueItemId: { type: string, format: uuid }
@@ -3755,14 +3776,21 @@ components:
         mimeType:
           type: string
           enum: [image/png, image/jpeg, image/webp, image/gif, video/mp4, video/webm]
-        storageUrl: { type: string, minLength: 1, maxLength: 2048, pattern: '^https://' }
-        thumbnailUrl:
+        gcsObjectKey:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^[A-Za-z0-9/_.-]{1,255}$'
+          description: >-
+            A content-key fragment (migration 0143's shape, mirrored by migration 0148) -
+            never a URL. This character set cannot carry a scheme or a host.
+        thumbnailGcsObjectKey:
           oneOf:
             - type: 'null'
             - type: string
               minLength: 1
-              maxLength: 2048
-              pattern: '^https://'
+              maxLength: 255
+              pattern: '^[A-Za-z0-9/_.-]{1,255}$'
         durationMs:
           oneOf:
             - type: 'null'
@@ -3801,14 +3829,18 @@ components:
     EnqueueMediaQueueItemRequest:
       type: object
       additionalProperties: false
-      required: [title, mediaKind, mimeType, storageUrl]
+      required: [title, mediaKind, mimeType, gcsObjectKey]
       description: >-
         additionalProperties: false is load-bearing here, not boilerplate: it is where the
         owner's "creator-only, viewers cannot submit" decision is enforced on the wire. A body
         carrying submitterId, submittedBy, viewerId, approved, approvalStatus or
         rejectionReason is a 400 before the store is ever called, because none of those fields
-        is declared. Neither the media duration nor the number of items a channel may queue at
-        once is bounded here beyond storage-column ranges: both are governed by a
+        is declared. gcsObjectKey / thumbnailGcsObjectKey are content-KEY fragments, never
+        URLs (19.1, 9.1.1, migration 0148): a value carrying a scheme or a host (any URL) is
+        refused with 400, because ':' and '//' are outside the allowed character set - this is
+        the fix for a prior hostile-review finding that this route accepted an arbitrary
+        remote origin. Neither the media duration nor the number of items a channel may queue
+        at once is bounded here beyond storage-column ranges: both are governed by a
         CONFIGURED-BUT-UNSET deployment cap enforced in the database, and exceeding either
         surfaces as 400 (duration) or 409 (queue-item-count) rather than being expressible in
         this schema, because neither number is decided or invented by this contract.
@@ -3819,13 +3851,20 @@ components:
           type: string
           enum: [image/png, image/jpeg, image/webp, image/gif, video/mp4, video/webm]
           description: A closed allow-list (9.1.1). No text/html, no image/svg+xml, no application/* of any kind.
-        storageUrl:
+        gcsObjectKey:
           type: string
           minLength: 1
-          maxLength: 2048
-          pattern: '^https://'
-          description: Metadata only (19.1) - an already-hosted GCS/CDN asset. No bytes are ever accepted.
-        thumbnailUrl: { type: string, minLength: 1, maxLength: 2048, pattern: '^https://' }
+          maxLength: 255
+          pattern: '^(?!.*\.\.)[A-Za-z0-9/_.-]{1,255}$'
+          description: >-
+            A content-key fragment (migration 0143's shape, mirrored by migration 0148) -
+            never a URL. Resolved server-side against the configured CDN base; no bytes and no
+            host are ever accepted here.
+        thumbnailGcsObjectKey:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^(?!.*\.\.)[A-Za-z0-9/_.-]{1,255}$'
         durationMs: { type: integer, minimum: 0, maximum: 2147483647 }
     UpdateMediaQueueItemRequest:
       type: object

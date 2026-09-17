@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bharatstudio.in/contracts/v1/overlay-media-queue-response.schema.json",
   "title": "Overlay media queue response (PRF-02 slice 7, catalogue module #20)",
-  "description": "The overlay-facing projection of a channel's live media queue rotation, scoped by the overlay session token. CREATOR-ONLY (owner decision, 2026-09-17; register row MED-20): the creator queues their own media and viewers cannot submit -- there is no submission endpoint, no approval queue and no viewer-facing write surface anywhere in this product, and this response is read-only by construction. AT MOST TWO ENTRIES, labelled 'current' and 'next', and nothing else: 12.7's Overlay row authorises 'current and next alert state' in those exact words, and this reuses the identical bound apps/web/app/overlay/canvas/modules/support-theater-module.ts already established for this codebase rather than inventing a queue-depth number -- there is no aggregate count of how many items are queued anywhere in this schema. Metadata only (19.1): storageUrl and thumbnailUrl point at an already-hosted GCS/CDN asset, never bytes, and MED-21 records the bytea path this module never uses as legacy. mimeType is a closed allow-list (9.1.1) -- no text/html, no image/svg+xml (inline script), no application/* of any kind -- so nothing on this path can ever carry a script, an iframe or a stylesheet onto the Master Canvas. No item id, no submitter identity and no viewer identity exists on this schema at all -- not withheld, but absent, so nothing here can correlate one visit to another. An empty array is what an unrecognised, expired, revoked or foreign overlay token returns, and also what a channel with nothing live in rotation returns -- both mean paint nothing.",
+  "description": "The overlay-facing projection of a channel's live media queue rotation, scoped by the overlay session token. CREATOR-ONLY (owner decision, 2026-09-17; register row MED-20): the creator queues their own media and viewers cannot submit -- there is no submission endpoint, no approval queue and no viewer-facing write surface anywhere in this product, and this response is read-only by construction. AT MOST TWO ENTRIES, labelled 'current' and 'next', and nothing else: 12.7's Overlay row authorises 'current and next alert state' in those exact words, and this reuses the identical bound apps/web/app/overlay/canvas/modules/support-theater-module.ts already established for this codebase rather than inventing a queue-depth number -- there is no aggregate count of how many items are queued anywhere in this schema. Metadata only (19.1), and NO ARBITRARY THIRD-PARTY ORIGIN (9.1.1, migration 0148): playbackUrl and thumbnailPlaybackUrl are resolved server-side from a content-key fragment against the API's OWN configured CDN base -- never a caller- or database-supplied host -- and are null whenever that base is unset, which is every environment today; a null playbackUrl means the module renders nothing for that item. mimeType is a closed allow-list (9.1.1) -- no text/html, no image/svg+xml (inline script), no application/* of any kind -- so nothing on this path can ever carry a script, an iframe or a stylesheet onto the Master Canvas. No item id, no submitter identity and no viewer identity exists on this schema at all -- not withheld, but absent, so nothing here can correlate one visit to another. An empty array is what an unrecognised, expired, revoked or foreign overlay token returns, and also what a channel with nothing live in rotation returns -- both mean paint nothing.",
   "type": "object",
   "additionalProperties": false,
   "required": ["$schema", "schemaVersion", "mediaQueue"],
@@ -15,7 +15,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["schemaVersion", "queueSlot", "title", "mediaKind", "mimeType", "storageUrl", "thumbnailUrl", "durationMs"],
+        "required": ["schemaVersion", "queueSlot", "title", "mediaKind", "mimeType", "playbackUrl", "thumbnailPlaybackUrl", "durationMs"],
         "properties": {
           "schemaVersion": { "const": "v1" },
           "queueSlot": {
@@ -28,14 +28,14 @@
             "enum": ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"],
             "description": "A closed allow-list (9.1.1). No text/html, no image/svg+xml, no application/* of any kind -- nothing here can ever describe a document capable of executing code on the Canvas."
           },
-          "storageUrl": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048,
-            "pattern": "^https://",
-            "description": "Metadata only (19.1): an already-hosted GCS/CDN asset. No bytes are ever returned on this path."
+          "playbackUrl": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" }
+            ],
+            "description": "Resolved server-side from a content-key fragment against the API's OWN configured CDN base (19.1, migration 0148) -- never a caller- or database-supplied host. Null whenever that base is unset (every environment today); the module renders nothing for an item with a null playbackUrl."
           },
-          "thumbnailUrl": {
+          "thumbnailPlaybackUrl": {
             "oneOf": [
               { "type": "null" },
               { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" }

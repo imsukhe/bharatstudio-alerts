@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bharatstudio.in/contracts/v1/channel-media-queue-list-response.schema.json",
   "title": "Channel media queue list response (PRF-02 slice 7, catalogue module #20)",
-  "description": "The creator's own durable media queue: every status and every enabled/disabled item, forever (12.6) -- never filtered or hidden by tier. Paginated at a page size the caller may bound up to 100, the same cursor-safety ceiling migration 0137's cursor reads already use -- an engineering pagination floor, not a product-decided queue depth.",
+  "description": "The creator's own durable media queue: every status and every enabled/disabled item, forever (12.6) -- never filtered or hidden by tier. Paginated at a page size the caller may bound up to 100, the same cursor-safety ceiling migration 0137's cursor reads already use -- an engineering pagination floor, not a product-decided queue depth. gcsObjectKey and thumbnailGcsObjectKey are content-KEY fragments, never URLs (19.1, 9.1.1, migration 0148).",
   "type": "object",
   "additionalProperties": false,
   "required": ["$schema", "schemaVersion", "items"],
@@ -15,18 +15,18 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["schemaVersion", "mediaQueueItemId", "title", "mediaKind", "mimeType", "storageUrl", "thumbnailUrl", "durationMs", "status", "enabled", "createdAt", "updatedAt"],
+        "required": ["schemaVersion", "mediaQueueItemId", "title", "mediaKind", "mimeType", "gcsObjectKey", "thumbnailGcsObjectKey", "durationMs", "status", "enabled", "createdAt", "updatedAt"],
         "properties": {
           "schemaVersion": { "const": "v1" },
           "mediaQueueItemId": { "type": "string", "format": "uuid" },
           "title": { "type": "string", "minLength": 1, "maxLength": 120 },
           "mediaKind": { "enum": ["image", "gif", "video"] },
           "mimeType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"] },
-          "storageUrl": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" },
-          "thumbnailUrl": {
+          "gcsObjectKey": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9/_.-]{1,255}$" },
+          "thumbnailGcsObjectKey": {
             "oneOf": [
               { "type": "null" },
-              { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" }
+              { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9/_.-]{1,255}$" }
             ]
           },
           "durationMs": {

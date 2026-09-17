@@ -6,8 +6,9 @@ import {
   MEDIA_QUEUE_DURATION_MAX_MS,
   MEDIA_QUEUE_KINDS,
   MEDIA_QUEUE_MIME_TYPES,
+  MEDIA_QUEUE_OBJECT_KEY_MAX,
+  MEDIA_QUEUE_OBJECT_KEY_PATTERN,
   MEDIA_QUEUE_TITLE_MAX,
-  MEDIA_QUEUE_URL_MAX,
   type MediaQueueStore,
 } from '../domain/media-queue-store.js';
 import { logSafeError } from '../observability/safe-log.js';
@@ -23,6 +24,16 @@ const listQuerystring = {
   properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } },
 } as const;
 
+// Migration 0143's gcs_object_key character-set shape, mirrored exactly
+// (migration 0148), PLUS a negative lookahead forbidding ".." -- a key
+// fragment matching this pattern cannot carry a scheme, a host or a
+// traversal segment. This is the wire-level half of the fix for the
+// "arbitrary remote origin" finding: an AJV `pattern` mismatch (any URL,
+// since ':' and '//' are outside the allowed character set) is a 400
+// here, before the SQL layer's own identical CHECK constraint is ever
+// reached.
+const objectKeyPattern = `^(?!.*\\.\\.)${MEDIA_QUEUE_OBJECT_KEY_PATTERN.source.slice(1)}`;
+
 // `additionalProperties: false` on every body below is LOAD-BEARING, not
 // boilerplate. It is where the owner's 2026-09-17 "creator-only, viewers
 // cannot submit" decision is enforced on the wire: a body carrying
@@ -31,7 +42,7 @@ const listQuerystring = {
 // none of those fields is declared here for AJV to accept.
 const enqueueBody = {
   type: 'object', additionalProperties: false,
-  required: ['title', 'mediaKind', 'mimeType', 'storageUrl'],
+  required: ['title', 'mediaKind', 'mimeType', 'gcsObjectKey'],
   properties: {
     title: { type: 'string', minLength: 1, maxLength: MEDIA_QUEUE_TITLE_MAX },
     mediaKind: { type: 'string', enum: [...MEDIA_QUEUE_KINDS] },
@@ -40,10 +51,12 @@ const enqueueBody = {
     // unrecognised mime type is a 400 here, before the SQL layer's own
     // identical CHECK constraint is ever reached.
     mimeType: { type: 'string', enum: [...MEDIA_QUEUE_MIME_TYPES] },
-    // §19.1 metadata-only: this points at an already-hosted GCS/CDN
-    // asset. No bytes are ever accepted by this route.
-    storageUrl: { type: 'string', minLength: 1, maxLength: MEDIA_QUEUE_URL_MAX, pattern: '^https://' },
-    thumbnailUrl: { type: 'string', minLength: 1, maxLength: MEDIA_QUEUE_URL_MAX, pattern: '^https://' },
+    // §19.1 / §9.1.1 (migration 0148): a content-KEY fragment, never a
+    // URL. This is what makes it structurally impossible for a caller to
+    // point the Master Canvas at an arbitrary third-party origin -- the
+    // allowed character set has no slot for a scheme or a host.
+    gcsObjectKey: { type: 'string', minLength: 1, maxLength: MEDIA_QUEUE_OBJECT_KEY_MAX, pattern: objectKeyPattern },
+    thumbnailGcsObjectKey: { type: 'string', minLength: 1, maxLength: MEDIA_QUEUE_OBJECT_KEY_MAX, pattern: objectKeyPattern },
     durationMs: { type: 'integer', minimum: 0, maximum: MEDIA_QUEUE_DURATION_MAX_MS },
   },
 } as const;
@@ -134,7 +147,7 @@ export async function registerMediaQueueRoutes(
 
   app.post<{
     Params: { channelId: string };
-    Body: { title: string; mediaKind: string; mimeType: string; storageUrl: string; thumbnailUrl?: string; durationMs?: number };
+    Body: { title: string; mediaKind: string; mimeType: string; gcsObjectKey: string; thumbnailGcsObjectKey?: string; durationMs?: number };
   }>('/v1/channels/:channelId/media-queue', {
     preHandler: termsAuth,
     schema: { params: channelParams, body: enqueueBody },
@@ -145,8 +158,8 @@ export async function registerMediaQueueRoutes(
         title: request.body.title,
         mediaKind: request.body.mediaKind as 'image' | 'gif' | 'video',
         mimeType: request.body.mimeType as (typeof MEDIA_QUEUE_MIME_TYPES)[number],
-        storageUrl: request.body.storageUrl,
-        thumbnailUrl: request.body.thumbnailUrl ?? null,
+        gcsObjectKey: request.body.gcsObjectKey,
+        thumbnailGcsObjectKey: request.body.thumbnailGcsObjectKey ?? null,
         durationMs: request.body.durationMs ?? null,
         maxDurationMs: maxItemDurationMs ?? null,
         maxQueueItems: maxQueueItemsPerChannel ?? null,

@@ -61,6 +61,13 @@ test('runner reports Docker-unavailable as blocked exit 2 with truthful artifact
   const data = JSON.parse(await readFile(artifact, 'utf8'));
   assert.equal(data.overall, 'blocked');
   assert.equal(data.statuses.database, 'blocked');
+  // The manifest validator must have actually RUN and passed. Without this,
+  // the test happily passed while infra's validator was failing for an
+  // unrelated reason (a non-sibling checkout), because the docker-blocked
+  // path short-circuits before the validator's result is consulted. "Blocked"
+  // has to mean blocked on Docker specifically -- which is what this test's
+  // name claims -- not blocked on anything at all.
+  assert.equal(data.statuses.manifest, 'pass');
   assert.equal(data.externalEvidence, 'not-claimed');
   assert.equal(data.rollback.status, 'not-run');
   await unlink(artifact);

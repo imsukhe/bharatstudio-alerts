@@ -107,13 +107,26 @@ jobs:
       # which reads deployment/v1/measurement-manifest.template.json from the
       # bharatstudio-infra repository. That is a SIBLING checkout locally and
       # CI gets no such thing, so the runner died on a FileNotFoundError and
-      # the step had never once passed here. actions/checkout cannot write
-      # above the workspace, so it lands in a subdirectory and the runner is
-      # pointed at it explicitly.
-      - uses: actions/checkout@v4
-        with:
-          repository: imsukhe/bharatstudio-infra
-          path: .bharatstudio-infra
+      # the step had never once passed here.
+      #
+      # It must be a true sibling, not just any path: infra's
+      # tools/validate-measurement-manifest.mjs resolves each service source as
+      # resolve('..', source, 'Dockerfile') from its own directory, so it needs
+      # ../bharatstudio-alerts/... to exist. Putting infra inside the workspace
+      # satisfied the template read but left statuses.manifest silently "fail"
+      # -- and the test would still have passed, because with Docker hidden the
+      # runner short-circuits on database=blocked before the validator's result
+      # is asserted. A check that passes while its validator is broken is worth
+      # less than no check.
+      #
+      # actions/checkout cannot write above the workspace, so clone directly.
+      # GitHub checks out to /home/runner/work/<repo>/<repo>, so the workspace's
+      # parent already contains a directory named bharatstudio-alerts; dropping
+      # infra beside it reproduces the local layout exactly. Verified in a
+      # node:22.17.0-bookworm container with that precise layout:
+      # manifest=pass, database=blocked, exit 2.
+      - name: check out bharatstudio-infra as a sibling
+        run: git clone --depth 1 https://github.com/imsukhe/bharatstudio-infra.git "$GITHUB_WORKSPACE/../bharatstudio-infra"
       - run: pnpm install --frozen-lockfile
       - name: alerts-api test
         run: pnpm --filter @bharatstudio/alerts-api test
@@ -121,7 +134,7 @@ jobs:
         run: pnpm --filter @bharatstudio/alerts-web test
       - name: measurement:test
         env:
-          BHARATSTUDIO_INFRA_DIR: ${{ github.workspace }}/.bharatstudio-infra
+          BHARATSTUDIO_INFRA_DIR: ${{ github.workspace }}/../bharatstudio-infra
         run: pnpm measurement:test
 
   # pnpm build (tsc for the API, next build for the web app)

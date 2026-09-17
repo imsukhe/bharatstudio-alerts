@@ -1440,6 +1440,38 @@ paths:
               schema: { $ref: '#/components/schemas/OverlayGiveawayTournamentResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/sponsor-card:
+    get:
+      tags: [Overlay]
+      operationId: getOverlaySponsorCard
+      summary: The sponsor's name and, optionally, a logo reference - and nothing about display.
+      description: >-
+        Master Canvas module #11 (Sponsor Card). The card renders the sponsor and COUNTS
+        NOTHING (owner decision, 2026-09-17) - the exposure event log named in the original
+        catalogue row is DROPPED, not narrowed. There is no impression, exposure, view,
+        duration, "shown at" or "displayed at" field anywhere on this path, and none exists in
+        the schema behind it either. Building one later is a new decision requiring legal
+        review, not an extension of this one.
+
+        A row is returned ONLY when the card is currently supposed to be visible: enabled, and
+        inside its schedule window if it has one. Disabled, outside the window, an
+        unrecognised/expired/revoked/foreign token, and a channel with no sponsor card at all
+        all answer 200 with sponsorCard null - every one of them means paint nothing.
+
+        The logo, when present, is a tenant-scoped content-addressed asset reference
+        (channel id + sha256, 19.1) - never a URL, never third-party content, and nothing
+        capable of reaching the Master Canvas as a script, iframe or stylesheet (9.1.1).
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped sponsor card for this overlay, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlaySponsorCardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/channels/{channelId}/giveaway:
     get:
       tags: [Giveaway]
@@ -1639,6 +1671,59 @@ paths:
       responses:
         '204':
           description: The tournament was concluded. No result is produced.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/sponsor-card:
+    get:
+      tags: [Configuration]
+      operationId: getChannelSponsorCard
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The channel's one sponsor card, or null. Available at every tier: storing, viewing and
+        exporting a durable creator record is never tier-gated (12.6). sponsor_card is already
+        one of migration 0131's twenty Master Canvas catalogue keys, and the 30.3 module-count
+        cap it enforces is the only thing that decides whether the CANVAS renders the card.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's sponsor card, or null when none has been configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelSponsorCardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [Configuration]
+      operationId: upsertChannelSponsorCard
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Sets the channel's one sponsor card - the sponsor name, the show/hide toggle, an
+        optional scheduled placement window, and optional logo metadata. Owner/admin only, and
+        not tier-gated. There is no separate create/update verb: PUT always writes the
+        channel's single row, and calling it twice upserts the same card rather than creating a
+        second one. Disabling the card is enabled: false on the same call, not a separate
+        delete.
+
+        The body carries no field capable of counting, timing or accumulating anything about
+        the card being displayed, and no field capable of carrying a remote URL, script,
+        iframe or stylesheet onto the Master Canvas (9.1.1) - additionalProperties is false so
+        a client cannot even attempt to write one.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertSponsorCardRequest' }
+      responses:
+        '200':
+          description: The saved sponsor card.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelSponsorCardResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
@@ -2923,6 +3008,148 @@ components:
       properties:
         currentRound: { type: integer, minimum: 1, maximum: 3 }
         completedMatchesInRound: { type: integer, minimum: 0, maximum: 4 }
+    OverlaySponsorCard:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, sponsorName, logoMimeType, logoStorageKey]
+      description: >-
+        Overlay-facing projection (6 module #11). Three fields, and that is the whole public
+        surface of this module: what the card paints, and nothing about WHETHER, WHEN or HOW
+        OFTEN it was painted. No impression, exposure, view, duration, "shown at" or
+        "displayed at" field exists here or anywhere behind it (owner decision, 2026-09-17).
+        logoMimeType and logoStorageKey are both present or both null together - the logo is
+        optional. logoStorageKey is a tenant-scoped content-addressed reference
+        (channelId + sha256, 19.1), never a URL and never third-party content (9.1.1).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sponsorName: { type: string, minLength: 1, maxLength: 120 }
+        logoMimeType:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 120
+        logoStorageKey:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 200
+              description: channelId + '/' + the logo's sha256 content hash. Never a fetchable URL.
+    OverlaySponsorCardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, sponsorCard]
+      description: >-
+        A null sponsorCard is a valid answer, and is what an unrecognised, expired, revoked or
+        foreign overlay token returns, what a disabled card returns, what a card outside its
+        scheduled window returns, and what a channel with no sponsor card at all returns. All
+        of them mean paint nothing.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sponsorCard:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlaySponsorCard'
+    SponsorCard:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - sponsorCardId
+        - sponsorName
+        - logoContentSha256
+        - logoMimeType
+        - logoByteSize
+        - logoStorageKey
+        - enabled
+        - scheduleStartsAt
+        - scheduleEndsAt
+        - createdAt
+        - updatedAt
+      description: >-
+        Creator-facing sponsor card (6 module #11). One row per channel - there is no
+        create/end lifecycle, only an upsert. Carries no impression, exposure, view, duration,
+        "shown at" or "displayed at" field of any kind (owner decision, 2026-09-17: the card
+        renders the sponsor and counts nothing). scheduleStartsAt/scheduleEndsAt are an
+        instruction about the FUTURE - both null (no schedule) or both set (an absolute UTC
+        window) - never a record of the past. Logo fields are all null together or all set
+        together; logoStorageKey is generated in the database from channelId and
+        logoContentSha256 and is never independently writable.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sponsorCardId: { type: string, format: uuid }
+        sponsorName: { type: string, minLength: 1, maxLength: 120 }
+        logoContentSha256:
+          oneOf:
+            - type: 'null'
+            - type: string
+              pattern: '^[0-9a-f]{64}$'
+        logoMimeType:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 120
+        logoByteSize:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 1
+              description: A storage fact, not a product cap. No maximum is decided anywhere in this repository, so none is invented here.
+        logoStorageKey:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 200
+        enabled: { type: boolean }
+        scheduleStartsAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        scheduleEndsAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelSponsorCardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, sponsorCard]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        sponsorCard:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/SponsorCard'
+    UpsertSponsorCardRequest:
+      type: object
+      additionalProperties: false
+      required: [sponsorName, enabled, logoContentSha256, logoMimeType, logoByteSize, scheduleStartsAt, scheduleEndsAt]
+      description: >-
+        additionalProperties is false deliberately: a body carrying an impressionCount,
+        exposureCount, viewCount, shownAt, displayedAt or duration field is rejected before the
+        store is ever reached - the card renders the sponsor and counts nothing, and there is
+        no field here for a client to even attempt to write one into. Logo fields must be all
+        null or all set together; schedule fields must be both null or both set, with the end
+        strictly after the start - both re-checked in the database.
+      properties:
+        sponsorName: { type: string, minLength: 1, maxLength: 120 }
+        enabled: { type: boolean }
+        logoContentSha256:
+          oneOf:
+            - type: 'null'
+            - type: string
+              pattern: '^[0-9a-f]{64}$'
+        logoMimeType:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 120
+        logoByteSize:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 1
+        scheduleStartsAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        scheduleEndsAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
     StreamMission:
       type: object
       additionalProperties: false

@@ -204,6 +204,8 @@ import { createLobbyStatusModule } from '../modules/lobby-status-module';
 import { isLobbyStatus, type LobbyStatus } from '../modules/lobby-status-logic';
 import { createGiveawayTournamentModule } from '../modules/giveaway-tournament-module';
 import { isGiveawayTournamentState, type GiveawayTournamentState } from '../modules/giveaway-tournament-logic';
+import { createSponsorCardModule } from '../modules/sponsor-card-module';
+import { isSponsorCardSnapshot, type SponsorCardSnapshot } from '../modules/sponsor-card-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -235,6 +237,9 @@ const BUILT_MODULE_KEYS = [
   // that its countdown ticks on the SHARED rAF loop rather than on a
   // timer of its own.
   'giveaway_tournament_card',
+  // PRF-02 slice 7, §6 #11 (Sponsor Card). A plain snapshot module -- no
+  // ordering requirement.
+  'sponsor_card',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -260,6 +265,7 @@ export default function MasterCanvasPage() {
   const reactionCloudContainerRef = useRef<HTMLDivElement>(null);
   const lobbyStatusContainerRef = useRef<HTMLDivElement>(null);
   const giveawayTournamentContainerRef = useRef<HTMLDivElement>(null);
+  const sponsorCardContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -465,6 +471,30 @@ export default function MasterCanvasPage() {
       return isGiveawayTournamentState(body.giveawayTournament) ? body.giveawayTournament : null;
     }
 
+    // Sponsor Card (§6 #11, PRF-02 slice 7). THE CARD RENDERS THE SPONSOR
+    // AND COUNTS NOTHING (owner decision, 2026-09-17) -- the response
+    // carries a name and, optionally, a logo reference, and nothing about
+    // WHETHER, WHEN or HOW OFTEN it was painted. No impression, exposure,
+    // view, duration, "shown at" or "displayed at" field exists on this
+    // path, because app_private.list_overlay_sponsor_card (migration
+    // 0145) returns exactly sponsor_name, logo_mime_type and
+    // logo_storage_key.
+    //
+    // `sponsorCard: null` is every "nothing to paint" case at once: a
+    // disabled card; a card outside its scheduled window; an
+    // unrecognised, expired, revoked or foreign token; and a channel with
+    // no sponsor card at all. All four are decided inside the SQL
+    // function, not here -- the card renders the same nothing for all of
+    // them.
+    async function fetchSponsorCardSnapshot(): Promise<SponsorCardSnapshot | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/sponsor-card`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { sponsorCard?: unknown };
+      return isSponsorCardSnapshot(body.sponsorCard) ? body.sponsorCard : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -613,6 +643,22 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
+    if (sponsorCardContainerRef.current) {
+      // Sponsor Card (§6 #11). One more snapshot module on the SAME
+      // shared `connection` and the SAME shared rAF loop -- no second
+      // session, no second transport, and no timer of its own.
+      //
+      // THE CARD RENDERS THE SPONSOR AND COUNTS NOTHING. Nothing about
+      // display -- no count, no impression, no exposure, no duration, no
+      // "shown at" -- is wired here and nothing may be: the snapshot type
+      // itself has no field for one.
+      runtime.registerModule(createSponsorCardModule({
+        container: sponsorCardContainerRef.current,
+        connection,
+        fetchSnapshot: fetchSponsorCardSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -712,6 +758,13 @@ export default function MasterCanvasPage() {
         .master-canvas-giveaway [data-role="tournament-line"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
         .master-canvas-giveaway [data-role="tournament-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
         .master-canvas-giveaway [data-role="tournament-fill"] { background: linear-gradient(90deg, #f59e0b, #38bdf8); border-radius: 999px; }
+        /* Sponsor Card (§6 #11). Text-only today -- the logo reference is
+           recorded as a data attribute, not fetched as an image, until a
+           byte-serving endpoint exists (see sponsor-card-module.ts). */
+        .master-canvas-sponsor { position: absolute; bottom: 20px; left: 0; max-width: 320px; color: #fff; }
+        .master-canvas-sponsor [data-role="sponsor-card"] { padding: 10px 14px; border-radius: 12px; background: rgba(12,17,29,.78); }
+        .master-canvas-sponsor [data-role="sponsor-card-kicker"] { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .75; }
+        .master-canvas-sponsor [data-role="sponsor-card-name"] { font-size: 14px; font-weight: 600; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -725,6 +778,7 @@ export default function MasterCanvasPage() {
       <div ref={reactionCloudContainerRef} className="master-canvas-module master-canvas-reaction-cloud" aria-hidden="true" />
       <div ref={lobbyStatusContainerRef} className="master-canvas-module master-canvas-lobby" aria-live="polite" />
       <div ref={giveawayTournamentContainerRef} className="master-canvas-module master-canvas-giveaway" aria-live="polite" />
+      <div ref={sponsorCardContainerRef} className="master-canvas-module master-canvas-sponsor" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

@@ -24,6 +24,10 @@ import {
   projectOverlayGiveawayTournament,
   type GiveawayTournamentOverlayStore,
 } from '../domain/giveaway-tournament-store.js';
+import {
+  projectOverlaySponsorCard,
+  type SponsorCardOverlayStore,
+} from '../domain/sponsor-card-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -84,6 +88,12 @@ export async function registerMasterCanvasRoutes(
   // route below fails closed to 503 like every other optional dependency
   // in this file.
   overlayGiveawayTournament?: GiveawayTournamentOverlayStore,
+  // PRF-02 slice 7, §6 module #11 (Sponsor Card). Appended at the end for
+  // the same reason every prior module's overlay dependency was: every
+  // existing positional call keeps compiling and behaving unchanged, and
+  // when it is undefined the new route below fails closed to 503 like
+  // every other optional dependency in this file.
+  overlaySponsorCard?: SponsorCardOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -375,6 +385,52 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_giveaway_tournament_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Giveaway and tournament state is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+
+  // PRF-02 slice 7, §6 module #11 (Sponsor Card) -- the overlay read. Same
+  // overlay browser-source shape as the routes above, and in this file for
+  // the same reason every prior slice recorded: it is a Master Canvas
+  // module read, not an interaction, and this file already owns the
+  // bearer-token helper and the master_canvas_store_unavailable envelope.
+  // The creator's own sponsor-card read/write is a separate,
+  // session-authenticated surface (routes/sponsor-card.ts) -- an overlay
+  // browser-source token can read the card and can never change it.
+  //
+  // THE CARD RENDERS THE SPONSOR AND COUNTS NOTHING (owner decision,
+  // 2026-09-17). THE RESPONSE CARRIES A NAME AND, OPTIONALLY, A LOGO
+  // REFERENCE, AND NOTHING ELSE. app_private.list_overlay_sponsor_card
+  // (migration 0145) returns exactly `sponsor_name, logo_mime_type,
+  // logo_storage_key` -- no id, no schedule, no enabled flag, no
+  // timestamp, and no count, impression, exposure or duration of any
+  // kind, because none exists in the schema behind it either.
+  // projectOverlaySponsorCard() then narrows a SECOND, independent time
+  // in front of whatever the store hands up, so the guarantee does not
+  // rest on a single layer.
+  //
+  // A ROW IS RETURNED ONLY WHEN THE CARD IS CURRENTLY SUPPOSED TO BE
+  // VISIBLE: `enabled = true`, and inside its schedule window if it has
+  // one. Disabled, outside the window, an unrecognised/expired/revoked/
+  // foreign token, and a channel with no sponsor card at all all answer
+  // 200 with `sponsorCard: null` -- every one of them means "paint
+  // nothing", and collapsing them loses nothing the card needs to know. A
+  // MISSING bearer token is still 401: that is a malformed request, not
+  // an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/sponsor-card', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'The sponsor card is not available', traceId: request.id });
+    if (!overlaySponsorCard) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The sponsor card is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const sponsorCard = await overlaySponsorCard.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', sponsorCard: projectOverlaySponsorCard(sponsorCard) });
+    } catch (error) {
+      logSafeError(request, 'overlay_sponsor_card_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The sponsor card is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

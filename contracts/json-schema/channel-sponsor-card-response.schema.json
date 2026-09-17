@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-sponsor-card-response.schema.json",
+  "title": "Channel sponsor card response (PRF-02 slice 7, catalogue module #11)",
+  "description": "The creator-facing (session-authenticated) projection of a channel's one sponsor card. One row per channel -- there is no create/end lifecycle, only an upsert. Carries no impression, exposure, view, duration, 'shown at' or 'displayed at' field of any kind (owner decision, 2026-09-17: the card renders the sponsor and counts nothing). scheduleStartsAt/scheduleEndsAt are an instruction about the FUTURE -- both null (no schedule) or both set (an absolute UTC window) -- never a record of the past. Logo fields are all null together or all set together; logoStorageKey is generated in the database from channelId and logoContentSha256 and is never independently writable. Available at every tier (section 12.6); sponsor_card is already one of migration 0131's twenty Master Canvas catalogue keys and carries no second tier gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "sponsorCard"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "sponsorCard": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion", "sponsorCardId", "sponsorName",
+            "logoContentSha256", "logoMimeType", "logoByteSize", "logoStorageKey",
+            "enabled", "scheduleStartsAt", "scheduleEndsAt", "createdAt", "updatedAt"
+          ],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "sponsorCardId": { "type": "string", "format": "uuid" },
+            "sponsorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "logoContentSha256": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              ]
+            },
+            "logoMimeType": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "minLength": 1, "maxLength": 120 }
+              ]
+            },
+            "logoByteSize": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "integer", "minimum": 1 }
+              ],
+              "description": "A storage fact, not a product cap. No maximum is decided anywhere in this repository, so none is invented here."
+            },
+            "logoStorageKey": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "minLength": 1, "maxLength": 200 }
+              ]
+            },
+            "enabled": { "type": "boolean" },
+            "scheduleStartsAt": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "format": "date-time" }
+              ]
+            },
+            "scheduleEndsAt": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "format": "date-time" }
+              ]
+            },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          },
+          "allOf": [
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "logoContentSha256": { "type": "null" }, "logoMimeType": { "type": "null" },
+                    "logoByteSize": { "type": "null" }, "logoStorageKey": { "type": "null" }
+                  }
+                },
+                {
+                  "properties": {
+                    "logoContentSha256": { "type": "string" }, "logoMimeType": { "type": "string" },
+                    "logoByteSize": { "type": "integer" }, "logoStorageKey": { "type": "string" }
+                  }
+                }
+              ]
+            },
+            {
+              "oneOf": [
+                { "properties": { "scheduleStartsAt": { "type": "null" }, "scheduleEndsAt": { "type": "null" } } },
+                { "properties": { "scheduleStartsAt": { "type": "string" }, "scheduleEndsAt": { "type": "string" } } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

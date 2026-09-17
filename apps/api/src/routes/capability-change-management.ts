@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePlatformAdmin } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
-import { CapabilityChangeManagementError, type CapabilityChangeManagementStore, type CapabilityChangeStatus } from '../domain/capability-change-management.js';
+import { CapabilityChangeManagementError, type CapabilityChangeKindTaxonomy, type CapabilityChangeManagementStore, type CapabilityChangeStatus } from '../domain/capability-change-management.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 // CTL phase 2, Lane A (migration 0152). Platform-staff-only governance
@@ -34,6 +34,12 @@ const capacityClasses = [
   'custom_asset', 'team_seat', 'automation_volume', 'master_canvas_module',
 ] as const;
 const tiers = ['free', 'pro', 'creator', 'studio'] as const;
+// §20.2's own taxonomy (migration 0153) -- NOT the same concept as
+// capacityClass. Does not contain marketing_section, which CTL-12
+// needs -- see migration 0153's own header for why that gap is
+// reported rather than closed here. Migration 0157: now also accepted
+// on propose, carried through the two-staff-approved workflow.
+const kinds: CapabilityChangeKindTaxonomy[] = ['widget', 'module', 'feature', 'hub_lane', 'lobby_mode', 'ai_feature'];
 
 function unavailable(reply: { code: (status: number) => { send: (body: unknown) => unknown } }, traceId: string) {
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'capability_change_management_unavailable', message: 'Capability change management is temporarily unavailable', traceId, retryable: true });
@@ -69,6 +75,12 @@ export async function registerCapabilityChangeManagementRoutes(
     capabilityKey: string; capacityClass: typeof capacityClasses[number]; description: string;
     killSwitch?: boolean; rolloutPercentage?: number; minTier?: typeof tiers[number] | null;
     effectiveAt?: string; reason?: string;
+    // Migration 0157: the six §20.2 fields migration 0153 added. All
+    // optional -- omitted means "this change does not touch this
+    // field" (merge semantics, see domain/capability-change-
+    // management.ts's own header), not "clear it to empty/false/null".
+    kind?: typeof kinds[number] | null; limits?: Record<string, unknown>; beta?: boolean;
+    marketingVisible?: boolean; marketingLabel?: string | null; marketingBlurb?: string | null;
   } }>('/v1/admin/capability-registry/changes', {
     preHandler: adminAuth,
     schema: {
@@ -84,6 +96,12 @@ export async function registerCapabilityChangeManagementRoutes(
           minTier: { type: ['string', 'null'], enum: [...tiers, null] },
           effectiveAt: { type: 'string', format: 'date-time' },
           reason: { type: 'string', maxLength: 500 },
+          kind: { type: ['string', 'null'], enum: [...kinds, null] },
+          limits: { type: 'object' },
+          beta: { type: 'boolean' },
+          marketingVisible: { type: 'boolean' },
+          marketingLabel: { type: ['string', 'null'], maxLength: 200 },
+          marketingBlurb: { type: ['string', 'null'], maxLength: 500 },
         },
       },
     },
@@ -99,6 +117,12 @@ export async function registerCapabilityChangeManagementRoutes(
         minTier: request.body.minTier ?? null,
         effectiveAt: request.body.effectiveAt ?? null,
         reason: request.body.reason ?? null,
+        kind: request.body.kind ?? undefined,
+        limits: request.body.limits ?? undefined,
+        beta: request.body.beta ?? undefined,
+        marketingVisible: request.body.marketingVisible ?? undefined,
+        marketingLabel: request.body.marketingLabel ?? undefined,
+        marketingBlurb: request.body.marketingBlurb ?? undefined,
       });
       return reply.code(201).send(change);
     } catch (error) {

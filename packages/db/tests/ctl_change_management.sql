@@ -112,7 +112,13 @@ begin
     select unnest(array[
       'app_private.apply_due_capability_change(uuid)',
       'app_private.capability_change_row(uuid)',
-      'app_private.staff_propose_capability_change(text, text, text, boolean, integer, text, timestamptz, text)',
+      -- Migration 0157: widened from 8 to 14 parameters (six new
+      -- trailing, defaulted params carrying kind/limits/beta/
+      -- marketing_*) -- regprocedure signature resolution always names
+      -- the FULL parameter type list, defaults or not, so this text
+      -- must list all fourteen even though most call sites in this file
+      -- still pass only the original eight positionally.
+      'app_private.staff_propose_capability_change(text, text, text, boolean, integer, text, timestamptz, text, text, jsonb, boolean, boolean, text, text)',
       'app_private.staff_get_capability_change(uuid)',
       'app_private.staff_list_capability_changes(text, integer)',
       'app_private.staff_list_capability_change_approvals(uuid)',
@@ -742,10 +748,18 @@ $$;
 -- =========================================================================
 -- STRUCTURAL: exact returned column sets.
 -- =========================================================================
+-- Migration 0157: widened from 18 to 24 columns -- the six new
+-- proposed_kind/proposed_limits/proposed_beta/proposed_marketing_visible/
+-- proposed_marketing_label/proposed_marketing_blurb columns, inserted
+-- immediately after proposed_min_tier, are now carried through the
+-- propose/approve/apply workflow (see migration 0157's own header for
+-- why: 0153 added these columns but did not thread them through this
+-- workflow, closing the single-admin bypass on staff_set_capability_
+-- registry_entry left no OTHER governed path for them at all).
 do $$
 declare actual text; expected text;
 begin
-  expected := 'id,capability_key,change_kind,status,proposed_capacity_class,proposed_description,proposed_kill_switch,proposed_rollout_percentage,proposed_min_tier,effective_at,requires_owner_signoff,staff_approval_count,owner_approval_count,created_by,created_at,applied_at,decided_at,reason';
+  expected := 'id,capability_key,change_kind,status,proposed_capacity_class,proposed_description,proposed_kill_switch,proposed_rollout_percentage,proposed_min_tier,proposed_kind,proposed_limits,proposed_beta,proposed_marketing_visible,proposed_marketing_label,proposed_marketing_blurb,effective_at,requires_owner_signoff,staff_approval_count,owner_approval_count,created_by,created_at,applied_at,decided_at,reason';
 
   select string_agg(p.parameter_name, ',' order by p.ordinal_position) into actual
     from information_schema.parameters p

@@ -4136,17 +4136,26 @@ components:
       required: [
         schemaVersion, id, capabilityKey, changeKind, status, proposedCapacityClass,
         proposedDescription, proposedKillSwitch, proposedRolloutPercentage, proposedMinTier,
-        effectiveAt, requiresOwnerSignoff, staffApprovalCount, ownerApprovalCount, createdBy,
-        createdAt, appliedAt, decidedAt, reason
+        proposedKind, proposedLimits, proposedBeta, proposedMarketingVisible, proposedMarketingLabel,
+        proposedMarketingBlurb, effectiveAt, requiresOwnerSignoff, staffApprovalCount,
+        ownerApprovalCount, createdBy, createdAt, appliedAt, decidedAt, reason
       ]
       description: >-
-        CTL-06/07/08/09 (migration 0152). A single proposed-or-applied governance action over
-        public.capability_registry (migration 0149). `changeKind: update` goes through the
-        CTL-07 approval machinery; `kill` (rule 3) and `revert` (CTL-08) are always immediately
-        `status: applied` and carry zero approvals by construction. `effectiveAt` may be in the
-        future for a staged `update` (CTL-06) - it is applied automatically, on the next read
-        through this plane, the moment it is both `approved` and past `effectiveAt`.
-        `requiresOwnerSignoff` is computed once, at propose time, and never changes afterward.
+        CTL-06/07/08/09 (migration 0152, widened to all twelve §20.2 fields by migration 0157).
+        A single proposed-or-applied governance action over public.capability_registry
+        (migration 0149). `changeKind: update` goes through the CTL-07 approval machinery;
+        `kill` (rule 3) and `revert` (CTL-08) are always immediately `status: applied` and
+        carry zero approvals by construction. `effectiveAt` may be in the future for a staged
+        `update` (CTL-06) - it is applied automatically, on the next read through this plane,
+        the moment it is both `approved` and past `effectiveAt`. `requiresOwnerSignoff` is
+        computed once, at propose time, and never changes afterward - based solely on
+        `proposedMinTier`, unaffected by the six fields migration 0157 added. Those six
+        (`proposedKind`/`proposedLimits`/`proposedBeta`/`proposedMarketingVisible`/
+        `proposedMarketingLabel`/`proposedMarketingBlurb`) use MERGE semantics: `null` means
+        "this change does not touch this field" (preserved from the capability's current value
+        on apply), not "clear it" - see ProposeCapabilityChangeRequest's own description. A
+        `kill` row leaves all six null (a kill never touches them); a `revert` row always
+        carries all twelve restored values (CTL-08 always writes the full desired state).
       properties:
         schemaVersion: { type: string, const: v1 }
         id: { type: string, format: uuid }
@@ -4160,6 +4169,12 @@ components:
         proposedKillSwitch: { type: boolean }
         proposedRolloutPercentage: { type: integer, minimum: 0, maximum: 100 }
         proposedMinTier: { oneOf: [{ type: 'null' }, { type: string, enum: [free, pro, creator, studio] }] }
+        proposedKind: { oneOf: [{ type: 'null' }, { $ref: '#/components/schemas/CapabilityKind' }] }
+        proposedLimits: { oneOf: [{ type: 'null' }, { type: object }], description: 'jsonb, e.g. {"max_instances": 3}. null means this change does not touch limits (merge semantics, migration 0157).' }
+        proposedBeta: { oneOf: [{ type: 'null' }, { type: boolean }] }
+        proposedMarketingVisible: { oneOf: [{ type: 'null' }, { type: boolean }] }
+        proposedMarketingLabel: { oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }] }
+        proposedMarketingBlurb: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
         effectiveAt: { type: string, format: date-time }
         requiresOwnerSignoff: { type: boolean }
         staffApprovalCount: { type: integer, minimum: 0 }
@@ -4205,7 +4220,18 @@ components:
       description: >-
         CTL-09: capacityClass accepts only the closed whitelist - the same nine §12.6.1
         durable-record classes rejected by the registry itself (CTL-14) are unrepresentable
-        here too, not merely disallowed by a convention this schema could drift from.
+        here too, not merely disallowed by a convention this schema could drift from. Migration
+        0157: kind/limits/beta/marketingVisible/marketingLabel/marketingBlurb (§20.2's six
+        fields migration 0153 added to the registry) are now also accepted here, all optional.
+        Omitting any of the six means "this change does not touch this field" (MERGE semantics
+        - the capability's current value is preserved on apply), not "clear it to
+        false/empty/null" - a caller that wants to actually change one of them must supply a
+        real (non-null, for the boolean/jsonb fields) value. The one named limitation: a
+        previously-set marketingLabel/marketingBlurb cannot be explicitly cleared back to null
+        through this endpoint - omitting it preserves whatever is already set, it does not
+        clear it. See migration 0157's own header
+        (packages/db/migrations/0157_v1_ctl_change_management_twelve_fields.sql) for the full
+        reasoning.
       properties:
         capabilityKey: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
         capacityClass:
@@ -4220,6 +4246,24 @@ components:
           format: date-time
           description: Omit for an unstaged change effective immediately (CTL-06); a future timestamp stages it.
         reason: { type: string, maxLength: 500 }
+        kind:
+          oneOf: [{ type: 'null' }, { $ref: '#/components/schemas/CapabilityKind' }]
+          description: Omit to leave the capability's current kind untouched (merge semantics, migration 0157).
+        limits:
+          type: object
+          description: 'jsonb, e.g. {"max_instances": 3, "max_duration_ms": 8000}. Omit to leave the capability''s current limits untouched (merge semantics, migration 0157).'
+        beta:
+          type: boolean
+          description: Omit to leave the capability's current beta flag untouched (merge semantics, migration 0157).
+        marketingVisible:
+          type: boolean
+          description: Omit to leave the capability's current marketingVisible flag untouched (merge semantics, migration 0157).
+        marketingLabel:
+          oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }]
+          description: Omit to leave the capability's current marketingLabel untouched (merge semantics, migration 0157) - cannot be used to explicitly clear an already-set label to null.
+        marketingBlurb:
+          oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }]
+          description: Omit to leave the capability's current marketingBlurb untouched (merge semantics, migration 0157) - cannot be used to explicitly clear an already-set blurb to null.
     ApproveCapabilityChangeRequest:
       type: object
       additionalProperties: false

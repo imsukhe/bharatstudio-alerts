@@ -1,8 +1,9 @@
-import type { Sql, TransactionSql } from 'postgres';
+import type { JSONValue, Sql, TransactionSql } from 'postgres';
 import {
   CapabilityChangeManagementError,
   type CapabilityApprovalKind,
   type CapabilityChangeApproval,
+  type CapabilityChangeKindTaxonomy,
   type CapabilityChangeManagementStore,
   type CapabilityChangeRequest,
   type CapabilityChangeStatus,
@@ -64,6 +65,13 @@ type ChangeRow = {
   proposed_kill_switch: boolean;
   proposed_rollout_percentage: number;
   proposed_min_tier: string | null;
+  // Migration 0157.
+  proposed_kind: CapabilityChangeKindTaxonomy | null;
+  proposed_limits: Record<string, unknown> | null;
+  proposed_beta: boolean | null;
+  proposed_marketing_visible: boolean | null;
+  proposed_marketing_label: string | null;
+  proposed_marketing_blurb: string | null;
   effective_at: Date;
   requires_owner_signoff: boolean;
   staff_approval_count: number;
@@ -87,6 +95,12 @@ function fromRow(row: ChangeRow): CapabilityChangeRequest {
     proposedKillSwitch: row.proposed_kill_switch,
     proposedRolloutPercentage: row.proposed_rollout_percentage,
     proposedMinTier: row.proposed_min_tier,
+    proposedKind: row.proposed_kind,
+    proposedLimits: row.proposed_limits ?? null,
+    proposedBeta: row.proposed_beta,
+    proposedMarketingVisible: row.proposed_marketing_visible,
+    proposedMarketingLabel: row.proposed_marketing_label,
+    proposedMarketingBlurb: row.proposed_marketing_blurb,
     effectiveAt: row.effective_at.toISOString(),
     requiresOwnerSignoff: row.requires_owner_signoff,
     staffApprovalCount: row.staff_approval_count,
@@ -105,12 +119,15 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
           select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
             from app_private.staff_propose_capability_change(
               ${input.capabilityKey}, ${input.capacityClass}, ${input.description}, ${input.killSwitch},
-              ${input.rolloutPercentage}, ${input.minTier}, ${input.effectiveAt}, ${input.reason}
+              ${input.rolloutPercentage}, ${input.minTier}, ${input.effectiveAt}, ${input.reason},
+              ${input.kind ?? null}, ${input.limits ? sql.json(input.limits as JSONValue) : null}, ${input.beta ?? null},
+              ${input.marketingVisible ?? null}, ${input.marketingLabel ?? null}, ${input.marketingBlurb ?? null}
             )
         `);
         const row = rows[0];
@@ -124,8 +141,9 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
     async listChanges(userId, status, limit): Promise<CapabilityChangeRequest[]> {
       const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
         select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
           from app_private.staff_list_capability_changes(${status}, ${limit})
       `);
@@ -134,8 +152,9 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
     async getChange(userId, changeRequestId): Promise<CapabilityChangeRequest | null> {
       const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
         select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
           from app_private.staff_get_capability_change(${changeRequestId}::uuid)
       `);
@@ -156,8 +175,9 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
           select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
             from app_private.staff_approve_capability_change(${changeRequestId}::uuid, ${approvalKind})
         `);
@@ -183,8 +203,9 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
           select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
             from app_private.staff_reject_capability_change(${changeRequestId}::uuid, ${reason})
         `);
@@ -200,8 +221,9 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
           select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
             from app_private.staff_kill_capability_now(${capabilityKey}, ${reason})
         `);
@@ -217,8 +239,9 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
           select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier, effective_at,
-          requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
+          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
+          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
+          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
           applied_at, decided_at, reason
             from app_private.staff_revert_capability_registry_entry(${capabilityKey}, ${reason})
         `);

@@ -59,6 +59,14 @@ const sampleChange: CapabilityChangeRequest = {
   proposedKillSwitch: false,
   proposedRolloutPercentage: 100,
   proposedMinTier: 'pro',
+  // Migration 0157: the six §20.2 fields migration 0153 added, now
+  // carried through this workflow.
+  proposedKind: null,
+  proposedLimits: null,
+  proposedBeta: null,
+  proposedMarketingVisible: null,
+  proposedMarketingLabel: null,
+  proposedMarketingBlurb: null,
   effectiveAt: '2026-09-17T10:00:00.000Z',
   requiresOwnerSignoff: false,
   staffApprovalCount: 0,
@@ -135,7 +143,61 @@ test('capability change management: propose rejects a body with an undeclared fi
     payload: { capabilityKey: 'ctl_route_probe', capacityClass: 'payment', description: 'CTL-09: this must never validate' },
   });
   assert.equal(badCapacityClass.statusCode, 400);
+
+  // Migration 0157: an unrecognised kind is rejected the same way an
+  // unrecognised capacityClass already was -- same enum-validation
+  // posture extended to the newly-accepted field.
+  const badKind = await app.inject({
+    method: 'POST', url: '/v1/admin/capability-registry/changes', headers,
+    payload: { capabilityKey: 'ctl_route_probe', capacityClass: 'team_seat', description: 'probe', kind: 'marketing_section' },
+  });
+  assert.equal(badKind.statusCode, 400);
   await app.close();
+});
+
+test('capability change management: propose forwards all six new §20.2 fields (migration 0157) to the store', async () => {
+  let received: unknown;
+  const app = await buildApp(config, {
+    sessions, admin,
+    capabilityChangeManagement: fakeStore({
+      async proposeChange(_userId, input) { received = input; return sampleChange; },
+    }),
+  });
+  const response = await app.inject({
+    method: 'POST', url: '/v1/admin/capability-registry/changes', headers,
+    payload: {
+      capabilityKey: 'ctl_route_probe', capacityClass: 'team_seat', description: 'probe',
+      kind: 'module', limits: { max_instances: 3 }, beta: true,
+      marketingVisible: true, marketingLabel: 'Label', marketingBlurb: 'Blurb',
+    },
+  });
+  assert.equal(response.statusCode, 201);
+  assert.deepEqual(received, {
+    capabilityKey: 'ctl_route_probe', capacityClass: 'team_seat', description: 'probe',
+    killSwitch: false, rolloutPercentage: 100, minTier: null, effectiveAt: null, reason: null,
+    kind: 'module', limits: { max_instances: 3 }, beta: true,
+    marketingVisible: true, marketingLabel: 'Label', marketingBlurb: 'Blurb',
+  });
+
+  // Omitting all six leaves them undefined -- merge semantics ("do not
+  // touch this field"), never coerced to a real value like false/{}/null.
+  let receivedOmitted: unknown;
+  const app2 = await buildApp(config, {
+    sessions, admin,
+    capabilityChangeManagement: fakeStore({
+      async proposeChange(_userId, input) { receivedOmitted = input; return sampleChange; },
+    }),
+  });
+  await app2.inject({
+    method: 'POST', url: '/v1/admin/capability-registry/changes', headers,
+    payload: { capabilityKey: 'ctl_route_probe', capacityClass: 'team_seat', description: 'probe' },
+  });
+  const omitted = receivedOmitted as Record<string, unknown>;
+  for (const field of ['kind', 'limits', 'beta', 'marketingVisible', 'marketingLabel', 'marketingBlurb']) {
+    assert.equal(omitted[field], undefined, `${field} must stay undefined (merge semantics), not coerced`);
+  }
+  await app.close();
+  await app2.close();
 });
 
 test('capability change management: get returns the change plus its approvals, 404 when not found', async () => {

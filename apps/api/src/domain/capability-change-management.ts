@@ -15,10 +15,27 @@
 // already use) -- there is no channel-scoped access check anywhere in
 // this file, because capability_registry (and this governance layer
 // over it) is platform-wide, never per-channel.
+//
+// Migration 0157 widened this workflow to carry all twelve §20.2
+// registry fields (the original six plus kind/limits/beta/
+// marketing_visible/marketing_label/marketing_blurb, migration 0153's
+// own field set that had no governed change path at all on an existing
+// capability until this migration). The six new proposed* fields use
+// MERGE semantics, not full-replace: `null` on any of them means "this
+// change does not touch this field" and the capability's current value
+// is preserved on apply -- an ordinary six-field-only change (the six
+// new fields all omitted from the request body) behaves exactly as it
+// did before this migration. See packages/db/migrations/
+// 0157_v1_ctl_change_management_twelve_fields.sql's own header for the
+// full reasoning, including the one named limitation (a previously-set
+// marketingLabel/marketingBlurb cannot be explicitly cleared back to
+// null through this workflow -- omitting it preserves it, it does not
+// clear it).
 
 export type CapabilityChangeKind = 'update' | 'kill' | 'revert';
 export type CapabilityChangeStatus = 'pending_approval' | 'approved' | 'applied' | 'rejected';
 export type CapabilityApprovalKind = 'staff' | 'owner';
+export type CapabilityChangeKindTaxonomy = 'widget' | 'module' | 'feature' | 'hub_lane' | 'lobby_mode' | 'ai_feature';
 
 export type CapabilityChangeRequest = {
   schemaVersion: 'v1';
@@ -31,6 +48,19 @@ export type CapabilityChangeRequest = {
   proposedKillSwitch: boolean;
   proposedRolloutPercentage: number;
   proposedMinTier: string | null;
+  // Migration 0157, the six §20.2 fields migration 0153 added --
+  // present here (null or a value) on every row regardless of when it
+  // was created; null means either "this change never touched this
+  // field" (an ordinary six-field change, or any row created before
+  // migration 0157 shipped) or, for a `kill` row, "a kill never touches
+  // these fields at all" -- see this file's own header for the merge
+  // semantics that apply on `changeKind: update`.
+  proposedKind: CapabilityChangeKindTaxonomy | null;
+  proposedLimits: Record<string, unknown> | null;
+  proposedBeta: boolean | null;
+  proposedMarketingVisible: boolean | null;
+  proposedMarketingLabel: string | null;
+  proposedMarketingBlurb: string | null;
   // CTL-06: may be in the future for a still-staged change.
   effectiveAt: string;
   requiresOwnerSignoff: boolean;
@@ -60,6 +90,17 @@ export type ProposeCapabilityChangeInput = {
   // CTL-06: omitted means "now" (an ordinary, unstaged change).
   effectiveAt: string | null;
   reason: string | null;
+  // Migration 0157: `null`/omitted on any of these six means "this
+  // change does not touch this field" -- merge semantics, see this
+  // file's own header, including the one named limitation on clearing
+  // marketingLabel/marketingBlurb. A real, non-null value (an explicit
+  // `false` or `{}` included) is written verbatim.
+  kind: CapabilityChangeKindTaxonomy | null | undefined;
+  limits: Record<string, unknown> | null | undefined;
+  beta: boolean | null | undefined;
+  marketingVisible: boolean | null | undefined;
+  marketingLabel: string | null | undefined;
+  marketingBlurb: string | null | undefined;
 };
 
 // A fixed, small set of business-rule outcomes the SQL layer can raise

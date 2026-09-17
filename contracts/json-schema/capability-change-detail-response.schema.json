@@ -1,14 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bharatstudio.in/contracts/v1/capability-change-detail-response.schema.json",
-  "title": "Capability change request detail response (CTL phase 2 Lane A, change management, migration 0152)",
-  "description": "GET /v1/admin/capability-registry/changes/{changeRequestId}. CTL-06/07/08/09's governance layer over the phase-1 capability control plane (migration 0149) -- a single proposed-or-applied change plus every approval recorded against it. changeKind 'update' goes through the CTL-07 approval machinery (staffApprovalCount/ownerApprovalCount, requiresOwnerSignoff); 'kill' (rule 3, single-admin) and 'revert' (CTL-08, one action) are always status 'applied' with zero approvals by construction. effectiveAt may be in the future for a staged 'update' (CTL-06) -- it is applied automatically on the next read through this plane once both approved and past effectiveAt, never by a separate sweep call this response shape would need to represent.",
+  "title": "Capability change request detail response (CTL phase 2 Lane A, change management, migration 0152; widened to all twelve §20.2 fields by migration 0157)",
+  "description": "GET /v1/admin/capability-registry/changes/{changeRequestId}. CTL-06/07/08/09's governance layer over the phase-1 capability control plane (migration 0149) -- a single proposed-or-applied change plus every approval recorded against it. changeKind 'update' goes through the CTL-07 approval machinery (staffApprovalCount/ownerApprovalCount, requiresOwnerSignoff); 'kill' (rule 3, single-admin) and 'revert' (CTL-08, one action) are always status 'applied' with zero approvals by construction. effectiveAt may be in the future for a staged 'update' (CTL-06) -- it is applied automatically on the next read through this plane once both approved and past effectiveAt, never by a separate sweep call this response shape would need to represent. Migration 0157 widened this response with proposedKind/proposedLimits/proposedBeta/proposedMarketingVisible/proposedMarketingLabel/proposedMarketingBlurb -- null on any of the six means the change never touched that field (merge semantics: the capability's current value is preserved on apply), not that it was cleared.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "$schema", "schemaVersion", "id", "capabilityKey", "changeKind", "status",
     "proposedCapacityClass", "proposedDescription", "proposedKillSwitch",
-    "proposedRolloutPercentage", "proposedMinTier", "effectiveAt", "requiresOwnerSignoff",
+    "proposedRolloutPercentage", "proposedMinTier", "proposedKind", "proposedLimits",
+    "proposedBeta", "proposedMarketingVisible", "proposedMarketingLabel", "proposedMarketingBlurb",
+    "effectiveAt", "requiresOwnerSignoff",
     "staffApprovalCount", "ownerApprovalCount", "createdBy", "createdAt", "appliedAt",
     "decidedAt", "reason", "approvals"
   ],
@@ -31,6 +33,14 @@
     "proposedMinTier": {
       "oneOf": [{ "type": "null" }, { "enum": ["free", "pro", "creator", "studio"] }]
     },
+    "proposedKind": {
+      "oneOf": [{ "type": "null" }, { "enum": ["widget", "module", "feature", "hub_lane", "lobby_mode", "ai_feature"] }]
+    },
+    "proposedLimits": { "oneOf": [{ "type": "null" }, { "type": "object" }] },
+    "proposedBeta": { "oneOf": [{ "type": "null" }, { "type": "boolean" }] },
+    "proposedMarketingVisible": { "oneOf": [{ "type": "null" }, { "type": "boolean" }] },
+    "proposedMarketingLabel": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 200 }] },
+    "proposedMarketingBlurb": { "oneOf": [{ "type": "null" }, { "type": "string", "maxLength": 500 }] },
     "effectiveAt": { "type": "string", "format": "date-time" },
     "requiresOwnerSignoff": { "type": "boolean" },
     "staffApprovalCount": { "type": "integer", "minimum": 0 },

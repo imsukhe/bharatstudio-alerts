@@ -1,0 +1,18 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-media-queue-item-response.schema.json",
+  "schemaVersion": "v1",
+  "item": {
+    "schemaVersion": "v1",
+    "mediaQueueItemId": "00000000-0000-4000-8000-000000005b51",
+    "title": "First meme",
+    "mediaKind": "image",
+    "mimeType": "image/png",
+    "storageUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/first-meme.png",
+    "thumbnailUrl": null,
+    "durationMs": null,
+    "status": "queued",
+    "enabled": true,
+    "createdAt": "2026-09-17T10:00:00.000Z",
+    "updatedAt": "2026-09-17T10:00:00.000Z"
+  }
+}

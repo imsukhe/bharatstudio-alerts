@@ -14,6 +14,7 @@ import { createModeratorStatusModule } from './modules/moderator-status-module';
 import { createReactionCloudModule } from './modules/reaction-cloud-module';
 import { createLobbyStatusModule } from './modules/lobby-status-module';
 import { createGiveawayTournamentModule } from './modules/giveaway-tournament-module';
+import { createMediaQueueModule } from './modules/media-queue-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -901,6 +902,7 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   const reactionCloudContainer = document.createElement('div');
   const lobbyStatusContainer = document.createElement('div');
   const giveawayTournamentContainer = document.createElement('div');
+  const mediaQueueContainer = document.createElement('div');
 
   const fetchGoalSnapshot = async () => null;
   const fetchVoteSnapshot = async () => null;
@@ -942,6 +944,9 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.registerModule(createGiveawayTournamentModule({
     container: giveawayTournamentContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
   }));
+  runtime.registerModule(createMediaQueueModule({
+    container: mediaQueueContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
 
   runtime.start();
   runtime.setModuleEntitled('support_theater', true);
@@ -956,11 +961,12 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.setModuleEntitled('reaction_cloud', true);
   runtime.setModuleEntitled('lobby_status', true);
   runtime.setModuleEntitled('giveaway_tournament_card', true);
+  runtime.setModuleEntitled('media_meme_queue', true);
   await flush();
 
-  assert.equal(fetchCalls, 1, 'twelve entitled modules must still open exactly one transport connection — the Giveaway / Tournament card adds an endpoint, never a session');
-  assert.equal(connection.getSubscriberCount(), 12, 'all twelve modules are subscribers on the one shared connection');
-  assert.equal(scheduler.pendingFrameCount(), 1, 'all twelve active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
+  assert.equal(fetchCalls, 1, 'thirteen entitled modules must still open exactly one transport connection — the Media / Meme Queue module adds an endpoint, never a session');
+  assert.equal(connection.getSubscriberCount(), 13, 'all thirteen modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all thirteen active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
 });
 
 test('PRF-02: the Lobby Status card paints on the SAME shared connection and rAF loop, and the whole canvas keeps one of each', async () => {
@@ -1118,6 +1124,45 @@ test('PRF-02.10: an un-entitled giveaway_tournament_card never subscribes, never
   assert.equal(giveawaySnapshotCalls, 0, 'an un-entitled module never fetches its own snapshot — it costs nothing');
   assert.equal(giveawayTournamentContainer.children.length, 0, 'an un-entitled module never even builds its DOM');
   assert.equal(runtime.getModuleStatus('giveaway_tournament_card'), 'inactive');
+});
+
+test('PRF-02.10: an un-entitled media_meme_queue never subscribes, never fetches its snapshot and never builds its DOM', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const goalContainer = document.createElement('div');
+  const mediaQueueContainer = document.createElement('div');
+  let mediaQueueSnapshotCalls = 0;
+
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createMediaQueueModule({
+    container: mediaQueueContainer, connection,
+    fetchSnapshot: async () => { mediaQueueSnapshotCalls += 1; return []; },
+    reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  // This module has NO PER-MODULE §30.3 entitlement of its own (unlike
+  // the Giveaway / Tournament card above) — only migration 0131's
+  // existing, untouched, module-wide "Master Canvas modules active" cap
+  // governs whether the Canvas renders it, and that is what
+  // setModuleEntitled(false) simulates here.
+  runtime.setModuleEntitled('media_meme_queue', false);
+  await flush();
+  scheduler.tick(0);
+  await flush();
+
+  assert.equal(connection.getSubscriberCount(), 1, 'the un-entitled module never subscribes to the shared connection');
+  assert.equal(mediaQueueSnapshotCalls, 0, 'an un-entitled module never fetches its own snapshot — it costs nothing');
+  assert.equal(mediaQueueContainer.children.length, 0, 'an un-entitled module never even builds its DOM');
+  assert.equal(runtime.getModuleStatus('media_meme_queue'), 'inactive');
 });
 
 test('PRF-02.10: an un-entitled lobby_status never subscribes, never fetches its snapshot and never builds its DOM', async () => {

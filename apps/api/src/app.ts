@@ -92,6 +92,14 @@ import { registerLobbySessionRoutes } from './routes/lobby-session.js';
 // routes/master-canvas.ts.
 import type { GiveawayTournamentStore, GiveawayTournamentOverlayStore } from './domain/giveaway-tournament-store.js';
 import { registerGiveawayTournamentRoutes } from './routes/giveaway-tournament.js';
+// PRF-02 slice 7, §6 catalogue module #20 (Media / Meme Queue). The
+// creator's own read/writes are their own route file; the OVERLAY read
+// (§12.7 "current and next", never a queue depth) is a Master Canvas
+// module read and lives in routes/master-canvas.ts. CREATOR-ONLY, per the
+// owner's 2026-09-17 decision (MED-20) -- this is the only write surface
+// in the product for public.media_queue_items.
+import type { MediaQueueStore, MediaQueueOverlayStore } from './domain/media-queue-store.js';
+import { registerMediaQueueRoutes } from './routes/media-queue.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -182,6 +190,17 @@ export type AppDependencies = {
   // app_private.list_overlay_giveaway_tournament (migration 0142) alone.
   giveawayTournaments?: GiveawayTournamentStore;
   overlayGiveawayTournament?: GiveawayTournamentOverlayStore;
+  // PRF-02 slice 7, §6 module #20 (Media / Meme Queue). The creator store
+  // is a write/read surface on the main pool; the overlay store is a
+  // derived read on RT-10/RT-11's derivedReadSql pool. NEVER tier-gated
+  // in TypeScript (§12.6): the only gate is the role gate, which lives in
+  // SQL (app_private.has_channel_role) inside migration 0146's own
+  // functions. There is no per-module §30.3 entitlement for this module
+  // the way the Lobby/Tournament engine has one -- only 0131's existing,
+  // untouched, module-wide "Master Canvas modules active" cap governs
+  // whether the Canvas renders it.
+  mediaQueue?: MediaQueueStore;
+  overlayMediaQueue?: MediaQueueOverlayStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -393,11 +412,12 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
-  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlayMediaQueue);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerSafeModeRoutes(app, dependencies.sessions, dependencies.safeMode, dependencies.account);
   await registerLobbySessionRoutes(app, dependencies.sessions, dependencies.lobbySessions, dependencies.account);
   await registerGiveawayTournamentRoutes(app, dependencies.sessions, dependencies.giveawayTournaments, dependencies.account);
+  await registerMediaQueueRoutes(app, dependencies.sessions, dependencies.mediaQueue, dependencies.account, config.mediaQueueMaxItemDurationMs, config.mediaQueueMaxItemsPerChannel);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

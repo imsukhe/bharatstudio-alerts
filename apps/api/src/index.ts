@@ -53,6 +53,12 @@ import { createSqlLobbyStatusOverlayStore } from './db/lobby-status-overlay-stor
 // Two files, two pools, deliberately -- see each store file's own header.
 import { createSqlGiveawayTournamentStore } from './db/giveaway-tournament-store.js';
 import { createSqlGiveawayTournamentOverlayStore } from './db/giveaway-tournament-overlay-store.js';
+// PRF-02 slice 7, §6 catalogue module #20 (Media / Meme Queue). Two
+// files, two pools, deliberately -- see each store file's own header.
+// CREATOR-ONLY (owner decision 2026-09-17, MED-20): mediaQueue is the
+// only write surface in the product for public.media_queue_items.
+import { createSqlMediaQueueStore } from './db/media-queue-store.js';
+import { createSqlMediaQueueOverlayStore } from './db/media-queue-overlay-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -212,6 +218,26 @@ const app = await buildApp(config, {
   // the SQL test can prove it, and nothing here may add a second copy.
   giveawayTournaments: sql ? createSqlGiveawayTournamentStore(sql) : undefined,
   overlayGiveawayTournament: sql ? createSqlGiveawayTournamentOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 7, §6 module #20 (Media / Meme Queue).
+  //
+  // The creator store carries writes, so it uses the MAIN pool exactly as
+  // giveawayTournaments/lobbySessions do -- which also keeps it correctly
+  // outside rule 3 of the RT-12 required-queries scan. The overlay store
+  // is a derived read on the RT-10/RT-11 derivedReadSql pool like every
+  // other widget/overlay read, which is what puts it INSIDE rule 3.
+  //
+  // Neither store is constructed with a tier or an entitlement function:
+  // this module has no per-module §30.3 gate, only the role gate
+  // (app_private.has_channel_role) that lives inside every migration
+  // 0146 function. The two CONFIGURED-BUT-UNSET numeric caps
+  // (config.mediaQueueMaxItemDurationMs, config.mediaQueueMaxItemsPerChannel)
+  // are NOT threaded through here: they are per-request values passed to
+  // registerMediaQueueRoutes in app.ts, not store-construction-time
+  // values, because they gate a single write call
+  // (app_private.enqueue_media_queue_item) rather than shaping every
+  // query the store issues.
+  mediaQueue: sql ? createSqlMediaQueueStore(sql) : undefined,
+  overlayMediaQueue: sql ? createSqlMediaQueueOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;
   // the overlay store is a derived read and uses derivedReadSql, which is

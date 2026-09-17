@@ -181,6 +181,32 @@
  * `app_private.list_overlay_giveaway_tournament` rather than
  * reimplemented, so an unentitled channel's valid token simply returns
  * null and the card paints nothing.
+ *
+ * PRF-02 SLICE 7 - MEDIA / MEME QUEUE (§6 #20): module thirteen, on the
+ * SAME one connection and the SAME one rAF loop as the twelve before it.
+ * It adds one more endpoint of its own
+ * (`/v1/overlay-widgets/:overlayId/media-queue`, migration 0146) and one
+ * more snapshot `fetch` closure, and nothing else.
+ *
+ * CREATOR-ONLY. VIEWERS CANNOT SUBMIT (owner decision, 2026-09-17;
+ * register row MED-20). This page has no form, no upload control and no
+ * code path anywhere capable of writing to the media queue - the fetch
+ * this module adds is a plain GET, exactly like every other snapshot
+ * module already on this page, and there is no submission endpoint, no
+ * approval queue and no viewer-facing write surface anywhere in this
+ * product for a future edit to wire up here.
+ *
+ * AT MOST TWO ENTRIES ("current" and "next"), never a queue-depth number
+ * - the identical bound `../modules/support-theater-module.ts` already
+ * established for this codebase, reused rather than invented. "next" is
+ * never rendered visibly on this page; the module holds it only to
+ * preload the following asset so advancing the queue does not stall a
+ * live broadcast.
+ *
+ * This module has NO PER-MODULE §30.3 ENTITLEMENT GATE, unlike the
+ * Giveaway / Tournament Card above: only the existing, untouched,
+ * module-wide "Master Canvas modules active" cap (migration 0131)
+ * governs whether it renders at all.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -204,6 +230,8 @@ import { createLobbyStatusModule } from '../modules/lobby-status-module';
 import { isLobbyStatus, type LobbyStatus } from '../modules/lobby-status-logic';
 import { createGiveawayTournamentModule } from '../modules/giveaway-tournament-module';
 import { isGiveawayTournamentState, type GiveawayTournamentState } from '../modules/giveaway-tournament-logic';
+import { createMediaQueueModule } from '../modules/media-queue-module';
+import { isMediaQueueState, type MediaQueueState } from '../modules/media-queue-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -235,6 +263,11 @@ const BUILT_MODULE_KEYS = [
   // that its countdown ticks on the SHARED rAF loop rather than on a
   // timer of its own.
   'giveaway_tournament_card',
+  // PRF-02 slice 7, §6 #20 (Media / Meme Queue). A plain snapshot module
+  // -- no ordering requirement. CREATOR-ONLY (owner decision,
+  // 2026-09-17; MED-20): this module only ever reads a server-computed
+  // "current and next" projection, never writes anything.
+  'media_meme_queue',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -260,6 +293,7 @@ export default function MasterCanvasPage() {
   const reactionCloudContainerRef = useRef<HTMLDivElement>(null);
   const lobbyStatusContainerRef = useRef<HTMLDivElement>(null);
   const giveawayTournamentContainerRef = useRef<HTMLDivElement>(null);
+  const mediaQueueContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -465,6 +499,34 @@ export default function MasterCanvasPage() {
       return isGiveawayTournamentState(body.giveawayTournament) ? body.giveawayTournament : null;
     }
 
+    // Media / Meme Queue (§6 #20, PRF-02 slice 7). CREATOR-ONLY -- viewers
+    // cannot submit (owner decision, 2026-09-17; register row MED-20).
+    // This fetch is the module's ENTIRE interaction with the server: a
+    // plain GET, never a write, and there is no code path anywhere on
+    // this page that could turn a viewer's browser source into a write to
+    // media_queue_items.
+    //
+    // AT MOST TWO ENTRIES, labelled "current" and "next" -- §12.7's
+    // Overlay row authorises "current and next alert state" in those
+    // exact words, and this reuses the identical bound
+    // ../modules/support-theater-module.ts already established for this
+    // codebase rather than inventing a queue-depth number. "next" is
+    // never rendered visibly; the module holds it only to preload the
+    // following asset (see media-queue-module.ts's own header).
+    //
+    // An empty array is every "nothing to paint" case at once: an
+    // unrecognised, expired, revoked or foreign token, and a channel with
+    // nothing live in rotation (every item played, skipped or disabled).
+    // Both mean the same thing to the module -- paint nothing.
+    async function fetchMediaQueueSnapshot(): Promise<MediaQueueState | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/media-queue`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { mediaQueue?: unknown };
+      return isMediaQueueState(body.mediaQueue) ? body.mediaQueue : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -613,6 +675,24 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
+    if (mediaQueueContainerRef.current) {
+      // Media / Meme Queue (§6 #20). One more snapshot module on the
+      // SAME shared `connection` and the SAME shared rAF loop -- no
+      // second session, no second transport, and no timer of its own.
+      //
+      // CREATOR-ONLY, AND THAT IS THE WHOLE POINT OF THIS BLOCK NEVER
+      // GROWING A SECOND CALL: this module reads a server-computed
+      // "current and next" projection and nothing else. There is no
+      // submission form, no upload control and no write of any kind
+      // wired here or anywhere else on this page -- see MED-20 and
+      // migration 0146's own header.
+      runtime.registerModule(createMediaQueueModule({
+        container: mediaQueueContainerRef.current,
+        connection,
+        fetchSnapshot: fetchMediaQueueSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -712,6 +792,12 @@ export default function MasterCanvasPage() {
         .master-canvas-giveaway [data-role="tournament-line"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
         .master-canvas-giveaway [data-role="tournament-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
         .master-canvas-giveaway [data-role="tournament-fill"] { background: linear-gradient(90deg, #f59e0b, #38bdf8); border-radius: 999px; }
+        /* Media / Meme Queue (§6 #20). Fixed position/size declared once
+           here, never per-frame (PRF-03) -- render() writes only opacity,
+           transform and element src/poster attributes. */
+        .master-canvas-media-queue { position: absolute; top: 24px; right: 24px; width: 320px; }
+        .master-canvas-media-queue [data-role="media-queue-current-image"],
+        .master-canvas-media-queue [data-role="media-queue-current-video"] { width: 100%; border-radius: 12px; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -725,6 +811,7 @@ export default function MasterCanvasPage() {
       <div ref={reactionCloudContainerRef} className="master-canvas-module master-canvas-reaction-cloud" aria-hidden="true" />
       <div ref={lobbyStatusContainerRef} className="master-canvas-module master-canvas-lobby" aria-live="polite" />
       <div ref={giveawayTournamentContainerRef} className="master-canvas-module master-canvas-giveaway" aria-live="polite" />
+      <div ref={mediaQueueContainerRef} className="master-canvas-module master-canvas-media-queue" aria-hidden="true" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

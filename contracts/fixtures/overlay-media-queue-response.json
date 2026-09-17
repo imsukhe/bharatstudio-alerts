@@ -1,0 +1,26 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-media-queue-response.schema.json",
+  "schemaVersion": "v1",
+  "mediaQueue": [
+    {
+      "schemaVersion": "v1",
+      "queueSlot": "current",
+      "title": "First meme",
+      "mediaKind": "image",
+      "mimeType": "image/png",
+      "storageUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/first-meme.png",
+      "thumbnailUrl": null,
+      "durationMs": null
+    },
+    {
+      "schemaVersion": "v1",
+      "queueSlot": "next",
+      "title": "Second clip",
+      "mediaKind": "video",
+      "mimeType": "video/mp4",
+      "storageUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/second-clip.mp4",
+      "thumbnailUrl": "https://cdn.bharatstudio.in/media-queue/00000000-0000-4000-8000-000000005b11/second-clip-thumb.png",
+      "durationMs": 5000
+    }
+  ]
+}

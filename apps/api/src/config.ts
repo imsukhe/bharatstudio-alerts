@@ -51,6 +51,18 @@ export type RuntimeConfig = {
   // in SQL exactly as migrations 0032/0063 already do; this value only
   // caps how many aggregate rows an overlay is shown.
   reactionCloudSampleMax?: number;
+  // PRF-02 slice 7, §6 module #20 (Media / Meme Queue), migration 0146.
+  // CONFIGURED BUT UNSET, the identical posture reactionCloudSampleMax
+  // documents above: neither a maximum media duration nor a maximum
+  // number of items a channel may have queued at once has been decided
+  // anywhere in the register, and neither has an honest reuse anchor.
+  // Unset means today's behaviour -- no additional ceiling beyond a
+  // duration being non-negative and the storage column's own bounds.
+  // NEVER A VALUE THIS CODEBASE INVENTS. Set only by deployment
+  // configuration, by whoever can weigh a real storage-cost and playback
+  // budget against a real broadcast.
+  mediaQueueMaxItemDurationMs?: number;
+  mediaQueueMaxItemsPerChannel?: number;
   notificationTokenEncryptionKey?: string;
   publicPaymentTurnstileRequired?: boolean;
   publicPaymentTurnstileSecret?: string;
@@ -205,6 +217,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   // unset is the default and means today's behaviour. There is no `??`
   // fallback here and there must not be one.
   const reactionCloudSampleMax = optionalPositiveInt('REACTION_CLOUD_SAMPLE_MAX');
+  // PRF-02 slice 7, §6 module #20 (Media / Meme Queue). Same helper, same
+  // posture: unset is the default and means today's behaviour. No `??`
+  // fallback here and there must not be one.
+  const mediaQueueMaxItemDurationMs = optionalPositiveInt('MEDIA_QUEUE_MAX_ITEM_DURATION_MS');
+  const mediaQueueMaxItemsPerChannel = optionalPositiveInt('MEDIA_QUEUE_MAX_ITEMS_PER_CHANNEL');
   // RT-11.4: a configured timeout below the path's own §19.4 budget would
   // cancel a query that is still within budget — reject it at startup
   // rather than silently degrading correctness for compliant reads. 200ms
@@ -250,6 +267,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     derivedReadPoolMax,
     derivedReadStatementTimeoutMs,
     reactionCloudSampleMax,
+    mediaQueueMaxItemDurationMs,
+    mediaQueueMaxItemsPerChannel,
     googleClientId,
     paymentEnvironment,
     paymentServiceOrigin,

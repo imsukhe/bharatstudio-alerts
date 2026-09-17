@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-media-queue-response.schema.json",
+  "title": "Overlay media queue response (PRF-02 slice 7, catalogue module #20)",
+  "description": "The overlay-facing projection of a channel's live media queue rotation, scoped by the overlay session token. CREATOR-ONLY (owner decision, 2026-09-17; register row MED-20): the creator queues their own media and viewers cannot submit -- there is no submission endpoint, no approval queue and no viewer-facing write surface anywhere in this product, and this response is read-only by construction. AT MOST TWO ENTRIES, labelled 'current' and 'next', and nothing else: 12.7's Overlay row authorises 'current and next alert state' in those exact words, and this reuses the identical bound apps/web/app/overlay/canvas/modules/support-theater-module.ts already established for this codebase rather than inventing a queue-depth number -- there is no aggregate count of how many items are queued anywhere in this schema. Metadata only (19.1): storageUrl and thumbnailUrl point at an already-hosted GCS/CDN asset, never bytes, and MED-21 records the bytea path this module never uses as legacy. mimeType is a closed allow-list (9.1.1) -- no text/html, no image/svg+xml (inline script), no application/* of any kind -- so nothing on this path can ever carry a script, an iframe or a stylesheet onto the Master Canvas. No item id, no submitter identity and no viewer identity exists on this schema at all -- not withheld, but absent, so nothing here can correlate one visit to another. An empty array is what an unrecognised, expired, revoked or foreign overlay token returns, and also what a channel with nothing live in rotation returns -- both mean paint nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "mediaQueue"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "mediaQueue": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "queueSlot", "title", "mediaKind", "mimeType", "storageUrl", "thumbnailUrl", "durationMs"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "queueSlot": {
+            "enum": ["current", "next"],
+            "description": "Exactly two possible values, and at most one row of each. There is no third slot and no aggregate queue-depth count anywhere in this schema."
+          },
+          "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "mediaKind": { "enum": ["image", "gif", "video"] },
+          "mimeType": {
+            "enum": ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"],
+            "description": "A closed allow-list (9.1.1). No text/html, no image/svg+xml, no application/* of any kind -- nothing here can ever describe a document capable of executing code on the Canvas."
+          },
+          "storageUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^https://",
+            "description": "Metadata only (19.1): an already-hosted GCS/CDN asset. No bytes are ever returned on this path."
+          },
+          "thumbnailUrl": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" }
+            ]
+          },
+          "durationMs": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+            ],
+            "description": "Null for an image. The maximum here is PostgreSQL integer's own storage range; the actual governing cap is a CONFIGURED-BUT-UNSET deployment value enforced at enqueue time, never invented by this contract."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-media-queue-list-response.schema.json",
+  "title": "Channel media queue list response (PRF-02 slice 7, catalogue module #20)",
+  "description": "The creator's own durable media queue: every status and every enabled/disabled item, forever (12.6) -- never filtered or hidden by tier. Paginated at a page size the caller may bound up to 100, the same cursor-safety ceiling migration 0137's cursor reads already use -- an engineering pagination floor, not a product-decided queue depth.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "items"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "items": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "mediaQueueItemId", "title", "mediaKind", "mimeType", "storageUrl", "thumbnailUrl", "durationMs", "status", "enabled", "createdAt", "updatedAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "mediaQueueItemId": { "type": "string", "format": "uuid" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "mediaKind": { "enum": ["image", "gif", "video"] },
+          "mimeType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"] },
+          "storageUrl": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" },
+          "thumbnailUrl": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" }
+            ]
+          },
+          "durationMs": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+            ]
+          },
+          "status": { "enum": ["queued", "played", "skipped"] },
+          "enabled": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

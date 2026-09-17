@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-media-queue-item-response.schema.json",
+  "title": "Channel media queue item response (PRF-02 slice 7, catalogue module #20)",
+  "description": "The creator-facing projection of one queued media item, returned by enqueue, update and status-change. CREATOR-ONLY (owner decision, 2026-09-17; register row MED-20): there is no submitter identity field anywhere on this schema, because there is no submitter other than the creator -- every row is written through the role-gated enqueue route alone. status carries PLAYBACK values only (queued/played/skipped), never a moderation decision such as approved/rejected/pending_review. Available identically at every tier (12.6): storing, viewing, editing and changing the status of a durable creator record is never tier-gated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "item"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "mediaQueueItemId", "title", "mediaKind", "mimeType", "storageUrl", "thumbnailUrl", "durationMs", "status", "enabled", "createdAt", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": "v1" },
+        "mediaQueueItemId": { "type": "string", "format": "uuid" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "mediaKind": { "enum": ["image", "gif", "video"] },
+        "mimeType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"] },
+        "storageUrl": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" },
+        "thumbnailUrl": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^https://" }
+          ]
+        },
+        "durationMs": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+          ]
+        },
+        "status": {
+          "enum": ["queued", "played", "skipped"],
+          "description": "PLAYBACK lifecycle only. Never approved/rejected/pending_review or any moderation-shaped value."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "A creator-only pause switch. Pulling an item from the live rotation is never a delete (12.6): the durable row stays exactly as it is."
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

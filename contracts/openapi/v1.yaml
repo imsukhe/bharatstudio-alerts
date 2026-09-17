@@ -1642,6 +1642,163 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/media-queue:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayMediaQueue
+      summary: The current and next queued media item, and nothing deeper in the queue.
+      description: >-
+        Master Canvas module #20 (Media / Meme Queue). CREATOR-ONLY (owner decision,
+        2026-09-17; register row MED-20): the creator queues their own media and viewers
+        cannot submit. There is no submission endpoint, no approval queue and no viewer-facing
+        write surface anywhere in this product - this route is read-only by construction.
+
+        AT MOST TWO ENTRIES, labelled "current" and "next", and nothing else. 12.7's Overlay
+        row authorises "current and next alert state" in those exact words, and this reuses
+        the identical bound
+        apps/web/app/overlay/canvas/modules/support-theater-module.ts already established for
+        this codebase rather than inventing a queue-depth number: there is no aggregate count
+        of how many items are queued, so an overlay token cannot learn how deep the rotation
+        is.
+
+        Metadata only (19.1): storageUrl and thumbnailUrl point at an already-hosted GCS/CDN
+        asset; no bytes are ever returned on this path, and MED-21 records the bytea path this
+        module never uses as legacy. mimeType is a closed allow-list - no text/html, no
+        image/svg+xml, no application/* of any kind (9.1.1) - so nothing on this path can ever
+        carry a script, an iframe or a stylesheet onto the Master Canvas.
+
+        No item id, no submitter identity and no viewer identity exists on this path - not
+        withheld, but absent from the underlying read's declared result type, so nothing here
+        can correlate one visit to another. An unrecognised, expired, revoked or foreign token
+        returns an empty array, and so does a channel with nothing live in rotation - both mean
+        paint nothing.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: At most two token-scoped media queue entries (current and next) for this overlay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayMediaQueueResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/media-queue:
+    get:
+      tags: [MediaQueue]
+      operationId: listChannelMediaQueue
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The creator's own durable media queue, every status and every enabled/disabled item,
+        forever (12.6) - never tier-gated. Paginated with the same cursor-safety ceiling
+        migration 0137's cursor reads already use (at most 100 per page), an engineering
+        pagination floor rather than a product-decided queue depth.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The channel's media queue items, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelMediaQueueListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [MediaQueue]
+      operationId: enqueueChannelMediaQueueItem
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Queues one media item. Owner/admin only, and not tier-gated. THIS IS THE ONLY WRITE
+        SURFACE IN THE PRODUCT FOR THIS TABLE: there is no submission endpoint, no approval
+        queue and no viewer-facing write anywhere else - additionalProperties: false means a
+        body carrying submitterId, submittedBy, viewerId, approved, approvalStatus or
+        rejectionReason is a 400 before the store is ever called, because none of those fields
+        is declared here. mimeType is a closed allow-list (9.1.1); storageUrl and
+        thumbnailUrl, when present, must be HTTPS (19.1, metadata only - no bytes are ever
+        accepted). durationMs and the maximum number of items a channel may queue at once are
+        each governed by a CONFIGURED-BUT-UNSET deployment cap: unset means today's behaviour,
+        with no additional ceiling beyond durationMs being non-negative. A cap being exceeded
+        is a 409, never a 400, so a client can tell "invalid" from "queue is full" apart.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnqueueMediaQueueItemRequest' }
+      responses:
+        '201':
+          description: The queued media item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelMediaQueueItemResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/media-queue/{itemId}:
+    patch:
+      tags: [MediaQueue]
+      operationId: updateChannelMediaQueueItem
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Renames a media queue item and/or toggles its enabled (pause) switch. Owner/admin
+        only, and not tier-gated. Disabling an item is never a delete (12.6): the durable row
+        stays exactly as it is and simply stops appearing in the overlay's live rotation. An
+        unknown, other-channel or unauthorised item is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/MediaQueueItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMediaQueueItemRequest' }
+      responses:
+        '200':
+          description: The updated media queue item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelMediaQueueItemResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/media-queue/{itemId}/status:
+    patch:
+      tags: [MediaQueue]
+      operationId: setChannelMediaQueueItemStatus
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Sets a media queue item's PLAYBACK status - queued, played or skipped - and never a
+        moderation decision: approved/rejected/pending_review-shaped values are rejected by
+        the enum itself. Owner/admin only, and not tier-gated. Marking an item played or
+        skipped does not delete it (12.6): it stops appearing in the overlay's live rotation
+        and stays in the creator's own durable list forever. An unknown, other-channel or
+        unauthorised item is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/MediaQueueItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetMediaQueueItemStatusRequest' }
+      responses:
+        '200':
+          description: The media queue item with its updated status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelMediaQueueItemResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -2270,6 +2427,11 @@ components:
       schema: { type: string, format: uuid }
     TournamentId:
       name: tournamentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MediaQueueItemId:
+      name: itemId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -2923,6 +3085,167 @@ components:
       properties:
         currentRound: { type: integer, minimum: 1, maximum: 3 }
         completedMatchesInRound: { type: integer, minimum: 0, maximum: 4 }
+    OverlayMediaQueueEntry:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, queueSlot, title, mediaKind, mimeType, storageUrl, thumbnailUrl, durationMs]
+      description: >-
+        One "current" or "next" queued media item. Metadata only (19.1) - storageUrl and
+        thumbnailUrl point at an already-hosted GCS/CDN asset, never bytes. No item id, no
+        submitter and no viewer identity exists on this schema at all.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        queueSlot: { type: string, enum: [current, next] }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        mediaKind: { type: string, enum: [image, gif, video] }
+        mimeType:
+          type: string
+          enum: [image/png, image/jpeg, image/webp, image/gif, video/mp4, video/webm]
+          description: >-
+            A closed allow-list (9.1.1). No text/html, no image/svg+xml (inline script), no
+            application/* of any kind.
+        storageUrl: { type: string, minLength: 1, maxLength: 2048, pattern: '^https://' }
+        thumbnailUrl:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 2048
+              pattern: '^https://'
+        durationMs:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 0
+              maximum: 2147483647
+          description: >-
+            Null for an image. The upper bound here is PostgreSQL integer's own range, a
+            storage bound rather than a product one - the actual governing cap is a
+            CONFIGURED-BUT-UNSET deployment value enforced at enqueue time, not on this read.
+    OverlayMediaQueueResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, mediaQueue]
+      description: >-
+        AT MOST TWO entries, labelled "current" and "next" - 12.7's Overlay row authorises
+        "current and next alert state" in those exact words, and this reuses the identical
+        bound apps/web/app/overlay/canvas/modules/support-theater-module.ts already
+        established for this codebase rather than inventing a queue-depth number. An empty
+        array is what an unrecognised, expired, revoked or foreign overlay token returns, and
+        also what a channel with nothing live in rotation returns - both mean paint nothing.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        mediaQueue:
+          type: array
+          maxItems: 2
+          items: { $ref: '#/components/schemas/OverlayMediaQueueEntry' }
+    MediaQueueItem:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, mediaQueueItemId, title, mediaKind, mimeType, storageUrl, thumbnailUrl, durationMs, status, enabled, createdAt, updatedAt]
+      description: >-
+        Creator-facing media queue item. CREATOR-ONLY (owner decision, 2026-09-17; MED-20):
+        there is no submitter identity field anywhere on this type, because there is no
+        submitter other than the creator - every row is written through the role-gated
+        enqueue route alone. status carries PLAYBACK values only (queued/played/skipped),
+        never a moderation decision such as approved/rejected/pending_review. Never
+        tier-gated: available identically at every tier (12.6).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        mediaQueueItemId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        mediaKind: { type: string, enum: [image, gif, video] }
+        mimeType:
+          type: string
+          enum: [image/png, image/jpeg, image/webp, image/gif, video/mp4, video/webm]
+        storageUrl: { type: string, minLength: 1, maxLength: 2048, pattern: '^https://' }
+        thumbnailUrl:
+          oneOf:
+            - type: 'null'
+            - type: string
+              minLength: 1
+              maxLength: 2048
+              pattern: '^https://'
+        durationMs:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 0
+              maximum: 2147483647
+        status: { type: string, enum: [queued, played, skipped] }
+        enabled:
+          type: boolean
+          description: >-
+            A creator-only pause switch. Pulling an item from the live rotation is never a
+            delete (12.6): the durable row stays exactly as it is.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelMediaQueueItemResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, item]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        item: { $ref: '#/components/schemas/MediaQueueItem' }
+    ChannelMediaQueueListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      description: >-
+        Every status and every enabled/disabled item, forever (12.6) - never filtered or
+        hidden by tier. Paginated at a page size the caller may bound up to 100, the same
+        cursor-safety ceiling migration 0137's cursor reads already use.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/MediaQueueItem' }
+    EnqueueMediaQueueItemRequest:
+      type: object
+      additionalProperties: false
+      required: [title, mediaKind, mimeType, storageUrl]
+      description: >-
+        additionalProperties: false is load-bearing here, not boilerplate: it is where the
+        owner's "creator-only, viewers cannot submit" decision is enforced on the wire. A body
+        carrying submitterId, submittedBy, viewerId, approved, approvalStatus or
+        rejectionReason is a 400 before the store is ever called, because none of those fields
+        is declared. Neither the media duration nor the number of items a channel may queue at
+        once is bounded here beyond storage-column ranges: both are governed by a
+        CONFIGURED-BUT-UNSET deployment cap enforced in the database, and exceeding either
+        surfaces as 400 (duration) or 409 (queue-item-count) rather than being expressible in
+        this schema, because neither number is decided or invented by this contract.
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        mediaKind: { type: string, enum: [image, gif, video] }
+        mimeType:
+          type: string
+          enum: [image/png, image/jpeg, image/webp, image/gif, video/mp4, video/webm]
+          description: A closed allow-list (9.1.1). No text/html, no image/svg+xml, no application/* of any kind.
+        storageUrl:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^https://'
+          description: Metadata only (19.1) - an already-hosted GCS/CDN asset. No bytes are ever accepted.
+        thumbnailUrl: { type: string, minLength: 1, maxLength: 2048, pattern: '^https://' }
+        durationMs: { type: integer, minimum: 0, maximum: 2147483647 }
+    UpdateMediaQueueItemRequest:
+      type: object
+      additionalProperties: false
+      required: [title, enabled]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        enabled: { type: boolean }
+    SetMediaQueueItemStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      description: >-
+        PLAYBACK lifecycle only. approved/rejected/pending_review/submitted-shaped values are
+        refused by the enum itself, before the store is ever called.
+      properties:
+        status: { type: string, enum: [queued, played, skipped] }
     StreamMission:
       type: object
       additionalProperties: false

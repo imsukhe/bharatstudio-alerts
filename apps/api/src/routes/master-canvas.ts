@@ -24,6 +24,10 @@ import {
   projectOverlayGiveawayTournament,
   type GiveawayTournamentOverlayStore,
 } from '../domain/giveaway-tournament-store.js';
+import {
+  projectOverlayMediaQueue,
+  type MediaQueueOverlayStore,
+} from '../domain/media-queue-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -84,6 +88,12 @@ export async function registerMasterCanvasRoutes(
   // route below fails closed to 503 like every other optional dependency
   // in this file.
   overlayGiveawayTournament?: GiveawayTournamentOverlayStore,
+  // PRF-02 slice 7, §6 module #20 (Media / Meme Queue). Appended at the
+  // end for the same reason every overlay store above was: every existing
+  // positional call keeps compiling and behaving unchanged, and when it
+  // is undefined the new route below fails closed to 503 like every
+  // other optional dependency in this file.
+  overlayMediaQueue?: MediaQueueOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -375,6 +385,58 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_giveaway_tournament_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Giveaway and tournament state is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+
+  // PRF-02 slice 7, §6 module #20 (Media / Meme Queue) -- the read that is
+  // creator-only to WRITE and this endpoint's sole reason to exist: an
+  // overlay browser-source token can read the current/next projection and
+  // can NEVER submit, approve, reject or otherwise write anything (owner
+  // decision 2026-09-17, MED-20). The creator's own reads and writes are
+  // a separate, session-authenticated surface (routes/media-queue.ts).
+  //
+  // THE RESPONSE CARRIES AT MOST TWO ITEMS, LABELLED 'current' AND
+  // 'next', AND NOTHING ELSE. §12.7's Overlay row authorises "current and
+  // next alert state" in those exact words, and this reuses the SAME
+  // bound apps/web/app/overlay/canvas/modules/support-theater-
+  // module.ts:68-72 already established for this codebase rather than
+  // inventing a queue-depth number -- no aggregate count of how many
+  // items are queued is ever returned, so an overlay token cannot learn
+  // how deep the rotation is.
+  //
+  // So app_private.list_overlay_media_queue (migration 0146) returns at
+  // most two rows, and no item id, submitter identity, viewer identity or
+  // channel-wide count exists to be leaked here -- and none exists in the
+  // schema either. projectOverlayMediaQueue() then narrows a SECOND,
+  // independent time in front of whatever the store hands up, so the
+  // guarantee does not rest on a single layer.
+  //
+  // THIS MODULE HAS NO PER-MODULE ENTITLEMENT GATE, UNLIKE THE GIVEAWAY /
+  // TOURNAMENT CARD ABOVE. §30.3 names no Creator+/Events-Pack-style row
+  // for Media / Meme Queue; the only gate on whether this module renders
+  // at all is 0131's existing, untouched, module-wide "Master Canvas
+  // modules active" cap, which already lists 'media_meme_queue' as one of
+  // its twenty catalogue keys.
+  //
+  // AN UNRECOGNISED TOKEN ANSWERS 200 WITH `mediaQueue: []`, not 401, and
+  // so does a channel with nothing live in rotation. Both mean "paint
+  // nothing" to the module. A MISSING bearer token is still 401: that is
+  // a malformed request, not an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/media-queue', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'The media queue is not available', traceId: request.id });
+    if (!overlayMediaQueue) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The media queue is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const entries = await overlayMediaQueue.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', mediaQueue: projectOverlayMediaQueue(entries) });
+    } catch (error) {
+      logSafeError(request, 'overlay_media_queue_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The media queue is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

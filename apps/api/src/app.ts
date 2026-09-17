@@ -135,6 +135,14 @@ import { registerCapabilityChangeManagementRoutes } from './routes/capability-ch
 // HTTP surface at all in this phase.
 import type { SafetyCorpusStore } from './domain/safety-corpus-store.js';
 import { registerSafetyCorpusRoutes } from './routes/safety-corpus.js';
+// SAF-10 (migration 0154): per-creator URL allow/deny domain management,
+// the only one of SAF-10/SAF-11/SAF-12 with an HTTP surface in this
+// phase (SAF-11 needs no creator config -- see that migration's own
+// header; SAF-12 has no creator-facing config either). Same posture as
+// safety-corpus.ts above: nothing wired into a live payment/TTS/chat/
+// alert surface yet.
+import type { UrlDomainRuleStore } from './domain/url-domain-rule-store.js';
+import { registerUrlDomainRuleRoutes } from './routes/url-domain-rules.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -268,6 +276,10 @@ export type AppDependencies = {
   // itself (domain/safety-pipeline.ts) is not wired to any dependency
   // here, because nothing calls it live yet.
   safetyCorpus?: SafetyCorpusStore;
+  // SAF-10 (migration 0154). Corpus-management posture reused exactly:
+  // list()/create()/remove() only, no route runs text through
+  // neutralizeUrls (apps/api/src/domain/url-neutralization.ts).
+  safetyDomainRules?: UrlDomainRuleStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -500,6 +512,7 @@ export async function buildApp(
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
   await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
   await registerSafetyCorpusRoutes(app, dependencies.sessions, dependencies.safetyCorpus);
+  await registerUrlDomainRuleRoutes(app, dependencies.sessions, dependencies.safetyDomainRules);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-safety-domain-rule-list-response.schema.json",
+  "schemaVersion": "v1",
+  "items": [
+    {
+      "schemaVersion": "v1",
+      "ruleId": "00000000-0000-4000-8000-000000006e01",
+      "domain": "scam.example",
+      "rule": "deny",
+      "createdAt": "2026-09-17T09:00:00.000Z"
+    },
+    {
+      "schemaVersion": "v1",
+      "ruleId": "00000000-0000-4000-8000-000000006e02",
+      "domain": "mychannel.example",
+      "rule": "allow",
+      "createdAt": "2026-09-17T10:00:00.000Z"
+    }
+  ]
+}

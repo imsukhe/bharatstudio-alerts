@@ -2589,6 +2589,79 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/safety/domain-rules:
+    get:
+      tags: [Moderation]
+      operationId: listSafetyDomainRules
+      security: [{ bearerAuth: [] }]
+      description: >-
+        SAF-10 (migration 0154, extending the moderation pipeline spine). This channel's own
+        URL allow/deny domain rules - there is no "global" scope here (unlike the SAF-05
+        corpus): the register names SAF-10 "per-creator", not "global plus per-creator".
+        app_private.get_url_domain_rules is the ONLY reachable read path (bsa_app has no
+        SELECT grant on safety_domain_rules itself, revoked from both public and bsa_app -
+        SAF-01's structural "one pipeline" guard, reapplied here). This is domain-rule
+        MANAGEMENT only - it does not run any text through the neutralisation transform
+        (apps/api/src/domain/url-neutralization.ts), which is not wired into any live surface
+        yet.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Every URL domain rule configured for this channel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SafetyDomainRuleListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Moderation]
+      operationId: createSafetyDomainRule
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Adds one allow or deny domain rule to THIS channel's own list. Owner/admin only
+        (app_private.create_url_domain_rule, migration 0154). A domain can hold at most ONE
+        rule per channel (safety_domain_rules_channel_domain_idx, a unique index) - attempting
+        to add a second, contradictory rule for the same domain (e.g. deny after allow) is
+        rejected as a conflict, so allow/deny precedence is a structural impossibility of
+        contradiction, never a runtime tie-break the caller has to reason about.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSafetyDomainRuleRequest' }
+      responses:
+        '201':
+          description: The created domain rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SafetyDomainRule' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/safety/domain-rules/{ruleId}:
+    delete:
+      tags: [Moderation]
+      operationId: deleteSafetyDomainRule
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Removes one of THIS channel's own domain rules. Owner/admin only. A rule belonging to
+        a different channel is never removable through this route -
+        app_private.delete_url_domain_rule (migration 0154) returns "not found" either way, so
+        this endpoint cannot be used to enumerate another channel's domain rules.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SafetyDomainRuleId'
+      responses:
+        '204':
+          description: The domain rule was removed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-widgets/{overlayId}/canvas-layout:
     get:
       tags: [Overlay]
@@ -3253,6 +3326,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    SafetyDomainRuleId:
+      name: ruleId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     LobbySessionId:
       name: lobbyId
       in: path
@@ -3843,6 +3921,58 @@ components:
         displayDecision: { $ref: '#/components/schemas/SafetyDecisionValue' }
         ttsDecision: { $ref: '#/components/schemas/SafetyDecisionValue' }
         moderatorReviewDecision: { type: string, enum: [allow, hold] }
+    SafetyDomainRuleValue:
+      type: string
+      description: >-
+        SAF-10's allow/deny vocabulary. A domain on `allow` is exempt from URL neutralisation;
+        a domain on `deny` is always neutralised, taking precedence over an allow entry
+        (structurally: a domain can hold at most one rule per channel, so the two can never
+        contradict each other on the same domain).
+      enum: [allow, deny]
+    SafetyDomainRule:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, ruleId, domain, rule, createdAt]
+      description: >-
+        SAF-10 (migration 0154, extending the moderation pipeline spine, migration 0151). One
+        per-creator URL domain rule. There is no "global" scope for SAF-10 - unlike the SAF-05
+        corpus, the register names this "per-creator" only. An unlisted domain gets the
+        baseline "neutralise" behaviour already decided for TTS input
+        (apps/api/src/tts/provider.ts's own unconditional URL stripping) - `allow` exempts a
+        domain from that baseline, `deny` reaffirms it and always wins if a domain were ever
+        (structurally cannot be) on both lists at once.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        ruleId: { type: string, format: uuid }
+        domain: { type: string, minLength: 1, maxLength: 253, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$' }
+        rule: { $ref: '#/components/schemas/SafetyDomainRuleValue' }
+        createdAt: { type: string, format: date-time }
+    SafetyDomainRuleListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      description: >-
+        SAF-10: every URL domain rule configured for the calling channel. Empty by default -
+        migration 0154 ships zero rows, and an empty list means the baseline "neutralise by
+        default" behaviour applies to every URL with no per-domain exception, never "deny
+        everything" and never "allow everything" via an empty-array bug (proven in
+        packages/db/tests/saf_url_ssml_pii.sql and apps/api/test/url-neutralization.test.ts).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SafetyDomainRule' }
+    CreateSafetyDomainRuleRequest:
+      type: object
+      additionalProperties: false
+      required: [domain, rule]
+      description: >-
+        Adds one allow or deny domain rule to the calling channel's own list. The domain
+        length/shape bound reused verbatim from packages/db/migrations/0154's own CHECK
+        constraint (RFC 1035 hostname-label shape, lowercase only).
+      properties:
+        domain: { type: string, minLength: 1, maxLength: 253, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$' }
+        rule: { $ref: '#/components/schemas/SafetyDomainRuleValue' }
     OverlayCanvasLayout:
       type: object
       additionalProperties: false

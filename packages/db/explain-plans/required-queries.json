@@ -191,6 +191,11 @@
       "function": "app_private.get_safety_corpus_terms",
       "artifact": "safety-corpus-terms.explain.md",
       "note": "new in SAF phase 1, migration 0151 (the moderation pipeline spine). Global plus this channel's own corpus terms, in one read -- SAF-05's 'global plus per-creator' as one call, never two. Caught by rule 3: apps/api/src/index.ts constructs createSqlSafetyCorpusStore with BOTH sql and derivedReadSql (apps/api/src/db/safety-corpus-store.ts), and this function is called on the derivedReadSql-backed path (list()) as well as re-read after a write inside create() -- both call sites are the SAME function, covered by this one entry. The returned column set (id, channel_id, term, whole_word, display_decision, tts_decision, moderator_review_decision, created_at) is asserted exactly in packages/db/tests/saf_pipeline_spine.sql against information_schema.parameters. bsa_app has no SELECT/INSERT/UPDATE/DELETE grant on safety_corpus_terms at all (revoked from both public and bsa_app, asserted behaviourally in the SQL test) -- this function is the only reachable read path, the same SAF-01 structural guard migration 0149 already established for CTL-03."
+    },
+    {
+      "function": "app_private.get_url_domain_rules",
+      "artifact": "safety-domain-rules.explain.md",
+      "note": "new in SAF-10, migration 0154 (extending the moderation pipeline spine, migration 0151). This channel's own URL allow/deny domain rules -- there is no 'global' scope for SAF-10, unlike the SAF-05 corpus. Caught by rule 3: apps/api/src/index.ts constructs createSqlUrlDomainRuleStore with BOTH sql and derivedReadSql (apps/api/src/db/url-domain-rule-store.ts), and this function is called on the derivedReadSql-backed path (list()) as well as re-read after a write inside create() -- both call sites are the SAME function, covered by this one entry. The returned column set (id, domain, rule, created_at) is asserted exactly in packages/db/tests/saf_url_ssml_pii.sql against information_schema.parameters. bsa_app has no SELECT/INSERT/UPDATE/DELETE grant on safety_domain_rules at all (revoked from both public and bsa_app, asserted behaviourally in the SQL test) -- this function is the only reachable read path, the same SAF-01 structural guard 0151 already established, reapplied to this new table."
     }
   ],
   "exemptions": [
@@ -237,6 +242,14 @@
     {
       "function": "app_private.delete_safety_corpus_term",
       "reason": "a creator-initiated WRITE (removes one of the calling channel's own corpus terms), not a read that backs a widget/dashboard display -- RT-12 manifests reads, not mutations. Swept in for the same reason as app_private.create_safety_corpus_term above: rule 3 scans the whole createSqlSafetyCorpusStore factory body, not only the derivedReadSql-backed call."
+    },
+    {
+      "function": "app_private.create_url_domain_rule",
+      "reason": "a creator-initiated WRITE (adds one allow/deny domain rule to the calling channel's own list), not a read that backs a widget/dashboard display -- RT-12 manifests reads, not mutations. Swept in only because rule 3 scans the whole createSqlUrlDomainRuleStore factory body (apps/api/src/db/url-domain-rule-store.ts), which also wires the list() read to derivedReadSql in the same file -- identical reason to app_private.create_safety_corpus_term above."
+    },
+    {
+      "function": "app_private.delete_url_domain_rule",
+      "reason": "a creator-initiated WRITE (removes one of the calling channel's own domain rules), not a read that backs a widget/dashboard display -- RT-12 manifests reads, not mutations. Swept in for the same reason as app_private.create_url_domain_rule above: rule 3 scans the whole createSqlUrlDomainRuleStore factory body, not only the derivedReadSql-backed call."
     }
   ]
 }

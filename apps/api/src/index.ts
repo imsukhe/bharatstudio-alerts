@@ -86,6 +86,7 @@ import { createSqlCapabilityChangeManagementStore } from './db/capability-change
 // takes both rather than splitting into a creator/overlay pair the way
 // every other dual-pool surface in this file does.
 import { createSqlSafetyCorpusStore } from './db/safety-corpus-store.js';
+import { createSqlUrlDomainRuleStore } from './db/url-domain-rule-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -308,6 +309,9 @@ const app = await buildApp(config, {
   canvasLayout: sql ? createSqlCanvasLayoutStore(sql) : undefined,
   capabilities: sql ? createSqlCapabilityStore(derivedReadSql!) : undefined,
   safetyCorpus: sql ? createSqlSafetyCorpusStore(sql, derivedReadSql!) : undefined,
+  // SAF-10 (migration 0154). Same split as safetyCorpus above: list()
+  // on derivedReadSql, create()/remove() on the main pool.
+  safetyDomainRules: sql ? createSqlUrlDomainRuleStore(sql, derivedReadSql!) : undefined,
   overlayCanvasLayout: sql ? createSqlCanvasLayoutOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;

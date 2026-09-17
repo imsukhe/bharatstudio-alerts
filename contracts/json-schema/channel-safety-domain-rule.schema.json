@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-safety-domain-rule.schema.json",
+  "title": "Safety URL domain rule (SAF-10, extending the moderation pipeline spine, migration 0154)",
+  "description": "One per-creator URL allow/deny domain rule. There is no 'global' scope for SAF-10 -- the register names this 'per-creator' only. `rule` is 'allow' (exempt from URL neutralisation) or 'deny' (always neutralised, wins over allow). A domain can hold at most one rule per channel.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "ruleId", "domain", "rule", "createdAt"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "ruleId": { "type": "string", "format": "uuid" },
+    "domain": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$" },
+    "rule": { "enum": ["allow", "deny"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

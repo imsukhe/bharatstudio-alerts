@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-safety-domain-rule-list-response.schema.json",
+  "title": "Safety URL domain rule list response (SAF-10, migration 0154)",
+  "description": "Every URL domain rule configured for the calling channel. Empty by default -- migration 0154 ships zero rows, and an empty list means the baseline 'neutralise by default' behaviour applies to every URL with no per-domain exception, never 'deny everything' and never 'allow everything'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "items"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "ruleId", "domain", "rule", "createdAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "ruleId": { "type": "string", "format": "uuid" },
+          "domain": { "type": "string", "minLength": 1, "maxLength": 253 },
+          "rule": { "enum": ["allow", "deny"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

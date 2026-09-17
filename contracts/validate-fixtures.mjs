@@ -55,6 +55,8 @@ const fixtureToSchema = {
   'capability-change-detail-response.json': 'capability-change-detail-response.schema.json',
   'channel-safety-corpus-term.json': 'channel-safety-corpus-term.schema.json',
   'channel-safety-corpus-term-list-response.json': 'channel-safety-corpus-term-list-response.schema.json',
+  'channel-safety-domain-rule.json': 'channel-safety-domain-rule.schema.json',
+  'channel-safety-domain-rule-list-response.json': 'channel-safety-domain-rule-list-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
   'payment-webhook-delivery.json': 'payment-webhook-delivery.schema.json',
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',

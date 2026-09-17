@@ -39,6 +39,8 @@ import { createSqlCompanionFeatureStore } from './db/companion-feature-store.js'
 import { createSqlCompanionEntitlementStore } from './db/companion-entitlement-sql-store.js';
 import { createSqlSeatStore } from './db/seat-store.js';
 import { createSqlGoalStore } from './db/goal-store.js';
+import { createSqlCompanionGoalControlStore } from './db/companion-goal-control-store.js';
+import { createSqlCompanionScenePresetStore } from './db/companion-scene-preset-store.js';
 import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
 import { createSqlMasterCanvasOverlayStore, createSqlMasterCanvasStore } from './db/master-canvas-sql-store.js';
 import { createSqlModeratorStatusOverlayStore } from './db/moderator-status-overlay-store.js';
@@ -215,6 +217,8 @@ const app = await buildApp(config, {
   seats: sql ? createSqlSeatStore(sql) : undefined,
   goals: sql ? createSqlGoalStore(sql) : undefined,
   overlayGoals: sql ? createSqlGoalOverlayStore(derivedReadSql!) : undefined,
+  companionGoalControls: sql ? createSqlCompanionGoalControlStore(sql) : undefined,
+  companionScenePresets: sql ? createSqlCompanionScenePresetStore(sql) : undefined,
   masterCanvasModules: sql ? createSqlMasterCanvasStore(sql) : undefined,
   overlayMasterCanvasModules: sql ? createSqlMasterCanvasOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, §6 module #12 (held half only). On the RT-10/RT-11

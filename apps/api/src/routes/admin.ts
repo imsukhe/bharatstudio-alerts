@@ -36,6 +36,21 @@ export async function registerAdminRoutes(
   // an intentionally unconfigured test instance still fails closed with 503.
   const adminAuth = requirePlatformAdmin(sessions, store);
 
+  // ADM-07: a cheap, side-effect-free identity check for the admin
+  // console (bharatstudio-admin) to call right after it exchanges a
+  // Google id_token for a real session (POST /v1/auth/google/exchange)
+  // -- reusing the SAME requirePlatformAdmin gate (and so the same
+  // app_private.is_platform_admin() read) every other /v1/admin/* route
+  // already uses, rather than the console's own copy of an admin
+  // decision. Reaching a 200 here IS the authorisation decision: there
+  // is nothing else in the response body to check, deliberately, so the
+  // console cannot accidentally branch on a field instead of the status
+  // code.
+  app.get('/v1/admin/whoami', { preHandler: adminAuth }, async (request, reply) => {
+    if (!store || !request.auth) return unavailable(reply, request.id);
+    return reply.code(200).send({ schemaVersion: 'v1', userId: request.auth.userId, isPlatformAdmin: true });
+  });
+
   app.get<{ Querystring: { status?: DlqStatusFilter; limit?: number } }>('/v1/admin/dlq', {
     preHandler: adminAuth,
     schema: {

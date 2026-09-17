@@ -139,6 +139,12 @@ import { registerCapabilityRegistryAdminRoutes } from './routes/capability-regis
 // audited). Its own file, its own registrar.
 import type { PlatformOwnerStore } from './domain/platform-owner.js';
 import { registerPlatformOwnerRoutes } from './routes/platform-owner.js';
+// Migration 0156 (ADM-07): a durable admin registry -- the ONE write
+// path for app_users.is_platform_admin (never self-conferred, always
+// audited, requires an existing admin to act). Its own file, its own
+// registrar, modelled directly on platform-owner.ts above.
+import type { PlatformAdminStore } from './domain/platform-admin.js';
+import { registerPlatformAdminRoutes } from './routes/platform-admin.js';
 // Migration 0155, Job 2: §20.6.1's emergency global_kill path in full --
 // fire/ratify/extend/review, distinct from routes/capability-change-
 // management.ts's existing (migration 0152) ordinary kill. Its own file,
@@ -298,6 +304,9 @@ export type AppDependencies = {
   // Migration 0155, Job 1. The one write path for app_users.
   // is_platform_owner.
   platformOwner?: PlatformOwnerStore;
+  // Migration 0156 (ADM-07). The one write path for app_users.
+  // is_platform_admin.
+  platformAdmin?: PlatformAdminStore;
   // Migration 0155, Job 2. §20.6.1's emergency global_kill path.
   capabilityKillEvents?: CapabilityKillEventStore;
   // SAF phase 1 (migration 0151). Corpus management only -- the pipeline
@@ -541,6 +550,7 @@ export async function buildApp(
   await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
   await registerCapabilityRegistryAdminRoutes(app, dependencies.sessions, dependencies.capabilityRegistryAdmin, dependencies.admin);
   await registerPlatformOwnerRoutes(app, dependencies.sessions, dependencies.platformOwner, dependencies.admin);
+  await registerPlatformAdminRoutes(app, dependencies.sessions, dependencies.platformAdmin, dependencies.admin);
   await registerCapabilityKillEventRoutes(app, dependencies.sessions, dependencies.capabilityKillEvents, dependencies.admin);
   await registerSafetyCorpusRoutes(app, dependencies.sessions, dependencies.safetyCorpus);
   await registerUrlDomainRuleRoutes(app, dependencies.sessions, dependencies.safetyDomainRules);

@@ -2628,6 +2628,80 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/platform-admins/{userId}:
+    put:
+      tags: [CapabilityChangeManagement]
+      operationId: setPlatformAdmin
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Migration 0156 (ADM-07), platform staff only. The ONE write path for
+        app_users.is_platform_admin -- the durable admin registry that replaces
+        bharatstudio-admin's own PLATFORM_ADMIN_EMAILS allowlist as the authorisation
+        decision. Never self-conferred in either direction -- the acting admin cannot
+        target their own userId, whether granting or revoking (403) -- which also makes
+        a legitimate revocation chain structurally unable to ever empty the registry. A
+        reason is required and every change is audited (platform_admin_audit). The very
+        first platform admin in a deployment cannot be created through this endpoint --
+        it requires an existing admin to call it -- and is instead set by direct database
+        access; see migration 0156's own bootstrap note.
+      parameters:
+        - $ref: '#/components/parameters/PlatformAdminUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPlatformAdminRequest' }
+      responses:
+        '200':
+          description: The recorded admin-status change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformAdminChange' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/platform-admins:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: listPlatformAdmins
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Migration 0156 (ADM-07), platform staff only. The current admin registry --
+        every app_users row with is_platform_admin = true, plus its most recent
+        platform_admin_audit entry when one exists (null for the deployment's bootstrap
+        admin, which predates this table).
+      responses:
+        '200':
+          description: The current platform admins.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformAdminListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/whoami:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: getAdminWhoami
+      security: [{ bearerAuth: [] }]
+      description: >-
+        ADM-07. A cheap, side-effect-free identity check: reaching a 200 IS the
+        authorisation decision (app_private.is_platform_admin(), the same durable
+        registry every other /v1/admin/* route already authorises against) -- there is
+        no field in the response to branch on instead. Built for bharatstudio-admin (the
+        admin console) to call immediately after exchanging a Google id_token for a real
+        session, replacing its own PLATFORM_ADMIN_EMAILS-based decision.
+      responses:
+        '200':
+          description: The caller is a platform admin.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminWhoamiResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/admin/capability-registry/{capabilityKey}/emergency-kill:
     post:
       tags: [CapabilityChangeManagement]
@@ -3626,6 +3700,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    PlatformAdminUserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     KillEventId:
       name: killEventId
       in: path
@@ -4268,6 +4347,57 @@ components:
         changedBy: { type: string, format: uuid }
         changedAt: { type: string, format: date-time }
         reason: { type: string, maxLength: 500 }
+    SetPlatformAdminRequest:
+      type: object
+      additionalProperties: false
+      required: [isPlatformAdmin, reason]
+      description: >-
+        Migration 0156 (ADM-07). A reason is always required, whether granting or
+        revoking - every change is audited identically.
+      properties:
+        isPlatformAdmin: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    PlatformAdminChange:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, userId, isPlatformAdmin, changedBy, changedAt, reason]
+      description: One recorded change to app_users.is_platform_admin (public.platform_admin_audit, migration 0156).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        userId: { type: string, format: uuid }
+        isPlatformAdmin: { type: boolean }
+        changedBy: { type: string, format: uuid }
+        changedAt: { type: string, format: date-time }
+        reason: { type: string, maxLength: 500 }
+    PlatformAdminListEntry:
+      type: object
+      additionalProperties: false
+      required: [userId, displayName, isPlatformAdmin, isPlatformOwner, grantedBy, grantedAt, reason]
+      description: One row of the current admin registry, with its most recent audit entry when one exists.
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { oneOf: [{ type: 'null' }, { type: string }] }
+        isPlatformAdmin: { type: boolean }
+        isPlatformOwner: { type: boolean }
+        grantedBy: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+        grantedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        reason: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+    PlatformAdminListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, admins]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        admins: { type: array, items: { $ref: '#/components/schemas/PlatformAdminListEntry' } }
+    AdminWhoamiResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, userId, isPlatformAdmin]
+      description: ADM-07. Reaching this response at all already required app_private.is_platform_admin() to be true - isPlatformAdmin is consequently always true in a 200 response, present for shape stability rather than as a field to branch on.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        userId: { type: string, format: uuid }
+        isPlatformAdmin: { type: boolean, const: true }
     FireEmergencyKillRequest:
       type: object
       additionalProperties: false

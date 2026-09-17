@@ -89,6 +89,10 @@ import { createSqlCapabilityRegistryAdminStore } from './db/capability-registry-
 // emergency global_kill path. Both single-admin-reachable, main pool.
 import { createSqlPlatformOwnerStore } from './db/platform-owner-store.js';
 import { createSqlCapabilityKillEventStore } from './db/capability-kill-events-store.js';
+// Migration 0156 (ADM-07): the durable admin registry write/list path.
+// Single-admin-reachable, main pool -- same posture as platform-owner-
+// store.js immediately above.
+import { createSqlPlatformAdminStore } from './db/platform-admin-store.js';
 // SAF phase 1 (migration 0151): moderation pipeline spine, corpus
 // management only. ONE file, TWO pools -- the list read is wired to
 // derivedReadSql (RT-10/RT-11), create/remove stay on the main `sql`
@@ -368,6 +372,7 @@ const app = await buildApp(config, {
   capabilityChangeManagement: sql ? createSqlCapabilityChangeManagementStore(sql) : undefined,
   capabilityRegistryAdmin: sql ? createSqlCapabilityRegistryAdminStore(sql) : undefined,
   platformOwner: sql ? createSqlPlatformOwnerStore(sql) : undefined,
+  platformAdmin: sql ? createSqlPlatformAdminStore(sql) : undefined,
   capabilityKillEvents: sql ? createSqlCapabilityKillEventStore(sql) : undefined,
   assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-canvas-layout-response.schema.json",
+  "title": "Channel canvas layout response (PRF-02, catalogue module #14, Vertical Stream Layout)",
+  "description": "The creator/dashboard-facing read. A LAYOUT IS NOT A MODULE -- this setting consumes no 30.3 cap slot and is not one of the sixteen master-canvas module keys (migration 0147). verticalEntitled reports whether the 30.3 Pro+ render gate currently allows vertical to render -- reporting only; the gate itself lives solely inside the overlay read (app_private.list_overlay_canvas_layout). Configuring the layout is never tier-gated (12.6): a Free channel can set vertical and see it recorded here even when verticalEntitled is false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "canvasLayout"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "canvasLayout": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "layout", "verticalEntitled"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "layout": { "enum": ["horizontal", "vertical"] },
+            "verticalEntitled": { "type": "boolean" }
+          }
+        }
+      ]
+    }
+  }
+}

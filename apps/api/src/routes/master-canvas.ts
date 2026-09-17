@@ -40,6 +40,10 @@ import {
   projectOverlayQrSmartCard,
   type QrSmartCardOverlayStore,
 } from '../domain/qr-smart-card-store.js';
+import {
+  projectOverlayCanvasLayout,
+  type CanvasLayoutOverlayStore,
+} from '../domain/canvas-layout-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -124,6 +128,17 @@ export async function registerMasterCanvasRoutes(
   // is undefined the new route below fails closed to 503 like every
   // other optional dependency in this file.
   overlayQrSmartCard?: QrSmartCardOverlayStore,
+  // PRF-02 slice 7, §6 module #14 (Vertical Stream Layout). Appended at
+  // the end for the same reason every dependency above was: every
+  // existing positional call keeps compiling and behaving unchanged, and
+  // when it is undefined the new route below fails closed to 503 like
+  // every other optional dependency in this file. A LAYOUT IS NOT A
+  // MODULE (migration 0147's header) -- this dependency is still
+  // positioned here, alongside every other module's overlay store,
+  // because the ROUTE it backs is an overlay browser-source read exactly
+  // like the others, even though the setting it reads is not one of
+  // MASTER_CANVAS_MODULE_KEYS and consumes no §30.3 cap slot.
+  overlayCanvasLayout?: CanvasLayoutOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -610,6 +625,51 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_qr_smart_card_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The QR smart card is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+  // PRF-02 slice 7, §6 module #14 (Vertical Stream Layout) -- the
+  // overlay read. Same overlay browser-source shape as the routes
+  // above, and in this file for the same reason every other module's
+  // overlay read is: this file already owns the bearer-token helper and
+  // the master_canvas_store_unavailable envelope. The creator's own
+  // read/write is a separate, session-authenticated surface
+  // (routes/canvas-layout.ts) -- an overlay browser-source token can
+  // read the effective layout and can never change it.
+  //
+  // A LAYOUT IS NOT A MODULE (migration 0147's header). This route is
+  // not one of the sixteen MASTER_CANVAS_MODULE_KEYS entries, consumes
+  // no §30.3 cap slot, and is never listed by
+  // GET /v1/overlay-widgets/:overlayId/master-canvas/modules above --
+  // the client runtime reads it as its own, separate arrangement
+  // decision, the same way it reads moderator-status/reaction-cloud/etc
+  // as their own separate module reads.
+  //
+  // THE RESPONSE ALWAYS CARRIES A LAYOUT FOR A VALID SESSION, UNLIKE
+  // EVERY OTHER ROUTE IN THIS FILE. app_private.list_overlay_canvas_
+  // layout (migration 0147) evaluates the §30.3 Pro+ gate
+  // (app_private.vertical_canvas_layout_entitled) INSIDE the query, so a
+  // sub-Pro channel that configured 'vertical' still gets exactly one
+  // row back with layout = 'horizontal' -- never an error, and never
+  // `canvasLayout: null` for that reason. `canvasLayout: null` here
+  // means the SESSION itself is invalid (revoked/expired/wrong
+  // fingerprint/foreign), the one state this projection still has to
+  // represent. A MISSING bearer token is still 401: that is a malformed
+  // request, not an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/canvas-layout', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'The canvas layout is not available', traceId: request.id });
+    if (!overlayCanvasLayout) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The canvas layout is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const layout = await overlayCanvasLayout.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', canvasLayout: projectOverlayCanvasLayout(layout) });
+    } catch (error) {
+      logSafeError(request, 'overlay_canvas_layout_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The canvas layout is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

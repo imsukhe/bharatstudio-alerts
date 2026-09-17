@@ -207,6 +207,42 @@
  * Giveaway / Tournament Card above: only the existing, untouched,
  * module-wide "Master Canvas modules active" cap (migration 0131)
  * governs whether it renders at all.
+ *
+ * PRF-02 SLICE 7, §6 MODULE #14 (VERTICAL STREAM LAYOUT, migration
+ * 0147) — A LAYOUT IS NOT A MODULE, so it is NOT one more entry in
+ * BUILT_MODULE_KEYS below and NOT one more runtime.registerModule()
+ * call. It is a single fetched value (`horizontal` | `vertical`) read
+ * ONCE from the new `/v1/overlay-widgets/:overlayId/canvas-layout`
+ * endpoint, turned into a class name on THIS page's own root element by
+ * `canvasRootClassName` (../modules/canvas-layout-logic.ts). Every
+ * module already on this page keeps fetching, subscribing and rendering
+ * exactly as it did before this slice — §12.7's "a narrower viewport
+ * must not fetch more, subscribe more, or retain more" holds because
+ * this slice adds exactly one read and touches no module's data path.
+ *
+ * THE PRO+ GATE IS SERVER-SIDE (§30.3, 00_LAUNCH_SCOPE_AUTHORITY.md).
+ * This page never computes or checks a tier: the endpoint above always
+ * answers with a layout for a valid session — `horizontal` for a
+ * sub-Pro channel that configured `vertical`, exactly as
+ * app_private.list_overlay_canvas_layout (migration 0147) decides
+ * server-side — so this page has nothing to gate and nothing to guess.
+ *
+ * COMPACT GOAL, QR SMART CARD, REACTION CLOUD — NO CHAT, NO GAP. The
+ * `.master-canvas-root--vertical` CSS below hides every module except
+ * the three CANVAS_LAYOUT_ARRANGED_MODULE_KEYS names and stacks them
+ * into one fixed 9:16 column. Community Goal Ladder is reused
+ * unmodified (`createGoalLadderModule`, `fetchGoalSnapshot`) with only
+ * a smaller `max-width`/font size in its compact CSS variant — never a
+ * second goal renderer or a second fetch. There is no fourth rule
+ * reserving space for chat: the owner's 2026-09-17 §19 decision closed
+ * chat as never a canvas module, and a reserved gap for something that
+ * will never render is exactly what this task's own instruction
+ * forbids.
+ *
+ * ONE FIXED ARRANGEMENT, NO VARIANTS: this task's own scope is "no
+ * variant selection, no variant system" (that is CST-08, Phase 2), so
+ * there is exactly one `--vertical` rule block below, never a family of
+ * them keyed by a variant id.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -238,6 +274,7 @@ import { createSponsorCardModule } from '../modules/sponsor-card-module';
 import { isSponsorCardSnapshot, type SponsorCardSnapshot } from '../modules/sponsor-card-logic';
 import { createQrSmartCardModule } from '../modules/qr-smart-card-module';
 import { isOverlayQrSmartCard, type OverlayQrSmartCard } from '../modules/qr-smart-card-logic';
+import { canvasRootClassName, isCanvasLayoutSnapshot, type CanvasLayout } from '../modules/canvas-layout-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -316,6 +353,12 @@ export default function MasterCanvasPage() {
   const sponsorCardContainerRef = useRef<HTMLDivElement>(null);
   const qrSmartCardContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
+  // §6 module #14 (Vertical Stream Layout). Defaults to 'horizontal' --
+  // the same additive posture canvasRootClassName documents: an overlay
+  // that never receives an answer (a store outage, before the first
+  // fetch resolves) renders exactly as every horizontal Canvas already
+  // does.
+  const [canvasLayout, setCanvasLayout] = useState<CanvasLayout>('horizontal');
 
   useEffect(() => {
     document.documentElement.classList.add('browser-overlay-document');
@@ -865,6 +908,26 @@ export default function MasterCanvasPage() {
       }
     })();
 
+    // §6 module #14 (Vertical Stream Layout, migration 0147). ONE read,
+    // outside runtime.registerModule() entirely — a layout is not a
+    // module, so it is never subscribed to the connection and never
+    // counted by getSubscriberCount(). A failed or missing answer keeps
+    // canvasLayout at its 'horizontal' default (set above), never
+    // guessed as vertical.
+    (async () => {
+      try {
+        const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/canvas-layout`, {
+          headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+        });
+        if (!response.ok || cancelled) return;
+        const body = await response.json() as { canvasLayout?: unknown };
+        if (isCanvasLayoutSnapshot(body.canvasLayout)) setCanvasLayout(body.canvasLayout.layout);
+      } catch {
+        // Read failed — stays 'horizontal', the same fail-safe posture
+        // every other overlay read on this page already has.
+      }
+    })();
+
     runtime.start();
 
     return () => {
@@ -875,7 +938,7 @@ export default function MasterCanvasPage() {
   }, [params.overlayId]);
 
   return (
-    <div className="master-canvas-root">
+    <div className={canvasRootClassName(canvasLayout)}>
       <style>{`
         .master-canvas-root { position: relative; width: 100%; height: 100%; background: transparent; font-family: system-ui, sans-serif; }
         .master-canvas-module { padding: 12px; }
@@ -972,6 +1035,27 @@ export default function MasterCanvasPage() {
         .master-canvas-qr-card [data-role="qr-smart-card"] { padding: 12px; border-radius: 12px; background: rgba(255,255,255,.94); }
         .master-canvas-qr-card [data-role="qr-smart-card-code"] { display: block; }
         .master-canvas-qr-card [data-role="qr-smart-card-label"] { font-size: 13px; font-weight: 600; color: #111827; text-align: center; }
+        /* §6 module #14 (Vertical Stream Layout, migration 0147). ONE
+           fixed 9:16 arrangement (this task's own scope: no variant
+           selection, no variant system -- that is CST-08, Phase 2).
+           Hides every module except the three
+           CANVAS_LAYOUT_ARRANGED_MODULE_KEYS names (compact goal, QR
+           Smart Card, Reaction Cloud) and stacks them into one column --
+           no chat, and no fourth rule reserving space for one (owner
+           decision, 2026-09-17, §19). Every hidden module keeps
+           fetching/subscribing/rendering exactly as it does in
+           horizontal mode (§12.7) -- this is visibility only, never a
+           second entitlement gate. */
+        .master-canvas-root--vertical .master-canvas-module { display: none; }
+        .master-canvas-root--vertical .master-canvas-goal,
+        .master-canvas-root--vertical .master-canvas-qr-card,
+        .master-canvas-root--vertical .master-canvas-reaction-cloud { display: block; position: absolute; left: 0; right: 0; max-width: none; }
+        .master-canvas-root--vertical .master-canvas-goal { top: 0; padding: 16px; }
+        .master-canvas-root--vertical .master-canvas-goal [data-role="goal-ladder-title"] { font-size: 13px; }
+        .master-canvas-root--vertical .master-canvas-goal [data-role="goal-ladder-track"] { height: 10px; }
+        .master-canvas-root--vertical .master-canvas-goal [data-role="goal-ladder-amounts"] { font-size: 11px; }
+        .master-canvas-root--vertical .master-canvas-reaction-cloud { top: 42%; bottom: auto; }
+        .master-canvas-root--vertical .master-canvas-qr-card { top: auto; right: 0; bottom: 24px; display: flex; justify-content: center; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />

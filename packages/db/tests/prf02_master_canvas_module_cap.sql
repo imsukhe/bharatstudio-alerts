@@ -59,9 +59,12 @@ values
   ('00000000-0000-4000-8000-00000000c023', '00000000-0000-4000-8000-00000000c011', 'fingerprint-prf02-a-expired', current_timestamp - interval '1 hour', null, current_timestamp);
 
 -- Channel A (Free, cap 2): configure three modules, oldest first --
--- ticker, then goal ladder, then chat. Both in-scope renderers land inside
--- the cap; chat (not built by this slice, but still cap-counted per the
--- migration's file header) is the one pushed over.
+-- ticker, then goal ladder, then boss_fight. Both in-scope renderers land
+-- inside the cap; boss_fight (cap-counted like every catalogue key, per
+-- the migration's file header) is the one pushed over. (Migration 0147
+-- retired 'chat' from the catalogue entirely -- §6 #19 decision,
+-- 2026-09-17: chat was never a canvas module -- so this test now uses a
+-- still-live key to exercise the same over-cap behaviour.)
 begin;
 set local role bsa_app;
 select set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
@@ -69,7 +72,7 @@ select app_private.upsert_master_canvas_module('00000000-0000-4000-8000-00000000
 select pg_sleep(0.01);
 select app_private.upsert_master_canvas_module('00000000-0000-4000-8000-00000000c011', 'community_goal_ladder', true);
 select pg_sleep(0.01);
-select app_private.upsert_master_canvas_module('00000000-0000-4000-8000-00000000c011', 'chat', true);
+select app_private.upsert_master_canvas_module('00000000-0000-4000-8000-00000000c011', 'boss_fight', true);
 commit;
 
 do $$
@@ -78,8 +81,8 @@ declare
   active_count integer := 0;
   ticker_active boolean;
   goal_active boolean;
-  chat_active boolean;
-  chat_reason text;
+  third_active boolean;
+  third_reason text;
 begin
   set local role bsa_app;
   perform set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
@@ -87,7 +90,7 @@ begin
     if row_record.active then active_count := active_count + 1; end if;
     if row_record.module_key = 'supporter_ticker' then ticker_active := row_record.active; end if;
     if row_record.module_key = 'community_goal_ladder' then goal_active := row_record.active; end if;
-    if row_record.module_key = 'chat' then chat_active := row_record.active; chat_reason := row_record.inactive_reason; end if;
+    if row_record.module_key = 'boss_fight' then third_active := row_record.active; third_reason := row_record.inactive_reason; end if;
   end loop;
 
   if active_count <> 2 then
@@ -96,11 +99,11 @@ begin
   if not ticker_active or not goal_active then
     raise exception 'PRF-02.8: the two oldest-configured modules must be active on Free tier';
   end if;
-  if chat_active then
+  if third_active then
     raise exception 'PRF-02.9: the third module must be inactive over the Free cap of 2';
   end if;
-  if chat_reason <> 'tier_module_cap' then
-    raise exception 'PRF-02.9: expected inactive_reason = tier_module_cap, got %', coalesce(chat_reason, '<null>');
+  if third_reason <> 'tier_module_cap' then
+    raise exception 'PRF-02.9: expected inactive_reason = tier_module_cap, got %', coalesce(third_reason, '<null>');
   end if;
 end
 $$;
@@ -119,7 +122,7 @@ $$;
 
 -- PRF-02.9 continued: disabling the ticker (the creator's own choice, a
 -- 'disabled' reason -- distinct from the tier cap) must free its cap slot
--- for chat, live, on the very next read -- no stored rank to go stale.
+-- for boss_fight, live, on the very next read -- no stored rank to go stale.
 begin;
 set local role bsa_app;
 select set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
@@ -131,20 +134,20 @@ declare
   row_record record;
   ticker_active boolean;
   ticker_reason text;
-  chat_active boolean;
+  third_active boolean;
   row_count integer;
 begin
   set local role bsa_app;
   perform set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
   for row_record in select * from app_private.list_channel_master_canvas_modules('00000000-0000-4000-8000-00000000c011') loop
     if row_record.module_key = 'supporter_ticker' then ticker_active := row_record.active; ticker_reason := row_record.inactive_reason; end if;
-    if row_record.module_key = 'chat' then chat_active := row_record.active; end if;
+    if row_record.module_key = 'boss_fight' then third_active := row_record.active; end if;
   end loop;
   if ticker_active or ticker_reason <> 'disabled' then
     raise exception 'expected supporter_ticker inactive with reason=disabled, got active=% reason=%', ticker_active, coalesce(ticker_reason, '<null>');
   end if;
-  if not chat_active then
-    raise exception 'expected chat to become active once the ticker''s cap slot was freed';
+  if not third_active then
+    raise exception 'expected boss_fight to become active once the ticker''s cap slot was freed';
   end if;
 
   -- Back to the session default (superuser) role before the raw table
@@ -193,7 +196,7 @@ begin
   begin
     set local role bsa_app;
     perform set_config('app.user_id', '00000000-0000-4000-8000-00000000c002', true);
-    perform app_private.upsert_master_canvas_module('00000000-0000-4000-8000-00000000c011', 'now_playing', true);
+    perform app_private.upsert_master_canvas_module('00000000-0000-4000-8000-00000000c011', 'lobby_status', true);
   exception when others then
     raised := true;
   end;
@@ -245,7 +248,7 @@ $$;
 -- the only one inactive.
 do $$
 declare
-  modules text[] := array['support_theater', 'community_goal_ladder', 'supporter_ticker', 'tug_of_war_vote', 'challenge_board', 'chat'];
+  modules text[] := array['support_theater', 'community_goal_ladder', 'supporter_ticker', 'tug_of_war_vote', 'challenge_board', 'reaction_cloud'];
   module_key text;
 begin
   set local role bsa_app;
@@ -261,33 +264,34 @@ do $$
 declare
   row_record record;
   active_count integer := 0;
-  chat_active boolean;
+  sixth_active boolean;
 begin
   set local role bsa_app;
   perform set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
   for row_record in select * from app_private.list_channel_master_canvas_modules('00000000-0000-4000-8000-00000000c012') loop
     if row_record.active then active_count := active_count + 1; end if;
-    if row_record.module_key = 'chat' then chat_active := row_record.active; end if;
+    if row_record.module_key = 'reaction_cloud' then sixth_active := row_record.active; end if;
   end loop;
   if active_count <> 5 then
     raise exception 'expected exactly 5 active modules on Pro tier (cap 5), got %', active_count;
   end if;
-  if chat_active then
-    raise exception 'expected the 6th-configured module (chat) inactive over the Pro cap';
+  if sixth_active then
+    raise exception 'expected the 6th-configured module (reaction_cloud) inactive over the Pro cap';
   end if;
 end
 $$;
 
--- Creator tier (cap 12): configure all 20 catalogue keys; exactly 12 must
--- be active, the 8 newest inactive over the cap.
+-- Creator tier (cap 12): configure all 16 catalogue keys (migration 0147
+-- retired 'now_playing', 'chat', 'stream_health_widget' and
+-- 'vertical_stream_layout' from the catalogue -- see that migration's
+-- header); exactly 12 must be active, the 4 newest inactive over the cap.
 do $$
 declare
   modules text[] := array[
     'support_theater', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight',
     'reaction_cloud', 'safe_soundboard_alert', 'supporter_ticker', 'challenge_board',
     'stream_mission_card', 'qr_smart_card', 'sponsor_card', 'moderator_status_card',
-    'milestone_celebration', 'vertical_stream_layout', 'stream_health_widget',
-    'lobby_status', 'giveaway_tournament_card', 'now_playing', 'chat', 'media_meme_queue'
+    'milestone_celebration', 'lobby_status', 'giveaway_tournament_card', 'media_meme_queue'
   ];
   module_key text;
 begin
@@ -309,8 +313,8 @@ begin
   perform set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
   select count(*) filter (where active), count(*) into active_count, total_count
     from app_private.list_channel_master_canvas_modules('00000000-0000-4000-8000-00000000c013');
-  if total_count <> 20 then
-    raise exception 'expected all 20 catalogue rows configured, got %', total_count;
+  if total_count <> 16 then
+    raise exception 'expected all 16 catalogue rows configured, got %', total_count;
   end if;
   if active_count <> 12 then
     raise exception 'expected exactly 12 active modules on Creator tier (cap 12), got %', active_count;
@@ -325,7 +329,7 @@ declare
     'support_theater', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight',
     'reaction_cloud', 'safe_soundboard_alert', 'supporter_ticker', 'challenge_board',
     'stream_mission_card', 'qr_smart_card', 'sponsor_card', 'moderator_status_card',
-    'milestone_celebration', 'vertical_stream_layout', 'stream_health_widget'
+    'milestone_celebration', 'lobby_status', 'giveaway_tournament_card'
   ];
   module_key text;
 begin
@@ -352,7 +356,7 @@ begin
 end
 $$;
 
--- Downgrade proof (§12.6): retier Channel C (Creator, 20 configured, 12
+-- Downgrade proof (§12.6): retier Channel C (Creator, 16 configured, 12
 -- active) down to Free must not delete a single row -- only recompute
 -- `active` to the new, lower cap.
 update channel_entitlement_versions set tier = 'free' where channel_id = '00000000-0000-4000-8000-00000000c013';
@@ -366,8 +370,8 @@ begin
   perform set_config('app.user_id', '00000000-0000-4000-8000-00000000c001', true);
   select count(*) filter (where active), count(*) into active_count, total_count
     from app_private.list_channel_master_canvas_modules('00000000-0000-4000-8000-00000000c013');
-  if total_count <> 20 then
-    raise exception 'a downgrade must never delete a module row: expected 20, got %', total_count;
+  if total_count <> 16 then
+    raise exception 'a downgrade must never delete a module row: expected 16, got %', total_count;
   end if;
   if active_count <> 2 then
     raise exception 'a downgrade to Free must recompute active down to cap 2, got %', active_count;
@@ -376,9 +380,9 @@ end
 $$;
 
 -- Overlay-facing (browser-source) read: Channel A currently has ticker
--- (active) and goal ladder (active) and chat (inactive, over cap). A
+-- (active) and goal ladder (active) and boss_fight (inactive, over cap). A
 -- valid overlay session must see exactly the two active module keys, in
--- alphabetical order, and nothing about chat's existence or reason.
+-- alphabetical order, and nothing about boss_fight's existence or reason.
 do $$
 declare
   keys text[];

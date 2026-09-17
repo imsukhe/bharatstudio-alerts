@@ -2175,6 +2175,84 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/canvas-layout:
+    get:
+      tags: [Canvas layout]
+      operationId: getChannelCanvasLayout
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Master Canvas §6 module #14 (Vertical Stream Layout, migration 0147). A LAYOUT IS NOT
+        A MODULE: this setting consumes no 30.3 cap slot and is not one of the sixteen
+        master-canvas module keys. Configuring the layout is never tier-gated (12.6) -
+        storing/viewing is available at every tier - but verticalEntitled reports whether the
+        Pro+ render gate (30.3) currently applies, so the creator UI can show "Pro required"
+        without a second, independently-wrong copy of the gate. That gate itself lives solely
+        inside the overlay read below.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's configured layout and whether vertical currently renders, or null when never configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelCanvasLayoutResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [Canvas layout]
+      operationId: setChannelCanvasLayout
+      summary: Set the canvas layout - horizontal (default) or vertical.
+      description: >-
+        Owner/admin only. One fixed 9:16 arrangement, no variant selection and no variant
+        system (that is CST-08, Phase 2) - the body accepts exactly horizontal or vertical and
+        nothing else. Never tier-gated to STORE (12.6); whether the overlay actually RENDERS
+        vertical is decided solely by the overlay read, never by this write.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetCanvasLayoutRequest' }
+      responses:
+        '200':
+          description: The layout after the write.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelCanvasLayoutResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/canvas-layout:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayCanvasLayout
+      summary: The effective canvas layout for this overlay - always answered for a valid session.
+      description: >-
+        Master Canvas §6 module #14 (Vertical Stream Layout). Unlike every other overlay
+        widget read, a valid session ALWAYS returns exactly one layout: the 30.3 Pro+ render
+        gate (app_private.vertical_canvas_layout_entitled) is evaluated INSIDE
+        app_private.list_overlay_canvas_layout (migration 0147), so a sub-Pro channel that
+        configured vertical still receives layout=horizontal - never an error, and never null
+        for that reason. `canvasLayout: null` here means the SESSION itself is invalid
+        (revoked/expired/wrong fingerprint/foreign), the one state this response still
+        represents. 12.7: this read adds no fetch, subscription or retained state to any other
+        module - it is the one value that decides how already-fetched modules (compact goal,
+        QR Smart Card, Reaction Cloud - never chat, per the 2026-09-17 #19 decision) are
+        arranged.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped effective canvas layout for this overlay, or null only for an invalid session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayCanvasLayoutResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -3103,6 +3181,67 @@ components:
           oneOf:
             - type: 'null'
             - $ref: '#/components/schemas/OverlayQrSmartCard'
+    ChannelCanvasLayout:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, layout, verticalEntitled]
+      description: >-
+        Creator-facing projection: §6 module #14 (Vertical Stream Layout). A LAYOUT IS NOT A
+        MODULE - consumes no 30.3 cap slot, not one of the sixteen master-canvas module keys.
+        No variant id, no aspect ratio field and no scene concept exists on this type (this
+        task's own scope: one fixed 9:16 arrangement, no variant system - that is CST-08,
+        Phase 2).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        layout: { enum: [horizontal, vertical] }
+        verticalEntitled:
+          type: boolean
+          description: Whether the 30.3 Pro+ gate currently allows vertical to render. Reporting only - the gate itself lives solely inside the overlay read.
+    ChannelCanvasLayoutResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, canvasLayout]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        canvasLayout:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ChannelCanvasLayout'
+    SetCanvasLayoutRequest:
+      type: object
+      additionalProperties: false
+      required: [layout]
+      description: >-
+        The layout value, and nothing else. additionalProperties false is load-bearing: a body
+        carrying a variant id, an aspect ratio or a scene id is rejected with 400 before the
+        store is ever called - this setting holds no such concept.
+      properties:
+        layout: { enum: [horizontal, vertical] }
+    OverlayCanvasLayout:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, layout]
+      description: >-
+        Overlay projection: one field. No channel id, no timestamp and no entitlement flag -
+        those are creator-facing only.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        layout: { enum: [horizontal, vertical] }
+    OverlayCanvasLayoutResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, canvasLayout]
+      description: >-
+        canvasLayout is null ONLY for an invalid overlay session (revoked/expired/wrong
+        fingerprint/foreign) - a valid session always carries a layout, even for a sub-Pro
+        channel (it answers horizontal, per the 30.3 gate evaluated server-side inside the
+        read).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        canvasLayout:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayCanvasLayout'
     OverlayModeratorStatusResponse:
       type: object
       additionalProperties: false

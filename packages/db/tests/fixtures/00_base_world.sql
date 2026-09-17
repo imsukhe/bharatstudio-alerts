@@ -85,5 +85,6 @@ on conflict (channel_id, user_id) do nothing;
 --   ...5c00-...5cff                           prf02_slice7_safe_soundboard OWN fixture (channels, memberships, entitlement versions, overlay sessions)
 --   ...5d00-...5dff                           prf02_slice7_sponsor_card OWN fixture (channels, memberships, overlay sessions)
 --   ...6600-...66ff                           prf02_slice7_qr_smart_card OWN fixture (overlay sessions)
+--   ...5e00-...5eff                           prf02_slice7_vertical_layout OWN fixture (channels, memberships, entitlement versions, overlay sessions)
 --
 -- Next free block for a new test's own fixture: ...1720 upward.

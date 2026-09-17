@@ -45,8 +45,12 @@ async function buildTestApp(store?: Partial<MasterCanvasStore>, overlayModules?:
   return app;
 }
 
-test('the module catalogue carries all 20 §6 keys, and the guard accepts only those', () => {
-  assert.equal(MASTER_CANVAS_MODULE_KEYS.length, 20);
+test('the module catalogue carries all 16 §6 keys, and the guard accepts only those', () => {
+  // Migration 0147 retired four dead keys ('now_playing', 'chat',
+  // 'stream_health_widget', 'vertical_stream_layout') -- the last is
+  // §6 module #14 (Vertical Stream Layout), which is a canvas SETTING,
+  // not a module, and is never one of these keys.
+  assert.equal(MASTER_CANVAS_MODULE_KEYS.length, 16);
   assert.ok(isMasterCanvasModuleKey('supporter_ticker'));
   assert.ok(isMasterCanvasModuleKey('community_goal_ladder'));
   assert.equal(isMasterCanvasModuleKey('not_a_real_module'), false);
@@ -57,7 +61,7 @@ test('GET the creator-facing list returns the store\'s modules, cap reasons incl
   const modules = [
     fakeModule({ moduleKey: 'supporter_ticker', active: true, inactiveReason: null }),
     fakeModule({ moduleKey: 'community_goal_ladder', active: true, inactiveReason: null }),
-    fakeModule({ moduleKey: 'chat', active: false, inactiveReason: 'tier_module_cap' }),
+    fakeModule({ moduleKey: 'moderator_status_card', active: false, inactiveReason: 'tier_module_cap' }),
   ];
   const app = await buildTestApp({ async list() { return modules; } });
   const response = await app.inject({
@@ -113,7 +117,7 @@ test('PUT toggles a module and returns the recomputed row', async () => {
 test('PUT maps a forbidden outcome (non-owner/admin) to 404, never a leaking 403', async () => {
   const app = await buildTestApp({ async upsert() { return { outcome: 'forbidden' }; } });
   const response = await app.inject({
-    method: 'PUT', url: `/v1/channels/${channelId}/master-canvas/modules/chat`,
+    method: 'PUT', url: `/v1/channels/${channelId}/master-canvas/modules/moderator_status_card`,
     headers: { authorization: `Bearer ${token}` },
     payload: { enabled: true },
   });
@@ -137,7 +141,7 @@ test('PUT rejects an out-of-catalogue module key at the schema layer before the 
 test('a thrown store error on PUT becomes a retryable 503, never a 500 or a silent 200', async () => {
   const app = await buildTestApp({ async upsert() { throw new Error('boom'); } });
   const response = await app.inject({
-    method: 'PUT', url: `/v1/channels/${channelId}/master-canvas/modules/chat`,
+    method: 'PUT', url: `/v1/channels/${channelId}/master-canvas/modules/moderator_status_card`,
     headers: { authorization: `Bearer ${token}` },
     payload: { enabled: true },
   });

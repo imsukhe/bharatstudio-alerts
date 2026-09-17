@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-canvas-layout-response.schema.json",
+  "title": "Overlay canvas layout response (PRF-02, catalogue module #14, Vertical Stream Layout)",
+  "description": "The overlay/browser-source-facing read. One field: layout. No channel id, no timestamp and no entitlement flag -- those are creator-facing only. canvasLayout is null ONLY for an invalid overlay session (revoked/expired/wrong fingerprint/foreign token); a valid session always carries a layout, even for a sub-Pro channel that configured vertical (app_private.list_overlay_canvas_layout, migration 0147, evaluates the 30.3 Pro+ gate INSIDE the read and answers horizontal in that case -- never an error, never null for that reason).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "canvasLayout"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "canvasLayout": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "layout"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "layout": { "enum": ["horizontal", "vertical"] }
+          }
+        }
+      ]
+    }
+  }
+}

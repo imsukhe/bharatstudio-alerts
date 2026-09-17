@@ -110,6 +110,8 @@ import { registerSponsorCardRoutes } from './routes/sponsor-card.js';
 // routes/master-canvas.ts.
 import type { QrSmartCardStore, QrSmartCardOverlayStore } from './domain/qr-smart-card-store.js';
 import { registerQrSmartCardRoutes } from './routes/qr-smart-card.js';
+import type { CanvasLayoutStore, CanvasLayoutOverlayStore } from './domain/canvas-layout-store.js';
+import { registerCanvasLayoutRoutes } from './routes/canvas-layout.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -231,6 +233,8 @@ export type AppDependencies = {
   // one here.
   qrSmartCards?: QrSmartCardStore;
   overlayQrSmartCard?: QrSmartCardOverlayStore;
+  canvasLayout?: CanvasLayoutStore;
+  overlayCanvasLayout?: CanvasLayoutOverlayStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -450,7 +454,7 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
-  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlayMediaQueue, dependencies.overlaySafeSoundboard, dependencies.overlaySponsorCard, dependencies.overlayQrSmartCard);
+  await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlayMediaQueue, dependencies.overlaySafeSoundboard, dependencies.overlaySponsorCard, dependencies.overlayQrSmartCard, dependencies.overlayCanvasLayout);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerSponsorCardRoutes(app, dependencies.sessions, dependencies.sponsorCards, dependencies.account);
   await registerSafeModeRoutes(app, dependencies.sessions, dependencies.safeMode, dependencies.account);
@@ -459,6 +463,7 @@ export async function buildApp(
   await registerMediaQueueRoutes(app, dependencies.sessions, dependencies.mediaQueue, dependencies.account, config.mediaQueueMaxItemDurationMs, config.mediaQueueMaxItemsPerChannel);
   await registerSafeSoundboardRoutes(app, dependencies.sessions, dependencies.safeSoundboard, dependencies.account, dependencies.safeSoundboardUploadCaps);
   await registerQrSmartCardRoutes(app, dependencies.sessions, dependencies.qrSmartCards, dependencies.account);
+  await registerCanvasLayoutRoutes(app, dependencies.sessions, dependencies.canvasLayout, dependencies.account);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

@@ -5,17 +5,25 @@
 // connection, single rAF loop, per-module error boundaries, bounded DOM)
 // is client-side (apps/web/app/overlay/canvas/) and owns no store.
 //
-// CATALOGUE: all 20 §6 modules are configurable and cap-counted from day
-// one -- this task's client only ships renderers for two of them
-// ('supporter_ticker', 'community_goal_ladder'), but the cap must already
-// be real for every future module, not retrofitted later.
-
+// CATALOGUE: sixteen §6 modules are configurable and cap-counted.
+//
+// MIGRATION 0147 RETIRED FOUR DEAD KEYS from the twenty this catalogue
+// used to list: 'now_playing', 'chat', 'stream_health_widget' and
+// 'vertical_stream_layout'. The first three are permanently dead (AUD-11
+// stands for now_playing; chat was never a canvas module -- the
+// 2026-09-17 §6 #19 decision; stream health moved to the dashboard), and
+// the fourth -- Vertical Stream Layout, §6 module #14 -- is NOT a module
+// at all: it is a per-channel canvas SETTING (public.channels.
+// canvas_layout, migration 0147) that arranges already-built modules
+// into a fixed 9:16 arrangement. Counting it here would spend a §30.3 cap
+// slot on *being vertical*, which migration 0147's header explains at
+// length. Its own store lives in domain/canvas-layout-store.ts, not
+// here -- deliberately, since it is not one of these sixteen keys.
 export const MASTER_CANVAS_MODULE_KEYS = [
   'support_theater', 'community_goal_ladder', 'tug_of_war_vote', 'boss_fight',
   'reaction_cloud', 'safe_soundboard_alert', 'supporter_ticker', 'challenge_board',
   'stream_mission_card', 'qr_smart_card', 'sponsor_card', 'moderator_status_card',
-  'milestone_celebration', 'vertical_stream_layout', 'stream_health_widget',
-  'lobby_status', 'giveaway_tournament_card', 'now_playing', 'chat', 'media_meme_queue',
+  'milestone_celebration', 'lobby_status', 'giveaway_tournament_card', 'media_meme_queue',
 ] as const;
 
 export type MasterCanvasModuleKey = typeof MASTER_CANVAS_MODULE_KEYS[number];

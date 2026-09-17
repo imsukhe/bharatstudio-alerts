@@ -1,0 +1,8 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-canvas-layout-response.schema.json",
+  "schemaVersion": "v1",
+  "canvasLayout": {
+    "schemaVersion": "v1",
+    "layout": "vertical"
+  }
+}

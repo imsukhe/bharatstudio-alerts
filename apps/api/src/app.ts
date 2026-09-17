@@ -56,6 +56,8 @@ import type { PaymentMethodUpdateService } from './domain/billing-payment-method
 import type { CompanionFeatureStore } from './domain/companion-feature-store.js';
 import type { CompanionEntitlementStore } from './domain/companion-entitlement-policy.js';
 import type { GoalStore, OverlayGoalStore } from './domain/goal-store.js';
+import type { CompanionGoalControlStore } from './domain/companion-goal-control-store.js';
+import type { CompanionScenePresetStore } from './domain/companion-scene-preset-store.js';
 import type { SeatStore } from './domain/seat-store.js';
 import type { HypeModeStore, InteractionDefinitionStore, InteractionOverlayStore, LeaderboardStore, PublicVoteStore, SupportVoteStore, WidgetConfigStore } from './domain/interaction-types.js';
 import { registerInteractionRoutes } from './routes/interactions.js';
@@ -71,6 +73,7 @@ import type { ReputationStore } from './domain/reputation-store.js';
 import type { ProviderCapabilitySnapshotStore } from './domain/payment-provider-creator.js';
 import { registerReputationRoutes } from './routes/reputation.js';
 import { registerGoalRoutes } from './routes/goals.js';
+import { registerCompanionGoalSceneRoutes } from './routes/companion-goal-scene.js';
 import type { MasterCanvasOverlayStore, MasterCanvasStore } from './domain/master-canvas-store.js';
 import type { ModeratorStatusOverlayStore } from './domain/moderator-status-store.js';
 import type { ReactionCloudOverlayStore, ReactionSendStore } from './domain/reaction-cloud-store.js';
@@ -248,6 +251,8 @@ export type AppDependencies = {
   seats?: SeatStore;
   goals?: GoalStore;
   overlayGoals?: OverlayGoalStore;
+  companionGoalControls?: CompanionGoalControlStore;
+  companionScenePresets?: CompanionScenePresetStore;
   masterCanvasModules?: MasterCanvasStore;
   overlayMasterCanvasModules?: MasterCanvasOverlayStore;
   // PRF-02, §6 module #12. The overlay read (held count + safe-mode
@@ -563,6 +568,7 @@ export async function buildApp(
   await registerTtsRoutes(app, dependencies.serviceIdentity, dependencies.ttsStore, dependencies.tts, dependencies.ttsQuotaMeter, metrics);
   await registerViewerRoutes(app, { viewer: dependencies.viewer, platformIdentityVerifier: dependencies.platformIdentityVerifier });
   await registerGoalRoutes(app, dependencies.sessions, dependencies.goals, dependencies.account, dependencies.overlayGoals);
+  await registerCompanionGoalSceneRoutes(app, dependencies.sessions, dependencies.account, dependencies.companionGoalControls, dependencies.companionScenePresets, dependencies.alerts, dependencies.companionEntitlement);
   await registerMasterCanvasRoutes(app, dependencies.sessions, dependencies.masterCanvasModules, dependencies.account, dependencies.overlayMasterCanvasModules, dependencies.overlayModeratorStatus, dependencies.overlayReactionCloud, dependencies.overlayLobbyStatus, dependencies.overlayGiveawayTournament, dependencies.overlayMediaQueue, dependencies.overlaySafeSoundboard, dependencies.overlaySponsorCard, dependencies.overlayQrSmartCard, dependencies.overlayCanvasLayout);
   await registerStreamMissionRoutes(app, dependencies.sessions, dependencies.streamMissions, dependencies.account, dependencies.overlayStreamMission);
   await registerSponsorCardRoutes(app, dependencies.sessions, dependencies.sponsorCards, dependencies.account);

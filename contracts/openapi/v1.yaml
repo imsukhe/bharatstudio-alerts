@@ -1407,6 +1407,236 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/goals/{goalId}/increase-target:
+    post:
+      tags: [Companion]
+      operationId: increaseCompanionGoalTarget
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CMP-21: raise a support goal's target from Companion, mid-stream. Never touches
+        progress (packages/db/migrations/0102's app_private.support_goal_progress_paise stays
+        the only source of that). The new target must be strictly greater than the current one.
+        Runs through the Companion authorisation model: entitlement + activation (same
+        overlayConnected signal the 'alerts' action group already uses) checked before this
+        call, and a currently active Companion control-session lease (migration 0053) checked
+        inside it (packages/db/migrations/0162).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncreaseCompanionGoalTargetRequest' }
+      responses:
+        '202':
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionGoalControlResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The goal has ended, or no Companion control session is currently active for this channel.
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/goals/{goalId}/start-timer:
+    post:
+      tags: [Companion]
+      operationId: startCompanionGoalTimer
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CMP-21: (re)start a 'stream'-window goal's counting window by resetting its
+        started_at (packages/db/migrations/0102) to now - the only timer concept this schema
+        has for a goal (see migration 0162's header for why no new duration/countdown column
+        was added). Refused with 400 for daily/monthly/open goals. Same Companion
+        authorisation model as increase-target.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanionGoalControlRequest' }
+      responses:
+        '202':
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionGoalControlResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The goal has ended, or no Companion control session is currently active for this channel.
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/goals/{goalId}/mark-complete:
+    post:
+      tags: [Companion]
+      operationId: markCompanionGoalComplete
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CMP-21: manually/early-complete a goal, below target if the creator chooses. Extends
+        migration 0150's completion latch (support_goal_completions) rather than adding a
+        stored flag: completedProgressPaise freezes at whatever live progress is at the moment
+        of this call, through the same partial-unique-index idempotency a natural 100% crossing
+        uses, so a later refund can never contradict it and a natural crossing afterwards is a
+        no-op. Reopening uses the existing POST .../goals/{goalId}/reopen route, unchanged. Same
+        Companion authorisation model as increase-target.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanionGoalControlRequest' }
+      responses:
+        '202':
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionGoalControlResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: No Companion control session is currently active for this channel. }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/goals/{goalId}/trigger-celebration:
+    post:
+      tags: [Companion]
+      operationId: triggerCompanionGoalCelebration
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CMP-21: PREPARE a goal celebration - never fire. FULL-PRODUCT-DEFINITION.md S5.4's
+        Milestone queue rule ("prepare, not fire") applied to a Companion-initiated celebration:
+        migration 0162 stores this call with fire_mode hardcoded 'prepare' (never a request
+        parameter anywhere in this API) and a database CHECK constraint on an IMMUTABLE
+        classifier structurally refuses any 'trigger_celebration' row with fire_mode = 'fire',
+        mirroring migration 0158's GOA-21 enforcement exactly. Nothing sends, posts, announces
+        or plays as a result of this call. Same Companion authorisation model as increase-target.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanionGoalControlRequest' }
+      responses:
+        '202':
+          description: Accepted - prepared, not fired.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionGoalControlResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: No Companion control session is currently active for this channel. }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/scene-presets:
+    post:
+      tags: [Companion]
+      operationId: upsertCompanionScenePreset
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CMP-20: configure one of the six FULL-PRODUCT-DEFINITION.md S5.2 scene presets (Gameplay,
+        Just Chatting, BRB, Sponsor, Vertical, Ending) for this channel. Creator-created, upserted
+        on first configure - never pre-seeded (packages/db/migrations/0162's header explains why,
+        following public.master_canvas_modules' own upsert-on-first-configure pattern). Owner/admin
+        only. Calling again for a name already configured is a no-op that returns the existing id.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertCompanionScenePresetRequest' }
+      responses:
+        '200':
+          description: The preset's id (existing or newly created).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionScenePresetIdResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    get:
+      tags: [Companion]
+      operationId: listCompanionScenePresets
+      security: [{ bearerAuth: [] }]
+      description: Every scene preset configured for this channel. Any current channel member (owner through viewer).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: This channel's configured scene presets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionScenePresetListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/scene-presets/{presetId}/actions:
+    post:
+      tags: [Companion]
+      operationId: addCompanionScenePresetAction
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CMP-20: append one ordered OBS-action step to a scene preset. actionType is restricted
+        to exactly the four strings apps/api/src/routes/companion.ts's ACTION_GROUPS already
+        lists for its 'obs' group (obs_set_scene, obs_toggle_source, obs_toggle_mute,
+        obs_set_transition) - no new OBS verb is introduced. Owner/admin only.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: presetId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCompanionScenePresetActionRequest' }
+      responses:
+        '201':
+          description: The new action step's id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionScenePresetActionIdResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    get:
+      tags: [Companion]
+      operationId: listCompanionScenePresetActions
+      security: [{ bearerAuth: [] }]
+      description: >-
+        This is CMP-20's "resolution to existing actions": the ordered OBS-action steps a
+        Companion client executes one at a time, in stepOrder, through the EXISTING
+        POST /v1/channels/{channelId}/companion/actions route - this route only resolves, it
+        never dispatches.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: presetId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The preset's ordered OBS-action steps.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionScenePresetActionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-goals/{overlayId}:
     get:
       tags: [Overlay]
@@ -7113,6 +7343,93 @@ components:
       properties:
         clientType: { type: string, enum: [web, mobile, desktop] }
         clientInstanceId: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' }
+    CompanionGoalControlRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, idempotencyKey]
+      properties:
+        sessionId: { type: string, format: uuid, description: An active Companion control-session id (migration 0053). }
+        idempotencyKey: { type: string, pattern: '^[A-Za-z0-9._:-]{16,128}$' }
+    IncreaseCompanionGoalTargetRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, idempotencyKey, newTargetAmountPaise]
+      properties:
+        sessionId: { type: string, format: uuid, description: An active Companion control-session id (migration 0053). }
+        idempotencyKey: { type: string, pattern: '^[A-Za-z0-9._:-]{16,128}$' }
+        newTargetAmountPaise: { type: integer, minimum: 1000, description: Must be strictly greater than the goal's current targetAmountPaise. }
+    CompanionGoalControlResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, goalId, controlType, accepted]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        goalId: { type: string, format: uuid }
+        controlType: { type: string, enum: [increase_target, start_timer, mark_complete, trigger_celebration] }
+        accepted: { type: boolean }
+    UpsertCompanionScenePresetRequest:
+      type: object
+      additionalProperties: false
+      required: [presetName]
+      properties:
+        presetName: { type: string, enum: [gameplay, just_chatting, brb, sponsor, vertical, ending] }
+    CompanionScenePresetIdResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, presetId]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        presetId: { type: string, format: uuid }
+    CompanionScenePreset:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, presetId, channelId, presetName, createdAt, updatedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        presetId: { type: string, format: uuid }
+        channelId: { type: string, format: uuid }
+        presetName: { type: string, enum: [gameplay, just_chatting, brb, sponsor, vertical, ending] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CompanionScenePresetListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items: { type: array, items: { $ref: '#/components/schemas/CompanionScenePreset' } }
+    AddCompanionScenePresetActionRequest:
+      type: object
+      additionalProperties: false
+      required: [stepOrder, actionType, targetLabel]
+      properties:
+        stepOrder: { type: integer, minimum: 0 }
+        actionType: { type: string, enum: [obs_set_scene, obs_toggle_source, obs_toggle_mute, obs_set_transition] }
+        targetLabel: { type: string, minLength: 1, maxLength: 200, description: Scene/source/input/transition name, same shape as CompanionActionSlot's own targetLabel. }
+    CompanionScenePresetActionIdResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, actionId]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        actionId: { type: string, format: uuid }
+    CompanionScenePresetAction:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, actionId, stepOrder, actionType, targetLabel]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        actionId: { type: string, format: uuid }
+        stepOrder: { type: integer, minimum: 0 }
+        actionType: { type: string, enum: [obs_set_scene, obs_toggle_source, obs_toggle_mute, obs_set_transition] }
+        targetLabel: { type: string, minLength: 1, maxLength: 200 }
+    CompanionScenePresetActionListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, actions]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        actions: { type: array, items: { $ref: '#/components/schemas/CompanionScenePresetAction' } }
     CompanionControlSession:
       type: object
       additionalProperties: false

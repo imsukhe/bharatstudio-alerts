@@ -79,5 +79,6 @@ on conflict (channel_id, user_id) do nothing;
 --   ...1701-...1702, ...1710-...1711          l02b-reputation-signals OWN fixture (viewer accounts, payment+refund)
 --   ...5500-...55ff                           prf02_slice5_moderator_status OWN fixture
 --   ...5700-...57ff                           prf02_slice6_reaction_cloud OWN fixture (channels, catalogue entries, creator packs, overlay sessions)
+--   ...5800-...58ff                           prf02_slice6_lobby_status OWN fixture (channels, memberships, entitlement versions, overlay sessions)
 --
 -- Next free block for a new test's own fixture: ...1720 upward.

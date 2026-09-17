@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-lobby-session-response.schema.json",
+  "title": "Channel lobby session response (PRF-02 slice 6, catalogue module #16)",
+  "description": "The creator-facing projection of the channel's current lobby session, or null when none is open. Available at EVERY tier: storing, viewing and exporting a durable creator record is never tier-gated (12.6). The Creator+/Events Pack entitlement governs only whether the Master Canvas renders the Lobby Status card. closedAt is a record of when the creator closed the lobby, never a schedule -- there is no duration, timer, expiry or deadline field here, and none in the schema behind it. The lobby carries no room code, password, seat token, participant list or player identifier of any kind; those are the Lobby Engine and are not built.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "lobby"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "lobby": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "lobbyId", "seatCount", "confirmedSeatCount", "queueCount", "openedAt", "closedAt", "createdAt", "updatedAt"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "lobbyId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Present on the CREATOR projection only, because the creator's write path is addressed rather than ambient -- a stale dashboard tab must not be able to write counts onto a lobby opened after it loaded. It is never on the overlay projection."
+            },
+            "seatCount": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+            "confirmedSeatCount": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+            "queueCount": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+            "openedAt": { "type": "string", "format": "date-time" },
+            "closedAt": {
+              "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }],
+              "description": "When the creator closed the lobby. Null while it is open. Never a scheduled close."
+            },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -30,6 +30,8 @@ const fixtureToSchema = {
   'overlay-paid-vote-tally-response.json': 'overlay-paid-vote-tally-response.schema.json',
   'overlay-moderator-status-response.json': 'overlay-moderator-status-response.schema.json',
   'overlay-reaction-cloud-response.json': 'overlay-reaction-cloud-response.schema.json',
+  'overlay-lobby-status-response.json': 'overlay-lobby-status-response.schema.json',
+  'channel-lobby-session-response.json': 'channel-lobby-session-response.schema.json',
   'public-reaction-send-response.json': 'public-reaction-send-response.schema.json',
   'channel-safe-mode-response.json': 'channel-safe-mode-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
@@ -466,6 +468,132 @@ for (const [field, value] of [
   if (publicReactionSendValidator(polluted)) {
     failures.push(`public-reaction-send-response.json: ${field} was accepted -- the send response carries an outcome and nothing else`);
   }
+}
+
+// PRF-02 slice 6, catalogue module #16 (Lobby Status). §16 is explicit that
+// the public overlay shows "aggregate status only ... Never player
+// identifiers, never Discord names, never codes or passwords", and the
+// owner's 2026-09-16 decision 4 requires that to be a property of the read
+// rather than of the renderer -- migration 0140's function returns three
+// integer columns. These negative cases are the CONTRACT's own half of that
+// guarantee: the published response schema must refuse every one of those
+// fields outright, so a future server change cannot introduce one without a
+// visible, reviewable contract change.
+const overlayLobbyStatusSchema = await loadSchema('overlay-lobby-status-response.schema.json');
+const overlayLobbyStatusValidator = ajv.getSchema(overlayLobbyStatusSchema.$id);
+async function lobbyStatusFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-lobby-status-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  // The four things §16 names outright: codes, passwords, player
+  // identifiers, Discord names.
+  ['roomCode', 'BGMI-4417'],
+  ['roomPassword', 'hunter2'],
+  ['password', 'hunter2'],
+  ['seatToken', 'st_9f2c'],
+  ['playerId', '00000000-0000-4000-8000-0000000000a1'],
+  ['playerName', 'Riya'],
+  ['inGameName', 'RIYA_OP'],
+  ['discordName', 'riya#1234'],
+  // Viewer identity in every shape this codebase has one.
+  ['viewerId', '00000000-0000-4000-8000-0000000000a2'],
+  ['viewerIdentityId', '00000000-0000-4000-8000-0000000000a3'],
+  ['anonymousIdentityId', '00000000-0000-4000-8000-0000000000a4'],
+  ['anonymousIdentityTokenHash', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'],
+  ['sessionId', '00000000-0000-4000-8000-0000000000a5'],
+  ['overlaySessionId', '00000000-0000-4000-8000-0000000000a6'],
+  ['lobbyId', '00000000-0000-4000-8000-000000005851'],
+  ['ipAddress', '203.0.113.7'],
+  // Opted-in initials and avatars are permitted by §16 but are OUT OF
+  // SCOPE by owner decision 5: they need an opt-in mechanism that does not
+  // exist in this schema. The contract refuses them so nothing can ship an
+  // approximation of one.
+  ['initials', 'RS'],
+  ['avatarUrl', 'https://cdn.example.invalid/a.png'],
+  ['participants', [{ name: 'Riya' }]],
+  // A per-viewer list in any shape is the thing decision 4 forbids.
+  ['waitlist', ['Riya', 'Arjun']],
+  ['seats', [{ playerName: 'Riya' }]],
+]) {
+  const polluted = await lobbyStatusFixture();
+  polluted.lobbyStatus[field] = value;
+  if (overlayLobbyStatusValidator(polluted)) {
+    failures.push(`overlay-lobby-status-response.json: ${field} was accepted -- §16 permits aggregate status only on the public overlay`);
+  }
+}
+// A null status is a VALID answer, and it is the same answer an
+// unrecognised token, a channel with no open lobby and an UNENTITLED
+// channel all get: every one of them means paint nothing.
+const lobbyStatusAbsent = await lobbyStatusFixture();
+lobbyStatusAbsent.lobbyStatus = null;
+if (!overlayLobbyStatusValidator(lobbyStatusAbsent)) {
+  failures.push('overlay-lobby-status-response.json: a null lobbyStatus must be a VALID answer -- it is what an unrecognised token, a quiet channel and an unentitled channel all return');
+}
+// A lobby with every seat confirmed and an empty queue is ordinary and
+// valid -- 16/16 with nobody waiting.
+const lobbyStatusFull = await lobbyStatusFixture();
+lobbyStatusFull.lobbyStatus.confirmedSeatCount = lobbyStatusFull.lobbyStatus.seatCount;
+lobbyStatusFull.lobbyStatus.queueCount = 0;
+if (!overlayLobbyStatusValidator(lobbyStatusFull)) {
+  failures.push('overlay-lobby-status-response.json: a full lobby with an empty queue must be a valid answer');
+}
+for (const [field, bad] of [
+  ['seatCount', 0], ['seatCount', -1], ['seatCount', 1.5],
+  ['confirmedSeatCount', -1], ['confirmedSeatCount', 1.5],
+  ['queueCount', -1], ['queueCount', 1.5],
+]) {
+  const polluted = await lobbyStatusFixture();
+  polluted.lobbyStatus[field] = bad;
+  if (overlayLobbyStatusValidator(polluted)) {
+    failures.push(`overlay-lobby-status-response.json: ${field} ${bad} was accepted`);
+  }
+}
+
+// The CREATOR-facing lobby record. It carries a lobby id (its write path is
+// addressed, not ambient) but still no code, password, seat token,
+// participant list or player identifier -- none of those exists in the
+// schema behind it, because they are the Lobby Engine and are Phase 3.
+const channelLobbySessionSchema = await loadSchema('channel-lobby-session-response.schema.json');
+const channelLobbySessionValidator = ajv.getSchema(channelLobbySessionSchema.$id);
+async function lobbySessionFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-lobby-session-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  ['roomCode', 'BGMI-4417'],
+  ['password', 'hunter2'],
+  ['seatToken', 'st_9f2c'],
+  ['playerName', 'Riya'],
+  ['discordName', 'riya#1234'],
+  ['participants', [{ name: 'Riya' }]],
+  ['waitlist', ['Riya']],
+  ['readyCheckStartedAt', '2026-09-16T10:02:00.000Z'],
+  ['selectionPolicy', 'fifo'],
+  ['queuePolicy', 'creator_pick'],
+  ['reserveSeats', 4],
+  // Session-bounded, not clock-bounded: there is no duration, timer,
+  // expiry or deadline column in the schema and none in the contract.
+  ['durationSeconds', 900],
+  ['expiresAt', '2026-09-16T11:00:00.000Z'],
+  ['endsAt', '2026-09-16T11:00:00.000Z'],
+  // No price, no billing, no purchase path anywhere in this slice.
+  ['pricePaise', 12900],
+  ['entryFeePaise', 5000],
+]) {
+  const polluted = await lobbySessionFixture();
+  polluted.lobby[field] = value;
+  if (channelLobbySessionValidator(polluted)) {
+    failures.push(`channel-lobby-session-response.json: ${field} was accepted -- that is the Lobby Engine, or a price, and this slice builds neither`);
+  }
+}
+const lobbySessionAbsent = await lobbySessionFixture();
+lobbySessionAbsent.lobby = null;
+if (!channelLobbySessionValidator(lobbySessionAbsent)) {
+  failures.push('channel-lobby-session-response.json: a null lobby must be a VALID answer -- it is what a channel with no open lobby returns, at every tier');
+}
+const lobbySessionClosed = await lobbySessionFixture();
+lobbySessionClosed.lobby.closedAt = '2026-09-16T11:30:00.000Z';
+if (!channelLobbySessionValidator(lobbySessionClosed)) {
+  failures.push('channel-lobby-session-response.json: a closed lobby must remain a valid, readable durable record (12.6)');
 }
 
 const overlayHypeSchema = await loadSchema('overlay-hype-response.schema.json');

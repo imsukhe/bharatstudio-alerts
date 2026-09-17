@@ -45,6 +45,10 @@ import { createSqlModeratorStatusOverlayStore } from './db/moderator-status-over
 import { createSqlReactionCloudOverlayStore } from './db/reaction-cloud-overlay-store.js';
 import { createSqlReactionSendStore } from './db/reaction-send-store.js';
 import { createSqlSafeModeStore } from './db/safe-mode-store.js';
+// PRF-02 slice 6, §6 catalogue module #16 (Lobby Status). Two files, two
+// pools, deliberately -- see each store file's own header.
+import { createSqlLobbySessionStore } from './db/lobby-status-store.js';
+import { createSqlLobbyStatusOverlayStore } from './db/lobby-status-overlay-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -175,6 +179,20 @@ const app = await buildApp(config, {
   // (see db/safe-mode-store.ts's own header). That also keeps it
   // correctly outside rule 3 of the RT-12 required-queries scan.
   safeMode: sql ? createSqlSafeModeStore(sql) : undefined,
+  // PRF-02 slice 6, §6 module #16 (Lobby Status).
+  //
+  // The creator store carries writes, so it uses the MAIN pool exactly as
+  // goals/challenges/streamMissions do -- which also keeps it correctly
+  // outside rule 3 of the RT-12 required-queries scan. The overlay store
+  // is a derived read on the RT-10/RT-11 derivedReadSql pool like every
+  // other widget/overlay read, which is what puts it INSIDE rule 3.
+  //
+  // Neither is constructed with a tier, a ceiling or any other
+  // configuration value: the Creator+/Events-Pack entitlement lives inside
+  // app_private.list_overlay_lobby_status (migration 0140), where the SQL
+  // test can prove it, and nothing here may add a second copy of it.
+  lobbySessions: sql ? createSqlLobbySessionStore(sql) : undefined,
+  overlayLobbyStatus: sql ? createSqlLobbyStatusOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;
   // the overlay store is a derived read and uses derivedReadSql, which is

@@ -16,6 +16,10 @@ import {
   projectReactionCloud,
   type ReactionCloudOverlayStore,
 } from '../domain/reaction-cloud-store.js';
+import {
+  projectOverlayLobbyStatus,
+  type LobbyStatusOverlayStore,
+} from '../domain/lobby-status-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -63,6 +67,12 @@ export async function registerMasterCanvasRoutes(
   // when it is undefined the new route below fails closed to 503, exactly
   // like every other optional dependency in this file.
   overlayReactionCloud?: ReactionCloudOverlayStore,
+  // PRF-02 slice 6, §6 module #16 (Lobby Status). Appended at the end for
+  // the same reason overlayReactionCloud was: every existing positional
+  // call keeps compiling and behaving unchanged, and when it is undefined
+  // the new route below fails closed to 503 like every other optional
+  // dependency in this file.
+  overlayLobbyStatus?: LobbyStatusOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -223,6 +233,67 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_reaction_cloud_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The reaction cloud is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+
+  // PRF-02 slice 6, §6 module #16 (Lobby Status) -- the AGGREGATE-ONLY
+  // overlay read. Same overlay browser-source shape as the three routes
+  // above, and in this file for the same reason slices 5 and 6 recorded:
+  // it is a Master Canvas module read, not an interaction, and this file
+  // already owns the bearer-token helper and the
+  // master_canvas_store_unavailable envelope. The creator's own lobby
+  // read and writes are a separate, session-authenticated surface
+  // (routes/lobby-session.ts) -- an overlay browser-source token can read
+  // the aggregate and can never change it.
+  //
+  // THE RESPONSE CARRIES THREE NUMBERS AND NOTHING ELSE. §16: the public
+  // overlay shows "aggregate status only: '8/16 seats confirmed', queue
+  // count ... Never player identifiers, never Discord names, never codes
+  // or passwords." The owner's 2026-09-16 decision 4 requires that to be
+  // a property of the query, and it is:
+  // app_private.list_overlay_lobby_status (migration 0140) returns
+  // exactly `seat_count, confirmed_seat_count, queue_count`, so no room
+  // code, password, seat token, player identifier, in-game name, Discord
+  // name, viewer id, anonymous identity or session id exists to be leaked
+  // here -- and none exists in the schema either.
+  // projectOverlayLobbyStatus() then narrows a SECOND, independent time
+  // in front of whatever the store hands up, so the guarantee does not
+  // rest on a single layer.
+  //
+  // THE LOBBY ID IS NOT RETURNED. It carries no information the card
+  // paints, and "a session id" is on the prohibited list.
+  //
+  // THE TIER GATE IS NOT APPLIED HERE, AND THAT IS DELIBERATE. §30.3
+  // places the Lobby Engine at Creator+, and the owner's decision 5 makes
+  // that `tier in ('creator','studio')` OR an active Events Pack grant --
+  // a check with no grant path yet, so present behaviour is exactly
+  // "included at Creator+". That check lives INSIDE the SQL function,
+  // beside the session gate, so an unentitled channel's perfectly valid
+  // token matches no row. A second copy of the tier rule in TypeScript
+  // would be a second place for it to be wrong, and the SQL one is the
+  // one packages/db/tests/prf02_slice6_lobby_status.sql can prove.
+  //
+  // AN UNRECOGNISED TOKEN ANSWERS 200 WITH `lobbyStatus: null`, not 401,
+  // and so do a channel with no open lobby and an unentitled channel. All
+  // three mean "paint nothing" to the card, so collapsing them loses
+  // nothing -- unlike the Moderator Status Card, there is no zero here
+  // whose meaning differs from "no answer". A MISSING bearer token is
+  // still 401: that is a malformed request, not an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/lobby-status', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Lobby status is not available', traceId: request.id });
+    if (!overlayLobbyStatus) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Lobby status is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const status = await overlayLobbyStatus.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', lobbyStatus: projectOverlayLobbyStatus(status) });
+    } catch (error) {
+      logSafeError(request, 'overlay_lobby_status_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Lobby status is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

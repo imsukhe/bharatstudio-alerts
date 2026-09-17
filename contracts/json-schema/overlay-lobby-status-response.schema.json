@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-lobby-status-response.schema.json",
+  "title": "Overlay lobby status response (PRF-02 slice 6, catalogue module #16)",
+  "description": "The overlay-facing projection of a channel's current lobby session, scoped by the overlay session token. It is AGGREGATE STATUS ONLY: seats, confirmed seats and a queue count. There is no room code, no password, no seat token, no player identifier, no in-game name, no Discord name, no viewer id, no anonymous identity and no session id on this path -- not withheld, but absent from the read's declared result type and from the schema behind it. Opted-in initials and avatars are deliberately out of scope: they require an opt-in mechanism that does not exist. A null lobbyStatus is what an unrecognised, expired, revoked or foreign overlay token returns, and also what a channel with no open lobby and a channel without the Creator+/Events Pack entitlement return -- all four mean paint nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "lobbyStatus"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "lobbyStatus": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "seatCount", "confirmedSeatCount", "queueCount"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "seatCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647,
+              "description": "Total seats in the lobby. The minimum is arithmetic, not policy -- a lobby with no seats cannot render a seat status. There is no product maximum: the upper bound here is PostgreSQL integer's own range, so an out-of-range value is a contract failure rather than a storage failure."
+            },
+            "confirmedSeatCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647,
+              "description": "Seats confirmed so far -- the left half of '8/16 seats confirmed'. Never greater than seatCount; the database enforces that with its own check constraint."
+            },
+            "queueCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647,
+              "description": "How many people are waiting. A count, never a list: there is no per-viewer row anywhere behind this figure, so nothing here can correlate one visit to another."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

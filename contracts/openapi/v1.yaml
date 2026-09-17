@@ -1230,6 +1230,141 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/lobby-status:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayLobbyStatus
+      summary: Aggregate lobby status - seats, confirmed seats and a queue count.
+      description: >-
+        Master Canvas module #16 (Lobby Status). 16 is explicit that the public overlay shows
+        "aggregate status only: '8/16 seats confirmed', queue count ... Never player
+        identifiers, never Discord names, never codes or passwords."
+
+        That is a property of the read, not of the renderer: the returned column set is three
+        integers. No room code, no password, no seat token, no player identifier, no in-game
+        name, no Discord name, no viewer id, no anonymous identity and no session id exists on
+        this path - and none exists in the schema behind it either, so there is nothing for a
+        future read to start returning and nothing that can correlate one visit to another.
+        Opted-in initials and avatars are permitted by 16 but are out of scope here: they
+        require an opt-in mechanism that does not exist.
+
+        Bounded to the channel's CURRENT lobby and never a history (12.7). Entitlement is
+        Creator+ or the Events Pack (30.3): the check lives inside the read, so an unentitled
+        channel's valid overlay token returns null. An unrecognised, expired, revoked or
+        foreign token returns null too, as does a channel with no open lobby - all of them
+        mean paint nothing.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped aggregate lobby status for this overlay, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayLobbyStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/lobby-session:
+    get:
+      tags: [Lobby]
+      operationId: getChannelLobbySession
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The channel's current lobby session, or null. Available at every tier: storing,
+        viewing and exporting a durable creator record is never tier-gated (12.6). The 30.3
+        Creator+/Events Pack entitlement governs only whether the Master Canvas renders the
+        Lobby Status card.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's current lobby session, or null when none is open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelLobbySessionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Lobby]
+      operationId: openChannelLobbySession
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Opens a lobby session. Owner/admin only, and not tier-gated. At most one lobby may be
+        open per channel: opening a second while one is open is a 409, never a silent
+        supersede. The body carries a seat count and nothing else - there is no room code, no
+        password, no seat token, no ready check, no selection or queue policy and no reserve
+        bench to supply, because those are the Lobby Engine (16.1 steps 4-8, 16.2) and are not
+        built here.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenLobbySessionRequest' }
+      responses:
+        '201':
+          description: The opened lobby session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelLobbySessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/lobby-session/{lobbyId}:
+    patch:
+      tags: [Lobby]
+      operationId: updateChannelLobbySessionCounts
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Reports how many seats are confirmed and how long the queue is. Owner/admin only, and
+        not tier-gated. The lobby id is required so the write is addressed rather than ambient
+        - a stale dashboard tab cannot write counts onto a lobby opened after that tab loaded.
+        Both counts are required together, because they are read together on one card: a
+        partial write would paint a seat figure from one moment beside a queue figure from
+        another. Confirming more seats than the lobby has is a 400; the database refuses it
+        outright. An unknown, already-closed, other-channel or unauthorised lobby is one
+        indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/LobbySessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateLobbySessionCountsRequest' }
+      responses:
+        '200':
+          description: The updated lobby session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelLobbySessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/lobby-session/{lobbyId}/close:
+    post:
+      tags: [Lobby]
+      operationId: closeChannelLobbySession
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Closes the named lobby session. Owner/admin only, and not tier-gated. Closing deletes
+        nothing - the record stays durable and readable (12.6); 16.1 step 8's automatic
+        deletion of temporary lobby data concerns the Lobby Engine's codes, tokens and
+        per-viewer rows, none of which exist in this slice. An unknown, already-closed,
+        other-channel or unauthorised lobby is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/LobbySessionId'
+      responses:
+        '204':
+          description: The lobby session was closed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -1831,6 +1966,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    LobbySessionId:
+      name: lobbyId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     ArtifactId:
       name: artifactId
       in: path
@@ -2122,6 +2262,111 @@ components:
       properties:
         schemaVersion: { type: string, const: v1 }
         outcome: { type: string, const: recorded }
+    OverlayLobbyStatus:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, seatCount, confirmedSeatCount, queueCount]
+      description: >-
+        Aggregate status only (16). Three integers, 12.7-bounded to the current lobby. No room
+        code, no password, no seat token, no player identifier, no in-game name, no Discord
+        name, no viewer id, no anonymous identity and no session id - and no lobby id either,
+        which would be a session identifier the card does not paint. Opted-in initials and
+        avatars are out of scope: they need an opt-in mechanism that does not exist.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        seatCount:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: >-
+            Total seats. The minimum is arithmetic rather than policy - a lobby with no seats
+            cannot render a seat status. There is no product maximum; the upper bound is the
+            storage column's own range.
+        confirmedSeatCount:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: The left half of "8/16 seats confirmed". Never greater than seatCount.
+        queueCount:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: >-
+            How many people are waiting. A count, never a list - there is no per-viewer row
+            behind this figure, so nothing here can correlate one visit to another.
+    OverlayLobbyStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, lobbyStatus]
+      description: >-
+        A null lobbyStatus is a valid answer, and is what an unrecognised, expired, revoked or
+        foreign overlay token returns, what a channel with no open lobby returns, and what a
+        channel without the Creator+/Events Pack entitlement returns. All four mean paint
+        nothing.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        lobbyStatus:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayLobbyStatus'
+    LobbySession:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, lobbyId, seatCount, confirmedSeatCount, queueCount, openedAt, closedAt, createdAt, updatedAt]
+      description: >-
+        Creator-facing lobby session. closedAt is a record of when the creator closed the
+        lobby (null while it is open), never a scheduled close - there is no duration, timer,
+        expiry or deadline field here and none in the schema behind it. It carries no room
+        code, password, seat token, participant list or player identifier: those are the Lobby
+        Engine and are Phase 3.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        lobbyId:
+          type: string
+          format: uuid
+          description: >-
+            On the creator projection only, because the creator's write path is addressed
+            rather than ambient. It is never on the overlay projection.
+        seatCount: { type: integer, minimum: 1, maximum: 2147483647 }
+        confirmedSeatCount: { type: integer, minimum: 0, maximum: 2147483647 }
+        queueCount: { type: integer, minimum: 0, maximum: 2147483647 }
+        openedAt: { type: string, format: date-time }
+        closedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelLobbySessionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, lobby]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        lobby:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/LobbySession'
+    OpenLobbySessionRequest:
+      type: object
+      additionalProperties: false
+      required: [seatCount]
+      description: >-
+        The seat count and nothing else. additionalProperties is false deliberately: a body
+        carrying a room code, a password, a seat token, a player name, a Discord name, a
+        participant list, a ready check, a selection or queue policy, a reserve bench, a
+        duration or an expiry is rejected before the store is reached. Every one of those is
+        the Lobby Engine (16.1 steps 4-8, 16.2) and none is built by this slice.
+      properties:
+        seatCount: { type: integer, minimum: 1, maximum: 2147483647 }
+    UpdateLobbySessionCountsRequest:
+      type: object
+      additionalProperties: false
+      required: [confirmedSeatCount, queueCount]
+      description: >-
+        Both counts, together. They are read together on one card, so a partial write would
+        paint a seat figure from one moment beside a queue figure from another. The seat count
+        is fixed when the lobby is opened and is deliberately not writable here.
+      properties:
+        confirmedSeatCount: { type: integer, minimum: 0, maximum: 2147483647 }
+        queueCount: { type: integer, minimum: 0, maximum: 2147483647 }
     StreamMission:
       type: object
       additionalProperties: false

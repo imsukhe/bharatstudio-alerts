@@ -12,6 +12,7 @@ import { createMilestoneCelebrationModule } from './modules/milestone-celebratio
 import { createStreamMissionModule } from './modules/stream-mission-module';
 import { createModeratorStatusModule } from './modules/moderator-status-module';
 import { createReactionCloudModule } from './modules/reaction-cloud-module';
+import { createLobbyStatusModule } from './modules/lobby-status-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -874,6 +875,210 @@ test('a Reaction Cloud that throws twice goes down while every other module keep
 
   assert.equal(runtime.getModuleStatus('reaction_cloud'), 'down', 'two failures must take the module down and keep it down');
   assert.ok(down.includes('reaction_cloud'), 'the host page is told, so it can show the creator-visible note');
+  assert.equal(runtime.getModuleStatus('community_goal_ladder'), 'active', 'a neighbour must be unaffected');
+  assert.ok(neighbourRenders >= 2, 'the neighbour keeps rendering on the same loop after the failure');
+});
+
+test('with all eleven modules registered (Lobby Status included): still exactly one connection and one rAF chain', async () => {
+  let fetchCalls = 0;
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const goalContainer = document.createElement('div');
+  const voteContainer = document.createElement('div');
+  const bossFightContainer = document.createElement('div');
+  const theaterContainer = document.createElement('div');
+  const challengeContainer = document.createElement('div');
+  const milestoneContainer = document.createElement('div');
+  const missionContainer = document.createElement('div');
+  const moderatorStatusContainer = document.createElement('div');
+  const reactionCloudContainer = document.createElement('div');
+  const lobbyStatusContainer = document.createElement('div');
+
+  const fetchGoalSnapshot = async () => null;
+  const fetchVoteSnapshot = async () => null;
+
+  runtime.registerModule(createSupportTheaterModule({
+    container: theaterContainer, connection, overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    reducedMotion: () => false,
+  }));
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: fetchGoalSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createTugOfWarVoteModule({
+    container: voteContainer, connection, fetchSnapshot: fetchVoteSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createBossFightModule({
+    container: bossFightContainer, connection, fetchSnapshot: fetchGoalSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createChallengeBoardModule({
+    container: challengeContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createMilestoneCelebrationModule({
+    container: milestoneContainer, connection, fetchGoalSnapshot, fetchVoteSnapshot, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createStreamMissionModule({
+    container: missionContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createModeratorStatusModule({
+    container: moderatorStatusContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createReactionCloudModule({
+    container: reactionCloudContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createLobbyStatusModule({
+    container: lobbyStatusContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('support_theater', true);
+  runtime.setModuleEntitled('supporter_ticker', true);
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('tug_of_war_vote', true);
+  runtime.setModuleEntitled('boss_fight', true);
+  runtime.setModuleEntitled('challenge_board', true);
+  runtime.setModuleEntitled('milestone_celebration', true);
+  runtime.setModuleEntitled('stream_mission_card', true);
+  runtime.setModuleEntitled('moderator_status_card', true);
+  runtime.setModuleEntitled('reaction_cloud', true);
+  runtime.setModuleEntitled('lobby_status', true);
+  await flush();
+
+  assert.equal(fetchCalls, 1, 'eleven entitled modules must still open exactly one transport connection — the Lobby Status card adds an endpoint, never a session');
+  assert.equal(connection.getSubscriberCount(), 11, 'all eleven modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all eleven active modules still share exactly one pending frame handle on the one rAF scheduler');
+});
+
+test('PRF-02: the Lobby Status card paints on the SAME shared connection and rAF loop, and the whole canvas keeps one of each', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const goalContainer = document.createElement('div');
+  const lobbyStatusContainer = document.createElement('div');
+  let lobbySnapshotCalls = 0;
+
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createLobbyStatusModule({
+    container: lobbyStatusContainer,
+    connection,
+    fetchSnapshot: async () => {
+      lobbySnapshotCalls += 1;
+      return { schemaVersion: 'v1' as const, seatCount: 16, confirmedSeatCount: 8, queueCount: 12 };
+    },
+    reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('lobby_status', true);
+  await flush();
+  scheduler.tick(0);
+  await flush();
+
+  assert.ok(lobbySnapshotCalls >= 1, 'the module reads its snapshot off the shared connection signal, not a timer of its own');
+  assert.equal(connection.getSubscriberCount(), 2, 'both modules subscribe to the ONE shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'both modules share the ONE rAF loop');
+
+  const label = lobbyStatusContainer.querySelector('[data-role="lobby-status-label"]') as HTMLElement;
+  assert.equal(label.textContent, '8/16 seats confirmed · 12 in queue');
+  // §16 on the rendered surface as well as in the query: nothing here is a
+  // code, a password, a player name or an avatar.
+  const rendered = (lobbyStatusContainer.textContent ?? '').toLowerCase();
+  for (const forbidden of ['code', 'password', 'player', 'discord', 'avatar', 'http']) {
+    assert.ok(!rendered.includes(forbidden), `the rendered lobby card must never contain "${forbidden}"`);
+  }
+});
+
+test('PRF-02.10: an un-entitled lobby_status never subscribes, never fetches its snapshot and never builds its DOM', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const tickerContainer = document.createElement('div');
+  const lobbyStatusContainer = document.createElement('div');
+  let lobbySnapshotCalls = 0;
+  runtime.registerModule(createSupporterTickerModule({
+    container: tickerContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
+  }));
+  runtime.registerModule(createLobbyStatusModule({
+    container: lobbyStatusContainer, connection,
+    fetchSnapshot: async () => { lobbySnapshotCalls += 1; return null; },
+    reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  // Only the ticker is entitled. Two independent server-side gates can
+  // produce this state: §30.3's module cap (migration 0131) and the
+  // Creator+/Events Pack entitlement inside
+  // app_private.list_overlay_lobby_status (migration 0140). Neither gates
+  // the creator's own lobby record — only whether the canvas renders it.
+  runtime.setModuleEntitled('supporter_ticker', true);
+  await flush();
+
+  assert.equal(connection.getSubscriberCount(), 1, 'the un-entitled lobby status never subscribes to the shared connection');
+  assert.equal(lobbySnapshotCalls, 0, 'an un-entitled module never fetches its own snapshot — it costs nothing');
+  assert.equal(lobbyStatusContainer.children.length, 0, 'an un-entitled module never even builds its DOM');
+  assert.equal(runtime.getModuleStatus('lobby_status'), 'inactive');
+});
+
+test('a Lobby Status card that throws twice goes down while every other module keeps rendering (PRF-14)', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const down: string[] = [];
+  const runtime = createMasterCanvasRuntime({
+    requestFrame: scheduler.requestFrame,
+    cancelFrame: scheduler.cancelFrame,
+    onModuleDown: (key) => down.push(key),
+  });
+
+  let neighbourRenders = 0;
+  const neighbour: CanvasModuleDefinition = {
+    key: 'community_goal_ladder',
+    activate() {},
+    deactivate() {},
+    render() { neighbourRenders += 1; },
+  };
+  const exploding: CanvasModuleDefinition = {
+    key: 'lobby_status',
+    activate() {},
+    deactivate() {},
+    render() { throw new Error('synthetic lobby status failure'); },
+  };
+  runtime.registerModule(neighbour);
+  runtime.registerModule(exploding);
+
+  runtime.start();
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('lobby_status', true);
+  await flush();
+
+  for (let frame = 0; frame < 4; frame += 1) {
+    scheduler.tick(frame * 16);
+    await flush();
+  }
+
+  assert.equal(runtime.getModuleStatus('lobby_status'), 'down', 'two failures must take the module down and keep it down');
+  assert.ok(down.includes('lobby_status'), 'the host page is told, so it can show the creator-visible note');
   assert.equal(runtime.getModuleStatus('community_goal_ladder'), 'active', 'a neighbour must be unaffected');
   assert.ok(neighbourRenders >= 2, 'the neighbour keeps rendering on the same loop after the failure');
 });

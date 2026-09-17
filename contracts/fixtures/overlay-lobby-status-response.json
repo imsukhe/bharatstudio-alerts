@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-lobby-status-response.schema.json",
+  "schemaVersion": "v1",
+  "lobbyStatus": { "schemaVersion": "v1", "seatCount": 16, "confirmedSeatCount": 8, "queueCount": 12 }
+}

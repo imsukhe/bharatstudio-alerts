@@ -128,6 +128,29 @@
  * file nor `modules/reaction-cloud-module.ts` caps, slices or thins
  * anything — if a cap belongs anywhere it belongs in
  * `REACTION_CLOUD_SAMPLE_MAX`, which ships configured but unset.
+ *
+ * PRF-02 SLICE 6 - LOBBY STATUS (§6 #16): module eleven, on the SAME one
+ * connection and the SAME one rAF loop as the ten before it. It is the
+ * second module in this slice to add an endpoint of its own
+ * (`/v1/overlay-widgets/:overlayId/lobby-status`, migration 0140), because
+ * like #9 and #5 its data did not exist anywhere in the schema.
+ *
+ * The property that matters most here is also a NEGATIVE one, and it is
+ * §16's own sentence: the public overlay shows "aggregate status only:
+ * '8/16 seats confirmed', queue count ... Never player identifiers, never
+ * Discord names, never codes or passwords." So this page gains one more
+ * snapshot `fetch` closure and nothing else - no room code, no password,
+ * no seat token, no player list, no initials and no avatars reach it,
+ * because the read returns three integers and the schema behind it has no
+ * column for any of them. Opted-in initials and avatars are permitted by
+ * §16 but are OUT OF SCOPE (owner decision, 2026-09-16): they need an
+ * opt-in mechanism that does not exist, and nothing here approximates one.
+ *
+ * The §30.3 Creator+/Events Pack entitlement for this module is NOT
+ * checked on this page either. It lives inside
+ * `app_private.list_overlay_lobby_status`, so an unentitled channel's
+ * valid token simply returns null and the card paints nothing - the same
+ * nothing a channel with no open lobby paints.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -147,6 +170,8 @@ import { createModeratorStatusModule } from '../modules/moderator-status-module'
 import { isModeratorStatus, type ModeratorStatus } from '../modules/moderator-status-logic';
 import { createReactionCloudModule } from '../modules/reaction-cloud-module';
 import { isReactionCloud, type ReactionCloudEntry } from '../modules/reaction-cloud-logic';
+import { createLobbyStatusModule } from '../modules/lobby-status-module';
+import { isLobbyStatus, type LobbyStatus } from '../modules/lobby-status-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -170,6 +195,9 @@ const BUILT_MODULE_KEYS = [
   // PRF-02 slice 6 / PRF-06, §6 #5 (Reaction Cloud). Also a plain
   // snapshot module -- no ordering requirement.
   'reaction_cloud',
+  // PRF-02 slice 6, §6 #16 (Lobby Status). Also a plain snapshot module --
+  // no ordering requirement.
+  'lobby_status',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -193,6 +221,7 @@ export default function MasterCanvasPage() {
   const missionContainerRef = useRef<HTMLDivElement>(null);
   const moderatorStatusContainerRef = useRef<HTMLDivElement>(null);
   const reactionCloudContainerRef = useRef<HTMLDivElement>(null);
+  const lobbyStatusContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -339,6 +368,31 @@ export default function MasterCanvasPage() {
       return isReactionCloud(body.entries) ? body.entries : null;
     }
 
+    // Lobby Status Card (§6 #16, PRF-02 slice 6). The response carries
+    // THREE INTEGERS and nothing else -- no room code, no password, no
+    // seat token, no player identifier, no in-game name, no Discord name,
+    // no viewer id, no anonymous identity and no session id exists on this
+    // path at all, because app_private.list_overlay_lobby_status
+    // (migration 0140) returns exactly seat_count, confirmed_seat_count
+    // and queue_count. §16 states that as a rule for the overlay; the
+    // owner's 2026-09-16 decision makes it a property of the query rather
+    // than of the renderer. `isLobbyStatus` is the client's own last-line
+    // check on top of that, not the guarantee itself.
+    //
+    // `lobbyStatus: null` is every "nothing to paint" case at once: an
+    // unrecognised, expired, revoked or foreign token; a channel with no
+    // open lobby; and a channel without the §30.3 Creator+/Events Pack
+    // entitlement, which is checked inside the SQL function rather than
+    // here. The card renders the same nothing for all of them.
+    async function fetchLobbyStatusSnapshot(): Promise<LobbyStatus | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/lobby-status`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { lobbyStatus?: unknown };
+      return isLobbyStatus(body.lobbyStatus) ? body.lobbyStatus : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -451,6 +505,22 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
+    if (lobbyStatusContainerRef.current) {
+      // Lobby Status Card (§6 #16). One more plain snapshot module on the
+      // SAME shared `connection` and the SAME shared rAF loop -- no second
+      // session, no second transport, no timer of its own.
+      //
+      // Nothing about the Lobby Engine is wired here and nothing may be:
+      // no ready check, no seat token, no room-code reveal, no no-show
+      // promotion, no selection policy and no audit log (§16.1 steps 4-8,
+      // §16.2). Those are Phase 3. This module paints three numbers.
+      runtime.registerModule(createLobbyStatusModule({
+        container: lobbyStatusContainerRef.current,
+        connection,
+        fetchSnapshot: fetchLobbyStatusSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -531,6 +601,15 @@ export default function MasterCanvasPage() {
            (translate + scale) plus opacity, and nothing else (PRF-03). */
         .master-canvas-reaction-cloud { position: absolute; left: 0; right: 0; top: 300px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 18px; pointer-events: none; color: #fff; }
         .master-canvas-reaction-cloud [data-role="reaction-cloud-glyph"] { display: inline-block; padding: 6px 12px; border-radius: 999px; background: rgba(12,17,29,.72); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; will-change: transform, opacity; }
+        /* Lobby Status (§6 #16). The fill is a scaleX transform on an
+           absolutely positioned child -- never a width -- so render()
+           writes only transform and opacity (PRF-03). */
+        .master-canvas-lobby { position: absolute; bottom: 120px; left: 0; max-width: 320px; color: #fff; }
+        .master-canvas-lobby [data-role="lobby-status-card"] { padding: 10px 14px; border-radius: 12px; background: rgba(12,17,29,.78); }
+        .master-canvas-lobby [data-role="lobby-status-kicker"] { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .75; }
+        .master-canvas-lobby [data-role="lobby-status-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
+        .master-canvas-lobby [data-role="lobby-status-fill"] { background: linear-gradient(90deg, #22c55e, #38bdf8); border-radius: 999px; }
+        .master-canvas-lobby [data-role="lobby-status-label"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -542,6 +621,7 @@ export default function MasterCanvasPage() {
       <div ref={missionContainerRef} className="master-canvas-module master-canvas-mission" aria-live="polite" />
       <div ref={moderatorStatusContainerRef} className="master-canvas-module master-canvas-moderator-status" aria-live="polite" />
       <div ref={reactionCloudContainerRef} className="master-canvas-module master-canvas-reaction-cloud" aria-hidden="true" />
+      <div ref={lobbyStatusContainerRef} className="master-canvas-module master-canvas-lobby" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

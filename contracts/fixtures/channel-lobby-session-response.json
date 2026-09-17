@@ -1,0 +1,15 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-lobby-session-response.schema.json",
+  "schemaVersion": "v1",
+  "lobby": {
+    "schemaVersion": "v1",
+    "lobbyId": "00000000-0000-4000-8000-000000005851",
+    "seatCount": 16,
+    "confirmedSeatCount": 8,
+    "queueCount": 12,
+    "openedAt": "2026-09-16T10:00:00.000Z",
+    "closedAt": null,
+    "createdAt": "2026-09-16T10:00:00.000Z",
+    "updatedAt": "2026-09-16T10:05:00.000Z"
+  }
+}

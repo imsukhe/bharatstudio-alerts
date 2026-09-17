@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-giveaway-response.schema.json",
+  "title": "Channel giveaway response (PRF-02 slice 6, catalogue module #17)",
+  "description": "The creator-facing projection of the channel's current giveaway, or null when none is open. Available at EVERY tier: storing, viewing and exporting a durable creator record is never tier-gated (12.6). The Creator+/Events Pack entitlement governs only whether the Master Canvas renders the Giveaway / Tournament card. closedAt is a record of when the creator closed the giveaway, never a schedule and never a result. The giveaway carries NO winner, draw method, seed, odds or weighting -- 17.1 decided on 2026-09-13 that only free-entry and skill-based formats ship, supporter-weighted odds are not built, and GIV-07 gates chance-based formats on legal review that has not happened. It carries NO prize description, value, escrow, custody, fulfilment, delivery, tracking, address or claim field: BharatStudio never holds, escrows, ships or guarantees a prize, and the creator is the promoter, responsible for eligibility, taxes and delivery. It carries NO entry fee or price of any kind and NO entrant or participant list -- there is no entry path in this slice at all, so nothing a payment could gate and nothing that correlates one visit to another.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "giveaway"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "giveaway": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "giveawayId", "entryCount", "entryOpensAt", "entryClosesAt", "closedAt", "createdAt", "updatedAt"],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "giveawayId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Present on the CREATOR projection only, because the creator's write path is addressed rather than ambient -- a stale dashboard tab must not be able to write a count onto a giveaway opened after it loaded. It is never on the overlay projection."
+            },
+            "entryCount": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+            "entryOpensAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Recorded when the creator opened the giveaway. Scheduling one to open later is a separate 30.3 row and is not built here."
+            },
+            "entryClosesAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The instant the creator supplied for the published entry window to close. Always after entryOpensAt."
+            },
+            "closedAt": {
+              "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }],
+              "description": "When the creator closed the giveaway. Null while it is open. Never a scheduled close, and never a result -- closing produces no announcement, because a winner announcement requires consent (17.1) that no mechanism in this schema provides."
+            },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

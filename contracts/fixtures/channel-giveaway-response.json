@@ -1,0 +1,14 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-giveaway-response.schema.json",
+  "schemaVersion": "v1",
+  "giveaway": {
+    "schemaVersion": "v1",
+    "giveawayId": "00000000-0000-4000-8000-000000005a51",
+    "entryCount": 143,
+    "entryOpensAt": "2026-09-17T10:00:00.000Z",
+    "entryClosesAt": "2026-09-17T10:30:00.000Z",
+    "closedAt": null,
+    "createdAt": "2026-09-17T10:00:00.000Z",
+    "updatedAt": "2026-09-17T10:05:00.000Z"
+  }
+}

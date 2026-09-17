@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/overlay-giveaway-tournament-response.schema.json",
+  "title": "Overlay giveaway / tournament response (PRF-02 slice 6, catalogue module #17)",
+  "description": "The overlay-facing projection of a channel's current giveaway entry state and tournament bracket progress, scoped by the overlay session token. It is AGGREGATE STATE ONLY. There is NO WINNER on this path and there cannot be one in this slice: 17.1 permits a winner announcement only WITH CONSENT and no consent mechanism exists in this schema, a winner is a participant identifier on an aggregate-only path, and nothing could produce one -- the mechanic is not built (17.1, decided 2026-09-13) and GIV-07 gates chance-based formats on a legal review that has not happened. There is NO CHANCE MECHANIC of any kind: no draw, seed, odds, weighting or shuffle exists at any layer. There is NO PRIZE, ESCROW, CUSTODY, FULFILMENT, DELIVERY, ADDRESS OR CLAIM field: BharatStudio never holds, escrows, ships or guarantees a prize, and the creator is the promoter, responsible for eligibility, taxes and delivery. There is no participant identifier, in-game name, Discord name, viewer id, anonymous identity, session id or contact detail either -- not withheld, but absent from the read's declared result type and from the schema behind it, so nothing here can correlate one visit to another. The bracket is PROGRESS, never a tree: a tree needs participant labels, which 16 ruled need an opt-in mechanism that does not exist. Single elimination only, up to a field of 8, per 30.3. A null giveawayTournament is what an unrecognised, expired, revoked or foreign overlay token returns, and also what a channel with nothing running, a concluded tournament and a channel without the Creator+/Events Pack entitlement return -- all of them mean paint nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "giveawayTournament"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "giveawayTournament": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "entryCount",
+            "entryClosesAt",
+            "tournamentCurrentRound",
+            "tournamentTotalRounds",
+            "tournamentCompletedMatchesInRound",
+            "tournamentMatchesInRound"
+          ],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "entryCount": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+              ],
+              "description": "How many entries the creator has reported. A count, never a list: there is no per-entrant row anywhere behind this figure, so nothing here can correlate one visit to another. Null when no giveaway is open. Zero is a valid, meaningful state -- a giveaway that is open with nobody entered yet is exactly the invitation the card exists to deliver. There is no product maximum; the upper bound is the storage column's own range."
+            },
+            "entryClosesAt": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "format": "date-time" }
+              ],
+              "description": "The instant the creator's published entry window closes -- 17.1 names the entry window as something the creator defines and publishes before entry opens, and lists 'time remaining' on the overlay. The close INSTANT is returned rather than a seconds-remaining figure so the countdown can tick on the canvas's existing shared frame loop instead of a per-second server read, which 12.7 forbids. Null when no giveaway is open."
+            },
+            "tournamentCurrentRound": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "integer", "minimum": 1, "maximum": 3 }
+              ],
+              "description": "Which round of a single-elimination bracket the tournament is in. The maximum is log2(8) = 3, from 30.3's 'Tournaments — single elim, up to 8'. Null when no tournament is running."
+            },
+            "tournamentTotalRounds": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "integer", "minimum": 1, "maximum": 3 }
+              ],
+              "description": "How many rounds the bracket has. DERIVED at read time from the referenced lobby session's seat count rather than stored, because 17.2 builds tournaments ON the Lobby Engine rather than beside it -- so the bracket's field size is the lobby's own, and there is no second copy to drift."
+            },
+            "tournamentCompletedMatchesInRound": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "integer", "minimum": 0, "maximum": 4 }
+              ],
+              "description": "How many of the current round's matches the creator has reported complete. Never greater than tournamentMatchesInRound. A count of FIXTURES, never of people. No score, pairing, result or dispute note is carried."
+            },
+            "tournamentMatchesInRound": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "integer", "minimum": 1, "maximum": 4 }
+              ],
+              "description": "How many matches the current round holds. DERIVED from the referenced lobby's seat count as field >> round; the maximum of 4 is 8/2, the largest any round can be at 30.3's maximum field of 8."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -13,6 +13,7 @@ import { createStreamMissionModule } from './modules/stream-mission-module';
 import { createModeratorStatusModule } from './modules/moderator-status-module';
 import { createReactionCloudModule } from './modules/reaction-cloud-module';
 import { createLobbyStatusModule } from './modules/lobby-status-module';
+import { createGiveawayTournamentModule } from './modules/giveaway-tournament-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -899,6 +900,7 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   const moderatorStatusContainer = document.createElement('div');
   const reactionCloudContainer = document.createElement('div');
   const lobbyStatusContainer = document.createElement('div');
+  const giveawayTournamentContainer = document.createElement('div');
 
   const fetchGoalSnapshot = async () => null;
   const fetchVoteSnapshot = async () => null;
@@ -937,6 +939,9 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.registerModule(createLobbyStatusModule({
     container: lobbyStatusContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
   }));
+  runtime.registerModule(createGiveawayTournamentModule({
+    container: giveawayTournamentContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
 
   runtime.start();
   runtime.setModuleEntitled('support_theater', true);
@@ -950,11 +955,12 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.setModuleEntitled('moderator_status_card', true);
   runtime.setModuleEntitled('reaction_cloud', true);
   runtime.setModuleEntitled('lobby_status', true);
+  runtime.setModuleEntitled('giveaway_tournament_card', true);
   await flush();
 
-  assert.equal(fetchCalls, 1, 'eleven entitled modules must still open exactly one transport connection — the Lobby Status card adds an endpoint, never a session');
-  assert.equal(connection.getSubscriberCount(), 11, 'all eleven modules are subscribers on the one shared connection');
-  assert.equal(scheduler.pendingFrameCount(), 1, 'all eleven active modules still share exactly one pending frame handle on the one rAF scheduler');
+  assert.equal(fetchCalls, 1, 'twelve entitled modules must still open exactly one transport connection — the Giveaway / Tournament card adds an endpoint, never a session');
+  assert.equal(connection.getSubscriberCount(), 12, 'all twelve modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all twelve active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
 });
 
 test('PRF-02: the Lobby Status card paints on the SAME shared connection and rAF loop, and the whole canvas keeps one of each', async () => {
@@ -1001,6 +1007,117 @@ test('PRF-02: the Lobby Status card paints on the SAME shared connection and rAF
   for (const forbidden of ['code', 'password', 'player', 'discord', 'avatar', 'http']) {
     assert.ok(!rendered.includes(forbidden), `the rendered lobby card must never contain "${forbidden}"`);
   }
+});
+
+test('PRF-02: the Giveaway / Tournament card paints on the SAME shared connection and rAF loop, and its countdown ticks on THAT loop', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const goalContainer = document.createElement('div');
+  const giveawayTournamentContainer = document.createElement('div');
+  let giveawaySnapshotCalls = 0;
+  let nowMs = Date.parse('2026-09-17T10:00:00.000Z');
+
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGiveawayTournamentModule({
+    container: giveawayTournamentContainer,
+    connection,
+    fetchSnapshot: async () => {
+      giveawaySnapshotCalls += 1;
+      return {
+        schemaVersion: 'v1' as const,
+        entryCount: 143,
+        entryClosesAt: '2026-09-17T10:30:00.000Z',
+        tournamentCurrentRound: 2,
+        tournamentTotalRounds: 3,
+        tournamentCompletedMatchesInRound: 1,
+        tournamentMatchesInRound: 2,
+      };
+    },
+    reducedMotion: () => false,
+    now: () => nowMs,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  runtime.setModuleEntitled('giveaway_tournament_card', true);
+  await flush();
+  scheduler.tick(0);
+  await flush();
+
+  assert.ok(giveawaySnapshotCalls >= 1, 'the module reads its snapshot off the shared connection signal, not a timer of its own');
+  assert.equal(connection.getSubscriberCount(), 2, 'both modules subscribe to the ONE shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'both modules share the ONE rAF loop');
+
+  const giveawayLine = giveawayTournamentContainer.querySelector('[data-role="giveaway-line"]') as HTMLElement;
+  const tournamentLine = giveawayTournamentContainer.querySelector('[data-role="tournament-line"]') as HTMLElement;
+  assert.equal(giveawayLine.textContent, '143 entries · closes in 30:00');
+  assert.equal(tournamentLine.textContent, 'Round 2 of 3 · 1 of 2 matches complete');
+
+  // THE COUNTDOWN ADVANCES ON THE SHARED SCHEDULER'S NEXT FRAME, with no
+  // refetch and no timer of this module's own: still one connection, still
+  // one pending frame.
+  const callsBefore = giveawaySnapshotCalls;
+  nowMs += 65_000;
+  scheduler.tick(16);
+  await flush();
+  assert.equal(giveawayLine.textContent, '143 entries · closes in 28:55');
+  assert.equal(giveawaySnapshotCalls, callsBefore, 'a countdown tick must not cost a fetch');
+  assert.equal(connection.getSubscriberCount(), 2, 'the countdown adds no third subscriber and opens no second connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'the countdown schedules no second frame loop');
+
+  // §17 on the rendered surface as well as in the query: nothing here is a
+  // winner, a prize, an address, a claim link, a seed or a participant.
+  const rendered = (giveawayTournamentContainer.textContent ?? '').toLowerCase();
+  for (const forbidden of ['winner', 'champion', 'prize', 'escrow', 'claim', 'address', 'seed', 'player', 'discord', 'avatar', 'http']) {
+    assert.ok(!rendered.includes(forbidden), `the rendered giveaway/tournament card must never contain "${forbidden}"`);
+  }
+});
+
+test('PRF-02.10: an un-entitled giveaway_tournament_card never subscribes, never fetches its snapshot and never builds its DOM', async () => {
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => {}),
+  });
+  const scheduler = createManualFrameScheduler();
+  const runtime = createMasterCanvasRuntime({ requestFrame: scheduler.requestFrame, cancelFrame: scheduler.cancelFrame });
+
+  const goalContainer = document.createElement('div');
+  const giveawayTournamentContainer = document.createElement('div');
+  let giveawaySnapshotCalls = 0;
+
+  runtime.registerModule(createGoalLadderModule({
+    container: goalContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
+  runtime.registerModule(createGiveawayTournamentModule({
+    container: giveawayTournamentContainer, connection,
+    fetchSnapshot: async () => { giveawaySnapshotCalls += 1; return null; },
+    reducedMotion: () => false,
+  }));
+
+  runtime.start();
+  runtime.setModuleEntitled('community_goal_ladder', true);
+  // §30.3's Creator+/Events-Pack entitlement is 0140's own
+  // app_private.events_pack_entitled, called from inside
+  // app_private.list_overlay_giveaway_tournament (migration 0142) rather
+  // than reimplemented. It gates only whether the CANVAS renders the card,
+  // never the creator's own giveaway or tournament record. 0131's §30.3
+  // module cap is the second, independent gate.
+  runtime.setModuleEntitled('giveaway_tournament_card', false);
+  await flush();
+  scheduler.tick(0);
+  await flush();
+
+  assert.equal(connection.getSubscriberCount(), 1, 'the un-entitled card never subscribes to the shared connection');
+  assert.equal(giveawaySnapshotCalls, 0, 'an un-entitled module never fetches its own snapshot — it costs nothing');
+  assert.equal(giveawayTournamentContainer.children.length, 0, 'an un-entitled module never even builds its DOM');
+  assert.equal(runtime.getModuleStatus('giveaway_tournament_card'), 'inactive');
 });
 
 test('PRF-02.10: an un-entitled lobby_status never subscribes, never fetches its snapshot and never builds its DOM', async () => {

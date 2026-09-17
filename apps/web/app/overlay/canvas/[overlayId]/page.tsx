@@ -151,6 +151,36 @@
  * `app_private.list_overlay_lobby_status`, so an unentitled channel's
  * valid token simply returns null and the card paints nothing - the same
  * nothing a channel with no open lobby paints.
+ *
+ * PRF-02 SLICE 6 - GIVEAWAY / TOURNAMENT (§6 #17): module twelve, on the
+ * SAME one connection and the SAME one rAF loop as the eleven before it.
+ * It is the third module in this slice to add an endpoint of its own
+ * (`/v1/overlay-widgets/:overlayId/giveaway-tournament`, migration 0142),
+ * and it is the first to USE the shared rAF loop for something other than
+ * a snapshot diff: the entry window's countdown ticks on the runtime's
+ * existing per-frame render() call rather than on a timer of its own,
+ * which is exactly what one shared loop is for.
+ *
+ * The properties that matter most here are NEGATIVE ones, and none was
+ * decided by this page. NO CHANCE MECHANIC of any kind ships (§17.1,
+ * decided 2026-09-13; GIV-07 gates chance-based formats on a legal review
+ * that has not happened and stays Blocked). NO WINNER is rendered -
+ * announcing one needs the consent §17.1 requires and this schema has no
+ * mechanism for, a winner is a participant identifier on an
+ * aggregate-only path, and nothing could produce one in the first place.
+ * NO PRIZE, ESCROW, DELIVERY STATE, ADDRESS OR CLAIM LINK exists anywhere
+ * on this path: BharatStudio never holds, escrows, ships or guarantees a
+ * prize, and the creator is the promoter. NO BRACKET TREE either - a tree
+ * needs participant labels, which §16 already ruled need an opt-in
+ * mechanism that does not exist, so the card paints bracket PROGRESS. So
+ * this page gains one more snapshot `fetch` closure and nothing else.
+ *
+ * The §30.3 Creator+/Events Pack entitlement for this module is NOT
+ * checked on this page either. It is 0140's own
+ * `app_private.events_pack_entitled`, called from inside
+ * `app_private.list_overlay_giveaway_tournament` rather than
+ * reimplemented, so an unentitled channel's valid token simply returns
+ * null and the card paints nothing.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -172,6 +202,8 @@ import { createReactionCloudModule } from '../modules/reaction-cloud-module';
 import { isReactionCloud, type ReactionCloudEntry } from '../modules/reaction-cloud-logic';
 import { createLobbyStatusModule } from '../modules/lobby-status-module';
 import { isLobbyStatus, type LobbyStatus } from '../modules/lobby-status-logic';
+import { createGiveawayTournamentModule } from '../modules/giveaway-tournament-module';
+import { isGiveawayTournamentState, type GiveawayTournamentState } from '../modules/giveaway-tournament-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -198,6 +230,11 @@ const BUILT_MODULE_KEYS = [
   // PRF-02 slice 6, §6 #16 (Lobby Status). Also a plain snapshot module --
   // no ordering requirement.
   'lobby_status',
+  // PRF-02 slice 6, §6 #17 (Giveaway / Tournament Card). A snapshot
+  // module with no ordering requirement either -- its one difference is
+  // that its countdown ticks on the SHARED rAF loop rather than on a
+  // timer of its own.
+  'giveaway_tournament_card',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -222,6 +259,7 @@ export default function MasterCanvasPage() {
   const moderatorStatusContainerRef = useRef<HTMLDivElement>(null);
   const reactionCloudContainerRef = useRef<HTMLDivElement>(null);
   const lobbyStatusContainerRef = useRef<HTMLDivElement>(null);
+  const giveawayTournamentContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -393,6 +431,40 @@ export default function MasterCanvasPage() {
       return isLobbyStatus(body.lobbyStatus) ? body.lobbyStatus : null;
     }
 
+    // Giveaway / Tournament Card (§6 #17, PRF-02 slice 6). The response
+    // carries SIX AGGREGATE VALUES and nothing else -- no participant
+    // identifier, no in-game name, no Discord name, no viewer id, no
+    // anonymous identity, no session id, no postal field and no contact
+    // detail exists on this path at all, because
+    // app_private.list_overlay_giveaway_tournament (migration 0142)
+    // returns exactly an entry count, an entry-window close instant and
+    // four bracket-progress numbers.
+    //
+    // AND NO WINNER, WHICH IS THE CORRECT CONCLUSION RATHER THAN AN
+    // OMISSION. §17.1 permits a winner announcement only WITH CONSENT and
+    // no consent mechanism exists in this schema; a winner is a
+    // participant identifier; and nothing could produce one, because the
+    // mechanic is not built (§17.1, decided 2026-09-13; GIV-07 stays
+    // Blocked) and "the creator records who won" is an invented surface
+    // the owner's 2026-09-16 decision names outright. No prize, escrow,
+    // delivery state, address or claim link reaches this page either --
+    // BharatStudio never holds, escrows, ships or guarantees a prize.
+    //
+    // `giveawayTournament: null` is every "nothing to paint" case at once:
+    // an unrecognised, expired, revoked or foreign token; a channel with
+    // neither a giveaway open nor a tournament running; a concluded
+    // tournament; and a channel without the §30.3 Creator+/Events Pack
+    // entitlement, which is checked inside the SQL function rather than
+    // here. The card renders the same nothing for all of them.
+    async function fetchGiveawayTournamentSnapshot(): Promise<GiveawayTournamentState | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/giveaway-tournament`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { giveawayTournament?: unknown };
+      return isGiveawayTournamentState(body.giveawayTournament) ? body.giveawayTournament : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -521,6 +593,26 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
+    if (giveawayTournamentContainerRef.current) {
+      // Giveaway / Tournament Card (§6 #17). One more snapshot module on
+      // the SAME shared `connection` and the SAME shared rAF loop -- no
+      // second session, no second transport, and no timer of its own: the
+      // entry-window countdown ticks on the runtime's existing per-frame
+      // render() call, which is exactly what that one loop is for.
+      //
+      // Nothing about the rest of §17 is wired here and nothing may be: no
+      // mechanic, no seed, no odds, no weighting, no result, no prize, no
+      // escrow, no delivery state, no claim flow, no entrant list, no
+      // seeding, no check-in, no score reporting, no dispute note and no
+      // sponsor slot. This module paints an entry count, a countdown and
+      // four bracket-progress numbers.
+      runtime.registerModule(createGiveawayTournamentModule({
+        container: giveawayTournamentContainerRef.current,
+        connection,
+        fetchSnapshot: fetchGiveawayTournamentSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -610,6 +702,16 @@ export default function MasterCanvasPage() {
         .master-canvas-lobby [data-role="lobby-status-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
         .master-canvas-lobby [data-role="lobby-status-fill"] { background: linear-gradient(90deg, #22c55e, #38bdf8); border-radius: 999px; }
         .master-canvas-lobby [data-role="lobby-status-label"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        /* Giveaway / Tournament (§6 #17). The fill is a scaleX transform
+           on an absolutely positioned child -- never a width -- so
+           render() writes only transform, opacity and text (PRF-03). */
+        .master-canvas-giveaway { position: absolute; bottom: 220px; left: 0; max-width: 360px; color: #fff; }
+        .master-canvas-giveaway [data-role="giveaway-tournament-card"] { padding: 10px 14px; border-radius: 12px; background: rgba(12,17,29,.78); }
+        .master-canvas-giveaway [data-role="giveaway-tournament-kicker"] { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: .75; }
+        .master-canvas-giveaway [data-role="giveaway-line"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .master-canvas-giveaway [data-role="tournament-line"] { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .master-canvas-giveaway [data-role="tournament-track"] { border-radius: 999px; background: rgba(255,255,255,.18); }
+        .master-canvas-giveaway [data-role="tournament-fill"] { background: linear-gradient(90deg, #f59e0b, #38bdf8); border-radius: 999px; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -622,6 +724,7 @@ export default function MasterCanvasPage() {
       <div ref={moderatorStatusContainerRef} className="master-canvas-module master-canvas-moderator-status" aria-live="polite" />
       <div ref={reactionCloudContainerRef} className="master-canvas-module master-canvas-reaction-cloud" aria-hidden="true" />
       <div ref={lobbyStatusContainerRef} className="master-canvas-module master-canvas-lobby" aria-live="polite" />
+      <div ref={giveawayTournamentContainerRef} className="master-canvas-module master-canvas-giveaway" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

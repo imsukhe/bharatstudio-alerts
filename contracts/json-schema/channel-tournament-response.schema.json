@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-tournament-response.schema.json",
+  "title": "Channel tournament response (PRF-02 slice 6, catalogue module #17)",
+  "description": "The creator-facing projection of the channel's current tournament, or null when none is running. Available at EVERY tier (12.6); the Creator+/Events Pack entitlement governs only whether the Master Canvas renders the card. 17.2 builds tournaments ON the Lobby Engine rather than beside it, so a tournament REFERENCES a lobby session and the bracket's field size IS that lobby's seat count -- fieldSize, totalRounds and matchesInRound are all derived from it at read time and stored nowhere, which removes the entire class of drift where a tournament says 8 and its lobby says 16. Single elimination only, with a field of 2, 4 or 8: 30.3 places 'single elim, up to 8' at Creator+ and double elimination, round robin, points tables and seeding at Studio, and this slice carries one entitlement gate rather than two. It carries NO winner, result, seed or randomness of any kind; NO prize, escrow, custody, fulfilment, delivery, address or claim field; NO participant, entrant, team, score, pairing, dispute note or sponsor field; and NO bracket tree, which would need participant labels that 16 ruled require an opt-in mechanism that does not exist. concludedAt is a record of when the creator concluded it, never a schedule and never an announcement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "tournament"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "tournament": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion", "tournamentId", "lobbySessionId", "fieldSize",
+            "currentRound", "totalRounds", "completedMatchesInRound", "matchesInRound",
+            "startedAt", "concludedAt", "createdAt", "updatedAt"
+          ],
+          "properties": {
+            "schemaVersion": { "const": "v1" },
+            "tournamentId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Present on the CREATOR projection only, because the creator's write path is addressed rather than ambient. It is never on the overlay projection."
+            },
+            "lobbySessionId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The lobby session this bracket runs on (17.2). Surfaced so the creator's own tooling can see which session it is; never on the overlay projection, where a session id is prohibited."
+            },
+            "fieldSize": {
+              "type": "integer",
+              "enum": [2, 4, 8],
+              "description": "The referenced lobby's seat count, READ rather than stored. A power of two because single elimination without byes needs one, and byes belong to seeding, which is not built; capped at 8 by 30.3's 'Tournaments — single elim, up to 8'."
+            },
+            "currentRound": { "type": "integer", "minimum": 1, "maximum": 3 },
+            "totalRounds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3,
+              "description": "log2(fieldSize). Derived, never stored."
+            },
+            "completedMatchesInRound": { "type": "integer", "minimum": 0, "maximum": 4 },
+            "matchesInRound": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4,
+              "description": "fieldSize >> currentRound. Derived, never stored."
+            },
+            "startedAt": { "type": "string", "format": "date-time" },
+            "concludedAt": {
+              "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }],
+              "description": "When the creator concluded the tournament. Null while it is running. Never a scheduled end, and never an announcement: there is deliberately no terminal state, because a terminal label on a bracket is a winner announcement with the name left out."
+            },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

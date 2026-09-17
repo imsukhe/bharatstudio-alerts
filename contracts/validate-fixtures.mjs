@@ -32,6 +32,9 @@ const fixtureToSchema = {
   'overlay-reaction-cloud-response.json': 'overlay-reaction-cloud-response.schema.json',
   'overlay-lobby-status-response.json': 'overlay-lobby-status-response.schema.json',
   'channel-lobby-session-response.json': 'channel-lobby-session-response.schema.json',
+  'overlay-giveaway-tournament-response.json': 'overlay-giveaway-tournament-response.schema.json',
+  'channel-giveaway-response.json': 'channel-giveaway-response.schema.json',
+  'channel-tournament-response.json': 'channel-tournament-response.schema.json',
   'public-reaction-send-response.json': 'public-reaction-send-response.schema.json',
   'channel-safe-mode-response.json': 'channel-safe-mode-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
@@ -594,6 +597,226 @@ const lobbySessionClosed = await lobbySessionFixture();
 lobbySessionClosed.lobby.closedAt = '2026-09-16T11:30:00.000Z';
 if (!channelLobbySessionValidator(lobbySessionClosed)) {
   failures.push('channel-lobby-session-response.json: a closed lobby must remain a valid, readable durable record (12.6)');
+}
+
+// PRF-02 slice 6, catalogue module #17 (Giveaway / Tournament Card). §17
+// carries three prohibitions that are PRE-EXISTING PRODUCT AND LEGAL
+// DECISIONS rather than preferences, and this is the CONTRACT's own half
+// of enforcing each: the published response schemas must refuse every one
+// of these fields outright, so a future server change cannot introduce one
+// without a visible, reviewable contract change.
+//
+//   1. NO CHANCE MECHANIC OF ANY KIND. §17.1 decided on 2026-09-13 --
+//      before and independently of GIV-07 -- that only free-entry and
+//      skill-based formats ship and that supporter-weighted odds are not
+//      built. GIV-07 separately gates chance-based formats on a legal
+//      review that has not happened, and stays Blocked.
+//   2. NO WINNER, AND NO CREATOR-RECORDS-THE-WINNER SURFACE. §17.1
+//      permits an announcement only WITH CONSENT, and no consent
+//      mechanism exists in this schema.
+//   3. BHARATSTUDIO NEVER HOLDS, ESCROWS, SHIPS OR GUARANTEES A PRIZE.
+//      The creator is the promoter and is responsible for eligibility,
+//      taxes and delivery.
+//
+// Plus §17.1's "never a paid-only entry", which holds by construction here
+// because there is no entry path at all -- and the aggregate-only rule
+// every overlay read in this codebase is held to.
+const overlayGiveawayTournamentSchema = await loadSchema('overlay-giveaway-tournament-response.schema.json');
+const overlayGiveawayTournamentValidator = ajv.getSchema(overlayGiveawayTournamentSchema.$id);
+async function giveawayTournamentFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-giveaway-tournament-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  // 1. No chance mechanic.
+  ['drawMethod', 'seeded'],
+  ['drawnAt', '2026-09-17T10:31:00.000Z'],
+  ['seed', 'abc123'],
+  ['entrantCountAtDraw', 143],
+  ['odds', 2],
+  ['weighting', 'supporter'],
+  ['weightedEntries', 12],
+  ['shuffled', true],
+  // 2. No winner, and no override log for one either.
+  ['winner', 'Riya'],
+  ['winnerName', 'Riya'],
+  ['winnerUserId', '00000000-0000-4000-8000-0000000000a1'],
+  ['winnerInitials', 'RS'],
+  ['winnerAnnouncedAt', '2026-09-17T10:31:00.000Z'],
+  ['champion', 'Riya'],
+  ['overrideReason', 'no-show'],
+  // 3. No prize custody, escrow, fulfilment, delivery, address or claim.
+  ['prize', 'A gaming mouse'],
+  ['prizeValuePaise', 450000],
+  ['escrowHeld', true],
+  ['custodyState', 'held'],
+  ['fulfilmentState', 'shipped'],
+  ['shippedAt', '2026-09-18T00:00:00.000Z'],
+  ['shippingAddress', '12 MG Road'],
+  ['courier', 'BlueDart'],
+  ['trackingNumber', 'BD123'],
+  ['claimUrl', 'https://example.invalid/claim'],
+  ['claimCode', 'CLAIM-1'],
+  // Never a paid entry, and no price anywhere in this slice.
+  ['entryFeePaise', 5000],
+  ['pricePaise', 12900],
+  ['amountPaise', 1],
+  // Participant identity in every shape this codebase has one.
+  ['participants', [{ name: 'Riya' }]],
+  ['entrants', ['Riya']],
+  ['playerName', 'Riya'],
+  ['inGameName', 'RIYA_OP'],
+  ['discordName', 'riya#1234'],
+  ['viewerId', '00000000-0000-4000-8000-0000000000a2'],
+  ['anonymousId', 'anon_1'],
+  ['initials', 'RS'],
+  ['avatarUrl', 'https://example.invalid/a.png'],
+  ['emailAddress', 'riya@example.invalid'],
+  ['phone', '+911234567890'],
+  // Not even a session identifier the card does not paint.
+  ['giveawayId', '00000000-0000-4000-8000-000000005a51'],
+  ['tournamentId', '00000000-0000-4000-8000-000000005a61'],
+  ['lobbySessionId', '00000000-0000-4000-8000-000000005851'],
+  ['overlayId', '00000000-0000-4000-8000-000000005a41'],
+  // A bracket TREE needs participant labels, which §16 ruled need an
+  // opt-in mechanism that does not exist.
+  ['bracket', [{ a: 'Riya', b: 'Arjun' }]],
+  ['matches', [{ home: 'Riya', away: 'Arjun' }]],
+  ['standings', [{ name: 'Riya', points: 3 }]],
+  ['seeding', 'random'],
+  // Sponsor exposure is TRN-06 and is legal-adjacent and undecided.
+  ['sponsor', 'Acme'],
+  ['sponsorImpressions', 100],
+]) {
+  const polluted = await giveawayTournamentFixture();
+  polluted.giveawayTournament[field] = value;
+  if (overlayGiveawayTournamentValidator(polluted)) {
+    failures.push(`overlay-giveaway-tournament-response.json: ${field} was accepted -- §17 forbids a chance mechanic, a winner, prize custody, a paid entry and any participant identity on the overlay`);
+  }
+}
+
+// Either half alone is a valid answer, and so is a null state -- a closed
+// giveaway, a concluded tournament, an unentitled channel and an
+// unrecognised token all mean "paint nothing".
+const giveawayOnly = await giveawayTournamentFixture();
+giveawayOnly.giveawayTournament.tournamentCurrentRound = null;
+giveawayOnly.giveawayTournament.tournamentTotalRounds = null;
+giveawayOnly.giveawayTournament.tournamentCompletedMatchesInRound = null;
+giveawayOnly.giveawayTournament.tournamentMatchesInRound = null;
+if (!overlayGiveawayTournamentValidator(giveawayOnly)) {
+  failures.push('overlay-giveaway-tournament-response.json: a giveaway with no tournament must be a valid answer');
+}
+const tournamentOnly = await giveawayTournamentFixture();
+tournamentOnly.giveawayTournament.entryCount = null;
+tournamentOnly.giveawayTournament.entryClosesAt = null;
+if (!overlayGiveawayTournamentValidator(tournamentOnly)) {
+  failures.push('overlay-giveaway-tournament-response.json: a tournament with no giveaway must be a valid answer');
+}
+const nothingRunning = await giveawayTournamentFixture();
+nothingRunning.giveawayTournament = null;
+if (!overlayGiveawayTournamentValidator(nothingRunning)) {
+  failures.push('overlay-giveaway-tournament-response.json: a null state must be a VALID answer -- it is what a closed giveaway, a concluded tournament, an unentitled channel and an unrecognised token all return');
+}
+// Zero entries with the window still open IS a state worth painting.
+const zeroEntries = await giveawayTournamentFixture();
+zeroEntries.giveawayTournament.entryCount = 0;
+if (!overlayGiveawayTournamentValidator(zeroEntries)) {
+  failures.push('overlay-giveaway-tournament-response.json: a giveaway with zero entries must be a valid answer -- that is the invitation, not an empty state');
+}
+for (const [field, bad] of [
+  ['entryCount', -1], ['entryCount', 1.5],
+  // §30.3 caps a single-elimination field at 8, so there is no round 4 and
+  // no round holding more than four matches.
+  ['tournamentCurrentRound', 0], ['tournamentCurrentRound', 4],
+  ['tournamentTotalRounds', 4],
+  ['tournamentCompletedMatchesInRound', -1], ['tournamentCompletedMatchesInRound', 5],
+  ['tournamentMatchesInRound', 0], ['tournamentMatchesInRound', 5],
+]) {
+  const polluted = await giveawayTournamentFixture();
+  polluted.giveawayTournament[field] = bad;
+  if (overlayGiveawayTournamentValidator(polluted)) {
+    failures.push(`overlay-giveaway-tournament-response.json: ${field} ${bad} was accepted`);
+  }
+}
+
+// The CREATOR-facing records. Each carries its own id (its write path is
+// addressed, not ambient) but still no mechanic, no winner, no prize
+// custody, no price and no participant -- none of those exists in the
+// schema behind them.
+const channelGiveawaySchema = await loadSchema('channel-giveaway-response.schema.json');
+const channelGiveawayValidator = ajv.getSchema(channelGiveawaySchema.$id);
+async function channelGiveawayFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-giveaway-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  ['drawMethod', 'seeded'], ['seed', 'abc123'], ['odds', 2], ['weighting', 'supporter'],
+  ['winner', 'Riya'], ['winnerUserId', '00000000-0000-4000-8000-0000000000a1'], ['overrideReason', 'no-show'],
+  ['prize', 'A gaming mouse'], ['prizeValuePaise', 450000], ['escrowHeld', true],
+  ['shippingAddress', '12 MG Road'], ['claimUrl', 'https://example.invalid/claim'],
+  ['entryFeePaise', 5000], ['pricePaise', 12900],
+  ['entryMethod', 'follow'], ['requiresFollow', true], ['supporterOnly', true],
+  ['participants', [{ name: 'Riya' }]], ['entrants', ['Riya']],
+  // Session-bounded, not clock-bounded beyond the published window: there
+  // is no duration, countdown or timer column and none in the contract.
+  ['durationSeconds', 900], ['countdownSeconds', 900], ['timerMs', 1000],
+]) {
+  const polluted = await channelGiveawayFixture();
+  polluted.giveaway[field] = value;
+  if (channelGiveawayValidator(polluted)) {
+    failures.push(`channel-giveaway-response.json: ${field} was accepted -- that is a chance mechanic, a winner, prize custody, a price or an entry path, and this slice builds none of them`);
+  }
+}
+const giveawayAbsent = await channelGiveawayFixture();
+giveawayAbsent.giveaway = null;
+if (!channelGiveawayValidator(giveawayAbsent)) {
+  failures.push('channel-giveaway-response.json: a null giveaway must be a VALID answer -- it is what a channel with none open returns, at every tier');
+}
+const giveawayClosed = await channelGiveawayFixture();
+giveawayClosed.giveaway.closedAt = '2026-09-17T10:30:00.000Z';
+if (!channelGiveawayValidator(giveawayClosed)) {
+  failures.push('channel-giveaway-response.json: a closed giveaway must remain a valid, readable durable record (12.6)');
+}
+
+const channelTournamentSchema = await loadSchema('channel-tournament-response.schema.json');
+const channelTournamentValidator = ajv.getSchema(channelTournamentSchema.$id);
+async function channelTournamentFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-tournament-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  ['winner', 'Riya'], ['champion', 'Riya'], ['seed', 'abc123'], ['seeding', 'random'],
+  ['prize', 'A gaming mouse'], ['escrowHeld', true], ['shippingAddress', '12 MG Road'],
+  ['entryFeePaise', 5000],
+  ['participants', [{ name: 'Riya' }]], ['teams', [{ name: 'Alpha' }]],
+  ['matches', [{ home: 'Riya', away: 'Arjun' }]], ['bracket', [{ a: 'Riya' }]],
+  ['scores', [1, 0]], ['disputeNote', 'contested'],
+  ['sponsor', 'Acme'], ['sponsorImpressions', 100],
+  // §30.3 places all three at Studio; this slice has one entitlement gate.
+  ['bracketType', 'double_elimination'], ['format', 'round_robin'], ['pointsTable', []],
+  ['checkInWindowSeconds', 300],
+]) {
+  const polluted = await channelTournamentFixture();
+  polluted.tournament[field] = value;
+  if (channelTournamentValidator(polluted)) {
+    failures.push(`channel-tournament-response.json: ${field} was accepted -- that is a result, a prize, a participant, a Studio-only bracket type or a feature this slice does not build`);
+  }
+}
+// §30.3 caps a single-elimination field at 8, and a bracket without byes
+// needs a power of two -- byes belong to seeding, which is not built.
+for (const bad of [1, 3, 6, 16]) {
+  const polluted = await channelTournamentFixture();
+  polluted.tournament.fieldSize = bad;
+  if (channelTournamentValidator(polluted)) {
+    failures.push(`channel-tournament-response.json: a field of ${bad} was accepted -- single elimination without byes needs 2, 4 or 8`);
+  }
+}
+const tournamentAbsent = await channelTournamentFixture();
+tournamentAbsent.tournament = null;
+if (!channelTournamentValidator(tournamentAbsent)) {
+  failures.push('channel-tournament-response.json: a null tournament must be a VALID answer -- it is what a channel with none running returns, at every tier');
+}
+const tournamentConcluded = await channelTournamentFixture();
+tournamentConcluded.tournament.concludedAt = '2026-09-17T11:30:00.000Z';
+if (!channelTournamentValidator(tournamentConcluded)) {
+  failures.push('channel-tournament-response.json: a concluded tournament must remain a valid, readable durable record (12.6)');
 }
 
 const overlayHypeSchema = await loadSchema('overlay-hype-response.schema.json');

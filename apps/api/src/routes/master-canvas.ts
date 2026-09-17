@@ -20,6 +20,10 @@ import {
   projectOverlayLobbyStatus,
   type LobbyStatusOverlayStore,
 } from '../domain/lobby-status-store.js';
+import {
+  projectOverlayGiveawayTournament,
+  type GiveawayTournamentOverlayStore,
+} from '../domain/giveaway-tournament-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -73,6 +77,13 @@ export async function registerMasterCanvasRoutes(
   // the new route below fails closed to 503 like every other optional
   // dependency in this file.
   overlayLobbyStatus?: LobbyStatusOverlayStore,
+  // PRF-02 slice 6, §6 module #17 (Giveaway / Tournament Card). Appended
+  // at the end for the same reason overlayReactionCloud and
+  // overlayLobbyStatus were: every existing positional call keeps
+  // compiling and behaving unchanged, and when it is undefined the new
+  // route below fails closed to 503 like every other optional dependency
+  // in this file.
+  overlayGiveawayTournament?: GiveawayTournamentOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -294,6 +305,76 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_lobby_status_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Lobby status is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+
+  // PRF-02 slice 6, §6 module #17 (Giveaway / Tournament Card) -- the
+  // AGGREGATE-ONLY overlay read. Same overlay browser-source shape as the
+  // four routes above, and in this file for the same reason slices 5 and 6
+  // recorded: it is a Master Canvas module read, not an interaction, and
+  // this file already owns the bearer-token helper and the
+  // master_canvas_store_unavailable envelope. The creator's own giveaway
+  // and tournament reads and writes are a separate, session-authenticated
+  // surface (routes/giveaway-tournament.ts) -- an overlay browser-source
+  // token can read the aggregate and can never change it.
+  //
+  // THE RESPONSE CARRIES SIX AGGREGATE VALUES AND NOTHING ELSE. §17.1's
+  // overlay list is "entry count, time remaining, winner announcement with
+  // consent, and a claim flow"; §17.2 adds a standings module. The entry
+  // count, the window close instant and the bracket progress ship.
+  //
+  // THE WINNER DOES NOT, AND THAT IS THE CORRECT CONCLUSION rather than an
+  // omission: §17.1 permits the announcement only WITH CONSENT and no
+  // consent mechanism exists in this schema; a winner would be a
+  // participant identifier on an aggregate-only path; and nothing could
+  // produce one anyway, because the mechanic is not built (§17.1's
+  // decision of 2026-09-13; GIV-07 stays Blocked) and "the creator records
+  // who won" is an invented surface the owner's 2026-09-16 decision names
+  // outright. The claim flow does not ship either -- §17.1 requires it
+  // never expose an address on stream, and BharatStudio never holds,
+  // escrows, ships or guarantees a prize.
+  //
+  // So app_private.list_overlay_giveaway_tournament (migration 0142)
+  // returns exactly six aggregate values, and no participant identifier,
+  // in-game name, Discord name, viewer id, anonymous identity, session id,
+  // postal field or contact detail exists to be leaked here -- and none
+  // exists in the schema either. projectOverlayGiveawayTournament() then
+  // narrows a SECOND, independent time in front of whatever the store
+  // hands up, so the guarantee does not rest on a single layer.
+  //
+  // NEITHER RECORD'S ID IS RETURNED. Neither carries information the card
+  // paints, and "a session id" is on the prohibited list.
+  //
+  // THE TIER GATE IS NOT APPLIED HERE, AND THAT IS DELIBERATE. §30.3
+  // places the Lobby and tournament engine at Creator+, and the owner's
+  // decision 5 makes that `tier in ('creator','studio')` OR an active
+  // Events Pack grant -- a check with no grant path yet, so present
+  // behaviour is exactly "included at Creator+". That check is
+  // app_private.events_pack_entitled, which migration 0140 already ships
+  // and 0142 CALLS from inside the SQL function rather than
+  // reimplementing. An unentitled channel's perfectly valid token matches
+  // no row. A second copy of the tier rule in TypeScript would be a second
+  // place for it to be wrong.
+  //
+  // AN UNRECOGNISED TOKEN ANSWERS 200 WITH `giveawayTournament: null`, not
+  // 401, and so do a channel with nothing running and an unentitled
+  // channel. All three mean "paint nothing" to the card. A MISSING bearer
+  // token is still 401: that is a malformed request, not an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/giveaway-tournament', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'Giveaway and tournament state is not available', traceId: request.id });
+    if (!overlayGiveawayTournament) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Giveaway and tournament state is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const state = await overlayGiveawayTournament.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', giveawayTournament: projectOverlayGiveawayTournament(state) });
+    } catch (error) {
+      logSafeError(request, 'overlay_giveaway_tournament_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'Giveaway and tournament state is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

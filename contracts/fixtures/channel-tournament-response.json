@@ -1,0 +1,18 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-tournament-response.schema.json",
+  "schemaVersion": "v1",
+  "tournament": {
+    "schemaVersion": "v1",
+    "tournamentId": "00000000-0000-4000-8000-000000005a61",
+    "lobbySessionId": "00000000-0000-4000-8000-000000005851",
+    "fieldSize": 8,
+    "currentRound": 2,
+    "totalRounds": 3,
+    "completedMatchesInRound": 1,
+    "matchesInRound": 2,
+    "startedAt": "2026-09-17T10:10:00.000Z",
+    "concludedAt": null,
+    "createdAt": "2026-09-17T10:10:00.000Z",
+    "updatedAt": "2026-09-17T10:20:00.000Z"
+  }
+}

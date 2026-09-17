@@ -1383,6 +1383,265 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/giveaway-tournament:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayGiveawayTournament
+      summary: Aggregate giveaway entry state and single-elimination bracket progress.
+      description: >-
+        Master Canvas module #17 (Giveaway / Tournament Card). 17.1's overlay list is "entry
+        count, time remaining, winner announcement with consent, and a claim flow"; 17.2 adds
+        a standings module. The entry count, the published window's close instant and the
+        bracket progress ship. The rest does not, and that is the correct conclusion rather
+        than an omission.
+
+        NO WINNER, AND NONE IS POSSIBLE IN THIS SLICE. 17.1 permits an announcement only WITH
+        CONSENT, and no consent mechanism exists in this schema; a winner is a participant
+        identifier on an aggregate-only path; and nothing could produce one, because the
+        mechanic is not built (17.1, decided 2026-09-13 - free-entry and skill-based formats
+        only, supporter-weighted odds not built) and GIV-07 gates chance-based formats on a
+        legal review that has not happened. GIV-07 stays Blocked and nothing here touches it.
+
+        NO CHANCE MECHANIC OF ANY KIND exists at any layer: no draw, seed, odds, weighting or
+        shuffle. NO PRIZE, ESCROW, CUSTODY, FULFILMENT, DELIVERY, ADDRESS OR CLAIM field
+        exists either - BharatStudio never holds, escrows, ships or guarantees a prize, and
+        the creator is the promoter, responsible for eligibility, taxes and delivery. There is
+        never a paid entry, which holds by construction because there is no entry path at all.
+
+        Aggregate state only, and that is a property of the read rather than of the renderer:
+        the returned column set is six aggregate values. No participant identifier, in-game
+        name, Discord name, viewer id, anonymous identity, session id or contact detail exists
+        on this path - and none exists in the schema behind it either, so there is nothing for
+        a future read to start returning and nothing that can correlate one visit to another.
+        The bracket is PROGRESS, never a tree: a tree needs participant labels, which 16 ruled
+        need an opt-in mechanism that does not exist.
+
+        Single elimination only, with a field of 2, 4 or 8. 30.3 places "single elim, up to 8"
+        at Creator+ and double elimination, round robin, points tables and seeding at Studio,
+        and this slice carries one entitlement gate rather than two. totalRounds and
+        matchesInRound are derived at read time from the referenced lobby session's seat count
+        (17.2: tournaments are built ON the Lobby Engine rather than beside it), so the
+        bracket's field size has no second copy to drift.
+
+        Bounded to current state and never a history (12.7). Entitlement is Creator+ or the
+        Events Pack (30.3): the check is migration 0140's app_private.events_pack_entitled,
+        called from inside this read rather than reimplemented, so an unentitled channel's
+        valid overlay token returns null. An unrecognised, expired, revoked or foreign token
+        returns null too, as do a channel with nothing running and a concluded tournament -
+        all of them mean paint nothing, and there is deliberately no terminal state.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped aggregate giveaway and tournament state for this overlay, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayGiveawayTournamentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/giveaway:
+    get:
+      tags: [Giveaway]
+      operationId: getChannelGiveaway
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The channel's current giveaway, or null. Available at every tier: storing, viewing and
+        exporting a durable creator record is never tier-gated (12.6). The 30.3 Creator+/Events
+        Pack entitlement governs only whether the Master Canvas renders the card.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's current giveaway, or null when none is open.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGiveawayResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Giveaway]
+      operationId: openChannelGiveaway
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Opens a giveaway. Owner/admin only, and not tier-gated. At most one may be open per
+        channel: opening a second while one is open is a 409, never a silent supersede. The
+        body carries the published entry window's close instant and nothing else - there is no
+        draw method, seed, odds, weighting, entry method, prize, escrow, claim flow or entry
+        fee to supply, because 17.1 forbids each of them and none exists in the schema.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenGiveawayRequest' }
+      responses:
+        '201':
+          description: The opened giveaway.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGiveawayResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/giveaway/{giveawayId}:
+    patch:
+      tags: [Giveaway]
+      operationId: updateChannelGiveawayEntryCount
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Reports how many entries the giveaway has. Owner/admin only, and not tier-gated. The
+        giveaway id is required so the write is addressed rather than ambient - a stale
+        dashboard tab cannot write a count onto a giveaway opened after that tab loaded. The
+        count is creator-reported because there is no entry path in this slice; deriving it
+        would mean building the entry subsystem, which is the whole of 17. An unknown,
+        already-closed, other-channel or unauthorised giveaway is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GiveawayId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateGiveawayEntryCountRequest' }
+      responses:
+        '200':
+          description: The updated giveaway.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelGiveawayResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/giveaway/{giveawayId}/close:
+    post:
+      tags: [Giveaway]
+      operationId: closeChannelGiveaway
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Closes the named giveaway. Owner/admin only, and not tier-gated. Closing deletes
+        nothing - the record stays durable and readable (12.6) - and ANNOUNCES nothing: there
+        is no result, no winner and no claim flow, because 17.1 permits an announcement only
+        with consent that no mechanism in this schema provides. An unknown, already-closed,
+        other-channel or unauthorised giveaway is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GiveawayId'
+      responses:
+        '204':
+          description: The giveaway was closed. No result is produced.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/tournament:
+    get:
+      tags: [Tournament]
+      operationId: getChannelTournament
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The channel's current tournament, or null. Available at every tier (12.6). fieldSize,
+        totalRounds and matchesInRound are derived from the referenced lobby session rather
+        than stored - 17.2 builds tournaments ON the Lobby Engine rather than beside it.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's current tournament, or null when none is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelTournamentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Tournament]
+      operationId: startChannelTournament
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Starts a single-elimination tournament ON an open lobby session of the same channel
+        (17.2). Owner/admin only, and not tier-gated. At most one may run per channel. The
+        body carries the lobby session id and nothing else: the bracket's field size IS that
+        lobby's seat count, so there is no field size, bracket size, capacity, seeding,
+        participant list, team, score, sponsor slot, prize or entry fee to supply. A lobby
+        whose seat count is not 2, 4 or 8 is a 400 - single elimination without byes needs a
+        power of two, byes belong to seeding which is not built, and 30.3 caps the field at 8.
+        An unknown, already-closed or other-channel lobby is a 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartTournamentRequest' }
+      responses:
+        '201':
+          description: The started tournament.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelTournamentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/tournament/{tournamentId}:
+    patch:
+      tags: [Tournament]
+      operationId: setChannelTournamentProgress
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Reports which round the bracket is in and how many of that round's matches are
+        complete. Owner/admin only, and not tier-gated. Both values are required together,
+        because they are read together on one card: a partial write would paint a round from
+        one moment beside a match count from another. The exact bounds come from the
+        REFERENCED LOBBY - the round ceiling is log2(seatCount) and the match ceiling is
+        seatCount >> round - so a value outside them is a 400. No score, pairing, result,
+        winner or dispute note is accepted: those are TRN-04 and need match rows, which do not
+        exist in this slice. An unknown, already-concluded, other-channel or unauthorised
+        tournament is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/TournamentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetTournamentProgressRequest' }
+      responses:
+        '200':
+          description: The updated tournament.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelTournamentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/tournament/{tournamentId}/conclude:
+    post:
+      tags: [Tournament]
+      operationId: concludeChannelTournament
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Concludes the named tournament. Owner/admin only, and not tier-gated. Concluding
+        deletes nothing - the record stays durable and readable (12.6) - and ANNOUNCES
+        nothing: the overlay simply stops having anything to paint. There is deliberately no
+        terminal state, because a terminal label on a bracket is a winner announcement with
+        the name left out, and a winner announcement requires consent (17.1) that no mechanism
+        in this schema provides. An unknown, already-concluded, other-channel or unauthorised
+        tournament is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/TournamentId'
+      responses:
+        '204':
+          description: The tournament was concluded. No result is produced.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -2004,6 +2263,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    GiveawayId:
+      name: giveawayId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TournamentId:
+      name: tournamentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     ArtifactId:
       name: artifactId
       in: path
@@ -2400,6 +2669,260 @@ components:
       properties:
         confirmedSeatCount: { type: integer, minimum: 0, maximum: 2147483647 }
         queueCount: { type: integer, minimum: 0, maximum: 2147483647 }
+    OverlayGiveawayTournament:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - entryCount
+        - entryClosesAt
+        - tournamentCurrentRound
+        - tournamentTotalRounds
+        - tournamentCompletedMatchesInRound
+        - tournamentMatchesInRound
+      description: >-
+        Aggregate state only (17). Six values, 12.7-bounded to what is currently live. NO
+        winner, result, champion or announcement - 17.1 permits one only WITH CONSENT, no
+        consent mechanism exists in this schema, a winner is a participant identifier, and
+        nothing could produce one (the mechanic is not built; GIV-07 stays Blocked). NO draw,
+        seed, odds, weighting or shuffle. NO prize, escrow, custody, fulfilment, delivery,
+        address or claim - BharatStudio never holds, escrows, ships or guarantees a prize and
+        the creator is the promoter. NO participant identifier, in-game name, Discord name,
+        viewer id, anonymous identity or contact detail, and no giveaway, tournament or lobby
+        id either, which would be session identifiers the card does not paint. NO bracket
+        tree: a tree needs participant labels, which 16 ruled need an opt-in mechanism that
+        does not exist. Either half may be absent; the absent half is null rather than
+        fabricated.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        entryCount:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 0
+              maximum: 2147483647
+          description: >-
+            How many entries the creator has reported. A count, never a list - there is no
+            per-entrant row behind this figure, so nothing here can correlate one visit to
+            another, and there is no entry path at all, so nothing a payment could gate. Zero
+            is meaningful: an open giveaway with nobody entered yet is the invitation.
+        entryClosesAt:
+          oneOf:
+            - type: 'null'
+            - type: string
+              format: date-time
+          description: >-
+            The instant the creator's published entry window closes (17.1's entry window, and
+            the source of 17.1's "time remaining"). The close INSTANT is returned rather than
+            a seconds figure so the countdown ticks on the canvas's existing shared frame loop
+            instead of a per-second server read, which 12.7 forbids.
+        tournamentCurrentRound:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 1
+              maximum: 3
+          description: Which round of the single-elimination bracket is in play. The maximum is log2(8), from 30.3.
+        tournamentTotalRounds:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 1
+              maximum: 3
+          description: >-
+            How many rounds the bracket has. DERIVED at read time from the referenced lobby
+            session's seat count rather than stored - 17.2 builds tournaments ON the Lobby
+            Engine rather than beside it, so there is no second copy of the field size to
+            drift.
+        tournamentCompletedMatchesInRound:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 0
+              maximum: 4
+          description: >-
+            How many of the current round's matches the creator has reported complete. Never
+            greater than tournamentMatchesInRound. A count of FIXTURES, never of people, and
+            no score, pairing, result or dispute note is carried.
+        tournamentMatchesInRound:
+          oneOf:
+            - type: 'null'
+            - type: integer
+              minimum: 1
+              maximum: 4
+          description: >-
+            How many matches the current round holds, derived as field >> round from the
+            referenced lobby's seat count. The maximum of 4 is 8/2, the largest any round can
+            be at 30.3's maximum field of 8.
+    OverlayGiveawayTournamentResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, giveawayTournament]
+      description: >-
+        A null giveawayTournament is a valid answer, and is what an unrecognised, expired,
+        revoked or foreign overlay token returns, what a channel with nothing running returns,
+        what a closed giveaway and a concluded tournament return, and what a channel without
+        the Creator+/Events Pack entitlement returns. All of them mean paint nothing, and
+        there is deliberately no terminal state to distinguish.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        giveawayTournament:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayGiveawayTournament'
+    Giveaway:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, giveawayId, entryCount, entryOpensAt, entryClosesAt, closedAt, createdAt, updatedAt]
+      description: >-
+        Creator-facing giveaway. closedAt is a record of when the creator closed it (null
+        while open), never a scheduled close and never a result - closing produces no
+        announcement. It carries no draw method, seed, odds or weighting (17.1, decided
+        2026-09-13: free-entry and skill-based formats only, supporter-weighted odds not
+        built; GIV-07 stays Blocked), no winner, no prize description, value, escrow, custody,
+        fulfilment, delivery, tracking, address or claim field (BharatStudio never holds,
+        escrows, ships or guarantees a prize), no entry fee or price of any kind, and no
+        entrant or participant list.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        giveawayId:
+          type: string
+          format: uuid
+          description: >-
+            On the creator projection only, because the creator's write path is addressed
+            rather than ambient. It is never on the overlay projection.
+        entryCount: { type: integer, minimum: 0, maximum: 2147483647 }
+        entryOpensAt: { type: string, format: date-time }
+        entryClosesAt: { type: string, format: date-time }
+        closedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelGiveawayResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, giveaway]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        giveaway:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Giveaway'
+    OpenGiveawayRequest:
+      type: object
+      additionalProperties: false
+      required: [entryClosesAt]
+      description: >-
+        The published entry window's close instant and nothing else. additionalProperties is
+        false deliberately: a body carrying a draw method, a seed, odds, a weighting, a
+        winner, a prize, an escrow flag, a shipping address, a claim URL, an entry fee, an
+        entry method, a follow or supporter requirement, or a participant list is rejected
+        before the store is reached. 17.1 forbids every one of them and none exists in the
+        schema.
+      properties:
+        entryClosesAt: { type: string, format: date-time }
+    UpdateGiveawayEntryCountRequest:
+      type: object
+      additionalProperties: false
+      required: [entryCount]
+      description: >-
+        The creator-reported entry count. There is no entry path in this slice, so the number
+        is as accurate as whoever reports it - stated rather than patched with an invented
+        derivation, because deriving it would mean building the entry subsystem.
+      properties:
+        entryCount: { type: integer, minimum: 0, maximum: 2147483647 }
+    Tournament:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - tournamentId
+        - lobbySessionId
+        - fieldSize
+        - currentRound
+        - totalRounds
+        - completedMatchesInRound
+        - matchesInRound
+        - startedAt
+        - concludedAt
+        - createdAt
+        - updatedAt
+      description: >-
+        Creator-facing tournament. 17.2 builds tournaments ON the Lobby Engine rather than
+        beside it, so this REFERENCES a lobby session and fieldSize, totalRounds and
+        matchesInRound are all derived from that lobby's seat count at read time rather than
+        stored - which removes the class of drift where a tournament says 8 and its lobby says
+        16. Single elimination only: 30.3 places "single elim, up to 8" at Creator+ and double
+        elimination, round robin, points tables and seeding at Studio, and this slice carries
+        one entitlement gate rather than two. It carries no winner, result, seed or randomness
+        of any kind; no prize, escrow, custody, fulfilment, delivery, address or claim field;
+        no participant, entrant, team, score, pairing, dispute note or sponsor field; and no
+        bracket tree, which would need participant labels 16 ruled require an opt-in mechanism
+        that does not exist. concludedAt is a record of when the creator concluded it, never a
+        schedule and never an announcement.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        tournamentId:
+          type: string
+          format: uuid
+          description: On the creator projection only; never on the overlay projection.
+        lobbySessionId:
+          type: string
+          format: uuid
+          description: >-
+            The lobby session this bracket runs on (17.2). On the creator projection only,
+            where it lets a creator's own tooling see which session it is; never on the
+            overlay projection, where a session id is prohibited.
+        fieldSize:
+          type: integer
+          enum: [2, 4, 8]
+          description: >-
+            The referenced lobby's seat count, READ rather than stored. A power of two because
+            single elimination without byes needs one, and byes belong to seeding which is not
+            built; capped at 8 by 30.3.
+        currentRound: { type: integer, minimum: 1, maximum: 3 }
+        totalRounds: { type: integer, minimum: 1, maximum: 3, description: log2(fieldSize), derived and never stored. }
+        completedMatchesInRound: { type: integer, minimum: 0, maximum: 4 }
+        matchesInRound: { type: integer, minimum: 1, maximum: 4, description: fieldSize >> currentRound, derived and never stored. }
+        startedAt: { type: string, format: date-time }
+        concludedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelTournamentResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, tournament]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        tournament:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/Tournament'
+    StartTournamentRequest:
+      type: object
+      additionalProperties: false
+      required: [lobbySessionId]
+      description: >-
+        The lobby session the bracket runs on, and nothing else. additionalProperties is false
+        deliberately: the bracket's field size IS that lobby's seat count (17.2), so a body
+        carrying a field size, bracket size, capacity, seeding, bracket type, participant
+        list, team, score, dispute note, sponsor slot, winner, prize or entry fee is rejected
+        before the store is reached.
+      properties:
+        lobbySessionId: { type: string, format: uuid }
+    SetTournamentProgressRequest:
+      type: object
+      additionalProperties: false
+      required: [currentRound, completedMatchesInRound]
+      description: >-
+        Both progress values, together. They are read together on one card, so a partial write
+        would paint a round from one moment beside a match count from another. The maxima here
+        are the outer bounds from 30.3's field of 8 (log2(8) rounds, 8/2 matches); the exact
+        per-tournament bound comes from the referenced lobby's seat count and is enforced in
+        the database, which is the only layer that can read that row. No score, pairing,
+        result, winner or dispute note is accepted.
+      properties:
+        currentRound: { type: integer, minimum: 1, maximum: 3 }
+        completedMatchesInRound: { type: integer, minimum: 0, maximum: 4 }
     StreamMission:
       type: object
       additionalProperties: false

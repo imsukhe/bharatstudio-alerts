@@ -49,6 +49,10 @@ import { createSqlSafeModeStore } from './db/safe-mode-store.js';
 // pools, deliberately -- see each store file's own header.
 import { createSqlLobbySessionStore } from './db/lobby-status-store.js';
 import { createSqlLobbyStatusOverlayStore } from './db/lobby-status-overlay-store.js';
+// PRF-02 slice 6, §6 catalogue module #17 (Giveaway / Tournament Card).
+// Two files, two pools, deliberately -- see each store file's own header.
+import { createSqlGiveawayTournamentStore } from './db/giveaway-tournament-store.js';
+import { createSqlGiveawayTournamentOverlayStore } from './db/giveaway-tournament-overlay-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -193,6 +197,21 @@ const app = await buildApp(config, {
   // test can prove it, and nothing here may add a second copy of it.
   lobbySessions: sql ? createSqlLobbySessionStore(sql) : undefined,
   overlayLobbyStatus: sql ? createSqlLobbyStatusOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 6, §6 module #17 (Giveaway / Tournament Card).
+  //
+  // The creator store carries writes, so it uses the MAIN pool exactly as
+  // lobbySessions/goals/challenges do -- which also keeps it correctly
+  // outside rule 3 of the RT-12 required-queries scan. The overlay store
+  // is a derived read on the RT-10/RT-11 derivedReadSql pool like every
+  // other widget/overlay read, which is what puts it INSIDE rule 3.
+  //
+  // Neither is constructed with a tier, a ceiling or any other
+  // configuration value: the Creator+/Events-Pack entitlement is 0140's
+  // app_private.events_pack_entitled, called from inside
+  // app_private.list_overlay_giveaway_tournament (migration 0142), where
+  // the SQL test can prove it, and nothing here may add a second copy.
+  giveawayTournaments: sql ? createSqlGiveawayTournamentStore(sql) : undefined,
+  overlayGiveawayTournament: sql ? createSqlGiveawayTournamentOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;
   // the overlay store is a derived read and uses derivedReadSql, which is

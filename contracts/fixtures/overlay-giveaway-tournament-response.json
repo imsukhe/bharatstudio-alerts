@@ -1,0 +1,13 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-giveaway-tournament-response.schema.json",
+  "schemaVersion": "v1",
+  "giveawayTournament": {
+    "schemaVersion": "v1",
+    "entryCount": 143,
+    "entryClosesAt": "2026-09-17T10:30:00.000Z",
+    "tournamentCurrentRound": 2,
+    "tournamentTotalRounds": 3,
+    "tournamentCompletedMatchesInRound": 1,
+    "tournamentMatchesInRound": 2
+  }
+}

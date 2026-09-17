@@ -232,6 +232,8 @@ import { createGiveawayTournamentModule } from '../modules/giveaway-tournament-m
 import { isGiveawayTournamentState, type GiveawayTournamentState } from '../modules/giveaway-tournament-logic';
 import { createMediaQueueModule } from '../modules/media-queue-module';
 import { isMediaQueueState, type MediaQueueState } from '../modules/media-queue-logic';
+import { createSafeSoundboardModule } from '../modules/safe-soundboard-module';
+import { isOverlaySoundboardPlay, type OverlaySoundboardPlay } from '../modules/safe-soundboard-logic';
 import { isTugOfWarVoteTally, type TugOfWarVoteTally } from '../modules/tug-of-war-vote-logic';
 import { isSupporterTicker } from '../../widgets/l16-widget-data';
 import { isOverlayGoal, type OverlayGoal } from '../../widgets/goal/goal-widget-logic';
@@ -268,6 +270,9 @@ const BUILT_MODULE_KEYS = [
   // 2026-09-17; MED-20): this module only ever reads a server-computed
   // "current and next" projection, never writes anything.
   'media_meme_queue',
+  // PRF-02 slice 7, §6 #6 (Safe Soundboard Alert). Also a plain snapshot
+  // module -- no ordering requirement.
+  'safe_soundboard_alert',
 ] as const;
 
 function reducedMotionPreferred(): boolean {
@@ -294,6 +299,7 @@ export default function MasterCanvasPage() {
   const lobbyStatusContainerRef = useRef<HTMLDivElement>(null);
   const giveawayTournamentContainerRef = useRef<HTMLDivElement>(null);
   const mediaQueueContainerRef = useRef<HTMLDivElement>(null);
+  const safeSoundboardContainerRef = useRef<HTMLDivElement>(null);
   const [downModules, setDownModules] = useState<string[]>([]);
 
   useEffect(() => {
@@ -527,6 +533,38 @@ export default function MasterCanvasPage() {
       return isMediaQueueState(body.mediaQueue) ? body.mediaQueue : null;
     }
 
+    // Safe Soundboard Alert (§6 #6, PRF-02 slice 7). The response carries
+    // SEVEN FIELDS and nothing else -- no viewer, supporter or session
+    // identifier exists on this path, because
+    // app_private.list_overlay_soundboard_play (migration 0143) returns
+    // exactly those seven columns. `isOverlaySoundboardPlay` is the
+    // client's own third, independent narrowing on top of that (after the
+    // SQL layer's declared result type and the API route's
+    // `projectOverlaySoundboardPlay`), including re-validating
+    // `playbackUrl` as https-or-null a third time.
+    //
+    // THE NAME IS ABOUT THE BROADCAST, NOT THE CONTENT (2026-09-17
+    // decision): nothing here or in the module it feeds may claim a clip
+    // is safe, approved, checked, reviewed, vetted or curated.
+    //
+    // This returns the SINGLE MOST RECENT creator-triggered play, not a
+    // never-drop queue -- see migration 0143's header and
+    // ../modules/safe-soundboard-logic.ts's own header for why. No
+    // cooldown is applied; none is decided anywhere in this repository.
+    //
+    // `soundboardPlay: null` is every "nothing to paint" case at once: an
+    // unrecognised, expired, revoked or foreign token, a channel that has
+    // triggered nothing, and a channel without the §30.3 Pro+ entitlement
+    // (checked inside the SQL function, not here).
+    async function fetchSafeSoundboardSnapshot(): Promise<OverlaySoundboardPlay | null> {
+      const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/safe-soundboard`, {
+        headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+      });
+      if (!response.ok) return null;
+      const body = await response.json() as { soundboardPlay?: unknown };
+      return isOverlaySoundboardPlay(body.soundboardPlay) ? body.soundboardPlay : null;
+    }
+
     // Support Theater registers FIRST — see this file's header — using the
     // SAME shared `connection`/`overlayId`/`token` as every other module,
     // never a second session.
@@ -693,6 +731,25 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
+    if (safeSoundboardContainerRef.current) {
+      // Safe Soundboard Alert (§6 #6). One more snapshot module on the
+      // SAME shared `connection` and the SAME shared rAF loop -- no
+      // second session, no second transport, no timer of its own. The
+      // "now playing" caption's own visible window ticks on the
+      // runtime's existing per-frame render() call.
+      //
+      // NOTHING ABOUT UPLOAD, CATALOGUE MANAGEMENT OR TRIGGERING IS WIRED
+      // HERE AND NOTHING MAY BE: those are the creator's own
+      // session-authenticated dashboard surface
+      // (routes/safe-soundboard.ts), never an overlay browser-source
+      // token's. This module only reads and plays the current trigger.
+      runtime.registerModule(createSafeSoundboardModule({
+        container: safeSoundboardContainerRef.current,
+        connection,
+        fetchSnapshot: fetchSafeSoundboardSnapshot,
+        reducedMotion: reducedMotionPreferred,
+      }));
+    }
     (async () => {
       try {
         const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
@@ -798,6 +855,9 @@ export default function MasterCanvasPage() {
         .master-canvas-media-queue { position: absolute; top: 24px; right: 24px; width: 320px; }
         .master-canvas-media-queue [data-role="media-queue-current-image"],
         .master-canvas-media-queue [data-role="media-queue-current-video"] { width: 100%; border-radius: 12px; }
+        .master-canvas-soundboard { position: absolute; bottom: 300px; left: 0; max-width: 360px; color: #fff; }
+        .master-canvas-soundboard [data-role="safe-soundboard-card"] { padding: 8px 14px; border-radius: 12px; background: rgba(12,17,29,.78); }
+        .master-canvas-soundboard [data-role="safe-soundboard-label"] { font-size: 14px; font-weight: 600; }
       `}</style>
       <div ref={goalContainerRef} className="master-canvas-module master-canvas-goal" />
       <div ref={bossFightContainerRef} className="master-canvas-module master-canvas-boss" />
@@ -812,6 +872,7 @@ export default function MasterCanvasPage() {
       <div ref={lobbyStatusContainerRef} className="master-canvas-module master-canvas-lobby" aria-live="polite" />
       <div ref={giveawayTournamentContainerRef} className="master-canvas-module master-canvas-giveaway" aria-live="polite" />
       <div ref={mediaQueueContainerRef} className="master-canvas-module master-canvas-media-queue" aria-hidden="true" />
+      <div ref={safeSoundboardContainerRef} className="master-canvas-module master-canvas-soundboard" aria-live="polite" />
       {downModules.length > 0 && (
         <div className="master-canvas-note" role="status">
           {downModules.map((key) => (

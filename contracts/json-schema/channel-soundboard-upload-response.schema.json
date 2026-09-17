@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-soundboard-upload-response.schema.json",
+  "title": "Channel soundboard upload response (PRF-02 slice 7, catalogue module #6)",
+  "description": "A successful upload of a creator's own soundboard clip. NO REVIEW STATE: there is no status, moderationState, approved or reviewedAt field anywhere in this schema -- a 201 means the clip is immediately triggerable (2026-09-17 decision). Metadata only (19.1); no byte payload exists here or anywhere in this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "upload"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "upload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "displayName", "byteSize", "durationSeconds", "uploadedAt"],
+      "properties": {
+        "schemaVersion": { "const": "v1" },
+        "id": { "type": "string", "format": "uuid" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "byteSize": { "type": "integer", "minimum": 1 },
+        "durationSeconds": { "type": "integer", "minimum": 1 },
+        "uploadedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

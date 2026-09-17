@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/trigger-soundboard-play-response.schema.json",
+  "title": "Trigger soundboard play response (PRF-02 slice 7, catalogue module #6)",
+  "description": "The id of a creator-triggered soundboard play. Every trigger in this slice is the creator's own -- there is no supporter/viewer field anywhere in this schema (AUD-03 stays open). No cooldown value is applied; none is decided anywhere in this repository.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "playId"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "playId": { "type": "string", "format": "uuid" }
+  }
+}

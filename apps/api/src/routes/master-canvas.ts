@@ -28,6 +28,10 @@ import {
   projectOverlayMediaQueue,
   type MediaQueueOverlayStore,
 } from '../domain/media-queue-store.js';
+import {
+  projectOverlaySoundboardPlay,
+  type SafeSoundboardOverlayStore,
+} from '../domain/safe-soundboard-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -94,6 +98,12 @@ export async function registerMasterCanvasRoutes(
   // is undefined the new route below fails closed to 503 like every
   // other optional dependency in this file.
   overlayMediaQueue?: MediaQueueOverlayStore,
+  // PRF-02 slice 7, §6 module #6 (Safe Soundboard Alert). Appended at the
+  // end for the same reason every other slice's overlay store was: every
+  // existing positional call keeps compiling and behaving unchanged, and
+  // when it is undefined the new route below fails closed to 503 like
+  // every other optional dependency in this file.
+  overlaySafeSoundboard?: SafeSoundboardOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -437,6 +447,48 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_media_queue_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The media queue is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+  // PRF-02 slice 7, §6 module #6 (Safe Soundboard Alert) -- the overlay
+  // read. Same overlay browser-source shape as the routes above, and in
+  // this file for the same reason: it is a Master Canvas module read,
+  // not an interaction. The creator's own catalogue/upload/trigger
+  // surface is routes/safe-soundboard.ts -- an overlay browser-source
+  // token can read the current trigger and can never write one.
+  //
+  // THE RESPONSE CARRIES SEVEN FIELDS AND NOTHING ELSE, AND THE NAME IS
+  // ABOUT THE BROADCAST, NOT THE CONTENT (see migration 0143's header
+  // and the 2026-09-17 decision it implements): no viewer, supporter or
+  // session identifier exists on this path, because none exists in the
+  // schema for app_private.list_overlay_soundboard_play (migration 0143)
+  // to return. `projectOverlaySoundboardPlay` then narrows a SECOND,
+  // independent time in front of whatever the store hands up, including
+  // re-validating any `playbackUrl` as our own https origin.
+  //
+  // THE §30.3 Pro+ MODULE GATE IS NOT APPLIED HERE, AND THAT IS
+  // DELIBERATE: it lives inside app_private.soundboard_module_entitled,
+  // called from inside the SQL function rather than reimplemented, so an
+  // unentitled channel's perfectly valid token matches no row.
+  //
+  // `soundboardPlay: null` is every "nothing to paint" case at once: an
+  // unrecognised/expired/revoked/foreign token, a channel that has
+  // triggered nothing, and an unentitled (sub-Pro) channel. A MISSING
+  // bearer token is still 401.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/safe-soundboard', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'The soundboard is not available', traceId: request.id });
+    if (!overlaySafeSoundboard) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The soundboard is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const play = await overlaySafeSoundboard.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', soundboardPlay: projectOverlaySoundboardPlay(play) });
+    } catch (error) {
+      logSafeError(request, 'overlay_safe_soundboard_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The soundboard is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

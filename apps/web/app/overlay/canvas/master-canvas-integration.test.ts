@@ -15,6 +15,7 @@ import { createReactionCloudModule } from './modules/reaction-cloud-module';
 import { createLobbyStatusModule } from './modules/lobby-status-module';
 import { createGiveawayTournamentModule } from './modules/giveaway-tournament-module';
 import { createMediaQueueModule } from './modules/media-queue-module';
+import { createSafeSoundboardModule } from './modules/safe-soundboard-module';
 
 /*
  * End-to-end wiring test: the real connection, the real runtime, and both
@@ -903,6 +904,7 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   const lobbyStatusContainer = document.createElement('div');
   const giveawayTournamentContainer = document.createElement('div');
   const mediaQueueContainer = document.createElement('div');
+  const safeSoundboardContainer = document.createElement('div');
 
   const fetchGoalSnapshot = async () => null;
   const fetchVoteSnapshot = async () => null;
@@ -947,6 +949,9 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.registerModule(createMediaQueueModule({
     container: mediaQueueContainer, connection, fetchSnapshot: async () => [], reducedMotion: () => false,
   }));
+  runtime.registerModule(createSafeSoundboardModule({
+    container: safeSoundboardContainer, connection, fetchSnapshot: async () => null, reducedMotion: () => false,
+  }));
 
   runtime.start();
   runtime.setModuleEntitled('support_theater', true);
@@ -962,11 +967,12 @@ test('with all eleven modules registered (Lobby Status included): still exactly 
   runtime.setModuleEntitled('lobby_status', true);
   runtime.setModuleEntitled('giveaway_tournament_card', true);
   runtime.setModuleEntitled('media_meme_queue', true);
+  runtime.setModuleEntitled('safe_soundboard_alert', true);
   await flush();
 
-  assert.equal(fetchCalls, 1, 'thirteen entitled modules must still open exactly one transport connection — the Media / Meme Queue module adds an endpoint, never a session');
-  assert.equal(connection.getSubscriberCount(), 13, 'all thirteen modules are subscribers on the one shared connection');
-  assert.equal(scheduler.pendingFrameCount(), 1, 'all thirteen active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
+  assert.equal(fetchCalls, 1, 'fourteen entitled modules must still open exactly one transport connection — the Safe Soundboard Alert adds an endpoint, never a session');
+  assert.equal(connection.getSubscriberCount(), 14, 'all fourteen modules are subscribers on the one shared connection');
+  assert.equal(scheduler.pendingFrameCount(), 1, 'all fourteen active modules still share exactly one pending frame handle on the one rAF scheduler — the countdown ticks on THIS loop, never on a timer of its own');
 });
 
 test('PRF-02: the Lobby Status card paints on the SAME shared connection and rAF loop, and the whole canvas keeps one of each', async () => {

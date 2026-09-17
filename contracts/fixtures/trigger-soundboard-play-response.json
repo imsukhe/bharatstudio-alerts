@@ -1,0 +1,5 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/trigger-soundboard-play-response.schema.json",
+  "schemaVersion": "v1",
+  "playId": "00000000-0000-4000-8000-000000005c91"
+}

@@ -63,6 +63,15 @@ export type RuntimeConfig = {
   // budget against a real broadcast.
   mediaQueueMaxItemDurationMs?: number;
   mediaQueueMaxItemsPerChannel?: number;
+  // PRF-02 slice 7, §6 module #6 (Safe Soundboard Alert). CONFIGURED BUT
+  // UNSET: no decided per-clip duration or file-size cap exists anywhere
+  // in this repository. Unset means the upload path is INERT, never
+  // "unlimited" -- see migration 0143's header.
+  soundboardUploadMaxDurationSeconds?: number;
+  soundboardUploadMaxByteSize?: number;
+  // §19.1: GCS/CDN base URL. Unset in every environment today -- no CDN
+  // has been provisioned or decided.
+  mediaCdnBaseUrl?: string;
   notificationTokenEncryptionKey?: string;
   publicPaymentTurnstileRequired?: boolean;
   publicPaymentTurnstileSecret?: string;
@@ -222,6 +231,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   // fallback here and there must not be one.
   const mediaQueueMaxItemDurationMs = optionalPositiveInt('MEDIA_QUEUE_MAX_ITEM_DURATION_MS');
   const mediaQueueMaxItemsPerChannel = optionalPositiveInt('MEDIA_QUEUE_MAX_ITEMS_PER_CHANNEL');
+  // PRF-02 slice 7, §6 module #6 (Safe Soundboard Alert). CONFIGURED BUT
+  // UNSET, on purpose: no decided per-clip duration or file-size cap
+  // exists anywhere in this repository (see migration 0143's header).
+  // Unset means the upload path is INERT, never "unlimited" -- there is
+  // no `??` fallback here and there must not be one.
+  const soundboardUploadMaxDurationSeconds = optionalPositiveInt('SOUNDBOARD_UPLOAD_MAX_DURATION_SECONDS');
+  const soundboardUploadMaxByteSize = optionalPositiveInt('SOUNDBOARD_UPLOAD_MAX_BYTES');
   // RT-11.4: a configured timeout below the path's own §19.4 budget would
   // cancel a query that is still within budget — reject it at startup
   // rather than silently degrading correctness for compliant reads. 200ms
@@ -240,6 +256,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       if (new URL(sarvamTtsEndpoint).protocol !== 'https:') throw new Error('not https');
     } catch {
       throw new Error('SARVAM_TTS_ENDPOINT must be an HTTPS URL');
+    }
+  }
+  // §19.1: GCS/CDN, deployment-time config, never invented. Unset in
+  // every environment today (no CDN base has been provisioned or
+  // decided) -- the soundboard overlay store resolves a null
+  // `playbackUrl` until this is set, and first-party catalogue clips are
+  // schema-ready to play the instant it is.
+  const mediaCdnBaseUrl = env.MEDIA_CDN_BASE_URL;
+  if (mediaCdnBaseUrl) {
+    try {
+      if (new URL(mediaCdnBaseUrl).protocol !== 'https:') throw new Error('not https');
+    } catch {
+      throw new Error('MEDIA_CDN_BASE_URL must be an HTTPS URL');
     }
   }
   const resendApiKey = env.RESEND_API_KEY;
@@ -269,6 +298,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     reactionCloudSampleMax,
     mediaQueueMaxItemDurationMs,
     mediaQueueMaxItemsPerChannel,
+    soundboardUploadMaxDurationSeconds,
+    soundboardUploadMaxByteSize,
+    mediaCdnBaseUrl,
     googleClientId,
     paymentEnvironment,
     paymentServiceOrigin,

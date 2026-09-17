@@ -103,12 +103,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # measurement:test drives scripts/measurement/run_local_measurement.py,
+      # which reads deployment/v1/measurement-manifest.template.json from the
+      # bharatstudio-infra repository. That is a SIBLING checkout locally and
+      # CI gets no such thing, so the runner died on a FileNotFoundError and
+      # the step had never once passed here. actions/checkout cannot write
+      # above the workspace, so it lands in a subdirectory and the runner is
+      # pointed at it explicitly.
+      - uses: actions/checkout@v4
+        with:
+          repository: imsukhe/bharatstudio-infra
+          path: .bharatstudio-infra
       - run: pnpm install --frozen-lockfile
       - name: alerts-api test
         run: pnpm --filter @bharatstudio/alerts-api test
       - name: alerts-web test
         run: pnpm --filter @bharatstudio/alerts-web test
       - name: measurement:test
+        env:
+          BHARATSTUDIO_INFRA_DIR: ${{ github.workspace }}/.bharatstudio-infra
         run: pnpm measurement:test
 
   # pnpm build (tsc for the API, next build for the web app)

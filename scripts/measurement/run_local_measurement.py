@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-INFRA = ROOT.parent / "bharatstudio-infra"
+# The infra repository is a SIBLING checkout, which CI does not get for free:
+# GitHub Actions checks out only this repository, so INFRA resolved to a path
+# that did not exist and the runner died with an unhandled FileNotFoundError.
+# A tool whose entire purpose is truthful "blocked" reporting must not crash
+# when a prerequisite is missing -- it must say which one. The env override
+# lets CI (and anyone with a non-sibling layout) point at a real checkout.
+INFRA = Path(os.environ["BHARATSTUDIO_INFRA_DIR"]).resolve() if os.environ.get("BHARATSTUDIO_INFRA_DIR") else ROOT.parent / "bharatstudio-infra"
 ALLOWED_STATUS = {"pass", "smoke-pass", "blocked", "not-run", "fail"}
 
 def validate_artifact(artifact: dict) -> list[str]:
@@ -99,7 +105,19 @@ def _execute(options=None, deps=None) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
     # Generate an ephemeral executable manifest with loopback-only values; it is
     # never persisted or applied to cloud infrastructure.
-    template = json.loads((INFRA / "deployment/v1/measurement-manifest.template.json").read_text())
+    manifest_template = INFRA / "deployment/v1/measurement-manifest.template.json"
+    if not manifest_template.is_file():
+        reason = (f"measurement manifest template not found at {manifest_template}; "
+                  "the bharatstudio-infra checkout is missing "
+                  "(set BHARATSTUDIO_INFRA_DIR or place it beside this repository)")
+        blocked = _blocked_artifact(reason)
+        payload = json.dumps(blocked, sort_keys=True, separators=(",", ":")) + "\n"
+        if artifact_target:
+            fd, tmp = tempfile.mkstemp(prefix=".measurement-", dir=artifact_target.parent)
+            os.write(fd, payload.encode()); os.close(fd); os.replace(tmp, artifact_target)
+        print(payload, end="")
+        return 2
+    template = json.loads(manifest_template.read_text())
     executable = json.loads(json.dumps(template)); executable["deploymentState"] = "local-executable"; executable["region"] = "local-loopback"; executable["project"] = "local-project"; executable["domain"] = "local-loopback"; executable["capacity"] = {"maxInstances": 1, "concurrency": 10, "budget": "local-smoke"}
     port = 55441 + (os.getpid() % 1000)
     executable["database"].update({"url":f"postgres://postgres:test@127.0.0.1:{port}/postgres", "directListener":f"postgres://postgres:test@127.0.0.1:{port}/postgres", "maxRows":100000, "indexes":"local-schema-smoke"})

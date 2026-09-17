@@ -79,6 +79,12 @@ import { createSqlCapabilityStore } from './db/capability-store.js';
 // surface (propose/approve/reject/kill/revert), so it takes the MAIN
 // pool `sql`, not derivedReadSql -- see db/capability-change-management-store.ts's own header.
 import { createSqlCapabilityChangeManagementStore } from './db/capability-change-management-store.js';
+// CTL registry spec alignment (migration 0153): the §20.2 fields --
+// single-admin, immediate write on the MAIN pool (mirrors
+// staff_kill_capability_now / staff_revert_capability_registry_entry's
+// own posture), not the two-staff-approved staged workflow above -- see
+// db/capability-registry-admin-store.ts's own header.
+import { createSqlCapabilityRegistryAdminStore } from './db/capability-registry-admin-store.js';
 // SAF phase 1 (migration 0151): moderation pipeline spine, corpus
 // management only. ONE file, TWO pools -- the list read is wired to
 // derivedReadSql (RT-10/RT-11), create/remove stay on the main `sql`
@@ -356,6 +362,7 @@ const app = await buildApp(config, {
   ingestFailures: sql ? createSqlIngestFailureStore(sql) : undefined,
   staffCreatorPackReview: sql ? createSqlStaffCreatorPackReviewStore(sql) : undefined,
   capabilityChangeManagement: sql ? createSqlCapabilityChangeManagementStore(sql) : undefined,
+  capabilityRegistryAdmin: sql ? createSqlCapabilityRegistryAdminStore(sql) : undefined,
   assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,
   derivedReadSql,

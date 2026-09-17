@@ -106,7 +106,10 @@ on conflict (channel_id, user_id) do nothing;
 --
 --   ...6b00-...6bff                           saf_pipeline_spine OWN fixture
 --   ...6c00-...6cff                           ctl_change_management OWN fixture (self-contained)
+--   ...6d00-...6dff                           ctl_registry_spec_alignment OWN fixture (self-contained) -- pre-assigned to this lane by the coordinator, not independently verified free
 --   ...6e00-...6eff                           saf_url_ssml_pii OWN fixture (staff-free: owner/admin/operator/moderator/viewer on channel A, owner on channel B) -- pre-assigned to this lane by the coordinator, concurrent with a sibling lane owning migration 0153 and (presumably) ...6d00-...6dff
 --
 -- Next free block for a new test's own fixture: ...6f00 upward (verify by
+-- grep regardless of what this note says -- two concurrent lanes each
+-- verified ...5f00 free against the same base and both took it).
 -- grep regardless of what this note says).

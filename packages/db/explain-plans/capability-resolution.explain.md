@@ -106,3 +106,67 @@ Execution Time: 0.046 ms
 ```
 
 (`capability_registry_audit` carries only its own `capability_registry_audit_key_idx` plus its primary key; it is not read by either code path above and is omitted here.)
+
+## Addendum, 2026-09-17 — migration 0153's allowlist stage
+
+Migration `0153` widened `app_private.resolve_channel_capabilities`'s cache-miss recompute (the
+same function captured above, body-only `CREATE OR REPLACE` — its wrapper,
+`app_private.get_channel_capabilities`, is untouched, so the hash `check-plans.mjs` verifies
+against that wrapper's own body is unaffected and this addendum is not independently hash-checked,
+consistent with the rest of this artifact's own documented scope) with one new `CASE` branch: a
+per-row `EXISTS` check against the new `public.capability_allowlist` table, evaluated after
+`capability_denylist` and ahead of the rollout-bucket check. Re-captured against a fresh
+`postgres:16-alpine` container with the same three-seeded-capability shape as above plus one new
+capability (`rt12_capture_allowlisted`, `min_tier` studio, channel tier pro) explicitly allowlisted
+for the seeded channel:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT * FROM app_private.get_channel_capabilities('00000000-0000-4000-8000-000000009998'::uuid);
+```
+
+Result: `resolved = {"rt12_capture_seat": false, "rt12_capture_widget": true,
+"rt12_capture_allowlisted": true}` — `rt12_capture_allowlisted` resolves `true` despite the
+channel's `pro` tier failing its `studio` `min_tier`, proving the allowlist stage decides ahead of
+tier in a real captured plan, not only in the SQL test suite.
+
+Plan shape: the recompute aggregate gains exactly one more `SubPlan` — a `Seq Scan on
+capability_allowlist a` with the identical `Filter: (capability_key = reg.capability_key AND
+channel_id = ...)` shape the existing `capability_denylist`/`capability_overrides` SubPlans already
+have, and the identical `loops=<capability count>` per-row correlation. `capability_allowlist_pkey`
+and `capability_allowlist_channel_idx` both exist (confirmed via `pg_indexes`, same as the other
+CTL-02 support tables) and are declined by the planner at this seed size (three capabilities, one
+allowlist row) for the same near-empty-table reason every other scan in this artifact already
+documents. No change to the cache-HIT path's shape at all — that path (`Seq Scan on
+capability_resolutions`) never touches `capability_registry`, `capability_denylist`,
+`capability_overrides` OR `capability_allowlist`, by construction, unaffected by this migration.
+This capture is the same plan-shape-change-detector caveat as the rest of this artifact: not
+production-scale evidence, not a §19.4/RT-07 measurement.
+
+```
+Aggregate  (cost=4.92..4.93 rows=1 width=32) (actual time=0.031..0.031 rows=1 loops=1)
+  Buffers: shared hit=4
+  ->  Seq Scan on capability_registry reg  (cost=0.00..1.03 rows=3 width=32) (actual time=0.002..0.002 rows=3 loops=1)
+        Buffers: shared hit=1
+  SubPlan 1
+    ->  Seq Scan on capability_denylist d  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=3)
+          Filter: ((capability_key = reg.capability_key) AND (channel_id = '00000000-0000-4000-8000-000000009998'::uuid))
+  SubPlan 3
+    ->  Seq Scan on capability_allowlist a  (cost=0.00..1.01 rows=1 width=0) (actual time=0.001..0.001 rows=0 loops=3)
+          Filter: ((capability_key = reg.capability_key) AND (channel_id = '00000000-0000-4000-8000-000000009998'::uuid))
+          Rows Removed by Filter: 1
+          Buffers: shared hit=3
+  SubPlan 5
+    ->  Seq Scan on capability_overrides o  (cost=0.00..0.00 rows=1 width=1) (actual time=0.000..0.000 rows=0 loops=2)
+          Filter: ((capability_key = reg.capability_key) AND (channel_id = '00000000-0000-4000-8000-000000009998'::uuid))
+Planning:
+  Buffers: shared hit=6
+Planning Time: 0.102 ms
+Execution Time: 0.046 ms
+```
+
+(SubPlan numbering skips 2 and 4 for the same reason the original capture's own note explains:
+`app_private.capability_rollout_bucket` scalar calls consume SubPlan slots without appearing as
+their own scan node.)
+
+captured_at: 2026-09-17T00:00:00Z · postgres_version: postgres:16-alpine (PostgreSQL 16.14)

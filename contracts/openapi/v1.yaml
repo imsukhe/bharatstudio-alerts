@@ -2516,6 +2516,78 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/entries:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: listCapabilityRegistryEntries
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL registry spec alignment (migration 0153), platform staff only. Every capability_registry
+        row's full §20.2 field set - kind, limits, beta, marketingVisible, marketingLabel,
+        marketingBlurb - alongside migration 0149's original six fields. This is a DIFFERENT surface
+        from /v1/admin/capability-registry/changes (migration 0152's two-staff-approved staged
+        workflow): see CapabilityRegistryEntry's own description for why the six new fields are not
+        routed through that workflow in this migration.
+      responses:
+        '200':
+          description: Every registered capability's full row.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityRegistryEntryListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/admin/capability-registry/entries/{capabilityKey}:
+    get:
+      tags: [CapabilityChangeManagement]
+      operationId: getCapabilityRegistryEntry
+      security: [{ bearerAuth: [] }]
+      description: CTL registry spec alignment (migration 0153), platform staff only. One capability's full §20.2 row.
+      parameters:
+        - $ref: '#/components/parameters/CapabilityKey'
+      responses:
+        '200':
+          description: The capability's full row.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityRegistryEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [CapabilityChangeManagement]
+      operationId: setCapabilityRegistryEntry
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL registry spec alignment (migration 0153), platform staff only. Sets a capability's
+        COMPLETE §20.2 row - every field is required every call, the same "supply the whole desired
+        state" idiom migration 0149's own staff_upsert_capability_registry_entry already established;
+        nothing is silently preserved by omission. Immediate, single-admin, no approval round - the
+        same posture the kill and revert endpoints above already use - but still versioned and
+        audited through the registry's own table-level triggers (app_private.
+        staff_set_capability_registry_entry, migration 0153). `kind` accepts only §20.2's own enum
+        (widget | module | feature | hub_lane | lobby_mode | ai_feature) - it does NOT contain
+        marketing_section, which CTL-12 needs; see migration 0153's own header for why that is
+        reported as a blocker rather than closed here. `marketingVisible: true` requires both
+        marketingLabel and marketingBlurb to be non-null (400 otherwise).
+      parameters:
+        - $ref: '#/components/parameters/CapabilityKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetCapabilityRegistryEntryRequest' }
+      responses:
+        '200':
+          description: The capability's row after this write.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityRegistryEntry' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/channels/{channelId}/safety/corpus-terms:
     get:
       tags: [Moderation]
@@ -3848,6 +3920,89 @@ components:
       additionalProperties: false
       properties:
         reason: { type: string, maxLength: 500 }
+    CapabilityKind:
+      type: string
+      description: >-
+        §20.2's capability taxonomy (migration 0153) - NOT the same concept as proposedCapacityClass/
+        capacityClass (§12.6.1's closed active-capacity whitelist, CTL-14). Does not contain
+        marketing_section, which CTL-12 needs - see CapabilityRegistryEntry's own description.
+      enum: [widget, module, feature, hub_lane, lobby_mode, ai_feature]
+    CapabilityRegistryEntry:
+      type: object
+      additionalProperties: false
+      required: [
+        schemaVersion, capabilityKey, capacityClass, description, killSwitch, rolloutPercentage,
+        minTier, kind, limits, beta, marketingVisible, marketingLabel, marketingBlurb, version, updatedAt
+      ]
+      description: >-
+        CTL registry spec alignment (migration 0153): the full FULL-PRODUCT-DEFINITION.md §20.2 row
+        shape - migration 0149's original six fields (capacityClass, description, killSwitch,
+        rolloutPercentage, minTier - capabilityKey and version were already part of 0149's own
+        shape) plus the six §20.2 fields 0149 was missing (kind, limits, beta, marketingVisible,
+        marketingLabel, marketingBlurb). A DIFFERENT surface from CapabilityChangeRequest (migration
+        0152's two-staff-approved staged workflow): the six new fields are settable only through PUT
+        on this same resource (app_private.staff_set_capability_registry_entry, migration 0153), an
+        immediate single-admin write mirroring killCapability/revertCapability's own posture, not
+        staged/approved through /v1/admin/capability-registry/changes in this migration - see
+        migration 0153's own header for exactly why (staff_get_capability_change/
+        staff_list_capability_changes carry an exact-output-column database test that a widened
+        CapabilityChangeRequest projection would break). `limits` ships empty ({}) until a future
+        admin action sets a real value (§20.1) - no numeric limit is invented anywhere in this
+        migration. `createdAt`/`updatedBy` are present on a read (GET) and absent on the row a PUT
+        returns, mirroring app_private.staff_upsert_capability_registry_entry's own (0149) narrower
+        write-return projection.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        capabilityKey: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+        capacityClass:
+          type: string
+          enum: [active_connector, active_widget, ai_usage, media_upload, custom_asset, team_seat, automation_volume, master_canvas_module]
+        description: { type: string, minLength: 1, maxLength: 500 }
+        killSwitch: { type: boolean }
+        rolloutPercentage: { type: integer, minimum: 0, maximum: 100 }
+        minTier: { oneOf: [{ type: 'null' }, { type: string, enum: [free, pro, creator, studio] }] }
+        kind: { oneOf: [{ type: 'null' }, { $ref: '#/components/schemas/CapabilityKind' }] }
+        limits: { type: object, description: 'jsonb, e.g. {"max_instances": 3, "max_duration_ms": 8000} - ships {} until a staff action sets a real value.' }
+        beta: { type: boolean }
+        marketingVisible: { type: boolean }
+        marketingLabel: { oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }] }
+        marketingBlurb: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
+        version: { type: integer, minimum: 1 }
+        updatedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedBy: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+    CapabilityRegistryEntryListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, entries]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/CapabilityRegistryEntry' }
+    SetCapabilityRegistryEntryRequest:
+      type: object
+      additionalProperties: false
+      required: [capacityClass, description, killSwitch, rolloutPercentage, minTier, kind, limits, beta, marketingVisible, marketingLabel, marketingBlurb]
+      description: >-
+        The COMPLETE desired state - every field is required on every call, matching migration
+        0149's own staff_upsert_capability_registry_entry idiom. marketingVisible: true requires
+        both marketingLabel and marketingBlurb to be non-null (400 otherwise, the same structural
+        guard migration 0153's own database check constraint enforces).
+      properties:
+        capacityClass:
+          type: string
+          enum: [active_connector, active_widget, ai_usage, media_upload, custom_asset, team_seat, automation_volume, master_canvas_module]
+        description: { type: string, minLength: 1, maxLength: 500 }
+        killSwitch: { type: boolean }
+        rolloutPercentage: { type: integer, minimum: 0, maximum: 100 }
+        minTier: { oneOf: [{ type: 'null' }, { type: string, enum: [free, pro, creator, studio] }] }
+        kind: { oneOf: [{ type: 'null' }, { $ref: '#/components/schemas/CapabilityKind' }] }
+        limits: { type: object }
+        beta: { type: boolean }
+        marketingVisible: { type: boolean }
+        marketingLabel: { oneOf: [{ type: 'null' }, { type: string, maxLength: 200 }] }
+        marketingBlurb: { oneOf: [{ type: 'null' }, { type: string, maxLength: 500 }] }
     SafetyDecisionValue:
       type: string
       description: >-

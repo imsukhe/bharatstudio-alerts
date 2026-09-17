@@ -126,6 +126,14 @@ import { registerCapabilityRoutes } from './routes/capabilities.js';
 // registrar, same posture as CTL phase 1's own capabilities.ts.
 import type { CapabilityChangeManagementStore } from './domain/capability-change-management.js';
 import { registerCapabilityChangeManagementRoutes } from './routes/capability-change-management.js';
+// CTL registry spec alignment (migration 0153): the §20.2 fields
+// (kind/limits/beta/marketing_visible/marketing_label/marketing_blurb)
+// 0149's own field set was missing. A single-admin, immediate write --
+// NOT routed through 0152's two-staff-approved staged workflow, see
+// migration 0153's own header and domain/capability-registry-admin.ts
+// for why. Its own file, its own registrar.
+import type { CapabilityRegistryAdminStore } from './domain/capability-registry-admin.js';
+import { registerCapabilityRegistryAdminRoutes } from './routes/capability-registry-admin.js';
 // SAF phase 1 (migration 0151): the moderation pipeline spine's only
 // phase-1 route -- corpus management (list/add/remove a term in THIS
 // channel's own corpus). Its own file, not folded into any overlay
@@ -272,6 +280,10 @@ export type AppDependencies = {
   // CTL phase 2, Lane A (migration 0152). Platform-staff governance
   // over the same registry -- staged changes, approvals, kill, revert.
   capabilityChangeManagement?: CapabilityChangeManagementStore;
+  // CTL registry spec alignment (migration 0153). Single-admin, immediate
+  // §20.2 field writes -- see the import site above for why this is a
+  // separate surface from capabilityChangeManagement.
+  capabilityRegistryAdmin?: CapabilityRegistryAdminStore;
   // SAF phase 1 (migration 0151). Corpus management only -- the pipeline
   // itself (domain/safety-pipeline.ts) is not wired to any dependency
   // here, because nothing calls it live yet.
@@ -511,6 +523,7 @@ export async function buildApp(
   await registerCanvasLayoutRoutes(app, dependencies.sessions, dependencies.canvasLayout, dependencies.account);
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
   await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
+  await registerCapabilityRegistryAdminRoutes(app, dependencies.sessions, dependencies.capabilityRegistryAdmin, dependencies.admin);
   await registerSafetyCorpusRoutes(app, dependencies.sessions, dependencies.safetyCorpus);
   await registerUrlDomainRuleRoutes(app, dependencies.sessions, dependencies.safetyDomainRules);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);

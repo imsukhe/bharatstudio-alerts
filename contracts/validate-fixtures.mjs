@@ -46,6 +46,8 @@ const fixtureToSchema = {
   'channel-sponsor-card-response.json': 'channel-sponsor-card-response.schema.json',
   'public-reaction-send-response.json': 'public-reaction-send-response.schema.json',
   'channel-safe-mode-response.json': 'channel-safe-mode-response.schema.json',
+  'channel-qr-smart-card-response.json': 'channel-qr-smart-card-response.schema.json',
+  'overlay-qr-smart-card-response.json': 'overlay-qr-smart-card-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
   'payment-webhook-delivery.json': 'payment-webhook-delivery.schema.json',
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',

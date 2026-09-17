@@ -36,6 +36,10 @@ import {
   projectOverlaySponsorCard,
   type SponsorCardOverlayStore,
 } from '../domain/sponsor-card-store.js';
+import {
+  projectOverlayQrSmartCard,
+  type QrSmartCardOverlayStore,
+} from '../domain/qr-smart-card-store.js';
 import { logSafeError } from '../observability/safe-log.js';
 
 const uuid = { type: 'string', format: 'uuid' } as const;
@@ -114,6 +118,12 @@ export async function registerMasterCanvasRoutes(
   // when it is undefined the new route below fails closed to 503 like
   // every other optional dependency in this file.
   overlaySponsorCard?: SponsorCardOverlayStore,
+  // PRF-02 slice 7, §6 module #10 (QR Smart Card). Appended at the end
+  // for the same reason every dependency above was: every existing
+  // positional call keeps compiling and behaving unchanged, and when it
+  // is undefined the new route below fails closed to 503 like every
+  // other optional dependency in this file.
+  overlayQrSmartCard?: QrSmartCardOverlayStore,
 ): Promise<void> {
   const auth = requireAuth(sessions);
   const termsAuth = requireAuthAndTerms(sessions, account);
@@ -544,6 +554,62 @@ export async function registerMasterCanvasRoutes(
     } catch (error) {
       logSafeError(request, 'overlay_sponsor_card_read_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The sponsor card is temporarily unavailable', traceId: request.id, retryable: true });
+    }
+  });
+  // PRF-02 slice 7, §6 module #10 (QR Smart Card) -- the overlay read.
+  // Same overlay browser-source shape as the routes above, and in this
+  // file for the same reason every other module's overlay read is: it is
+  // a Master Canvas module read, not an interaction, and this file
+  // already owns the bearer-token helper and the
+  // master_canvas_store_unavailable envelope. The creator's own
+  // destination/label/toggle read-writes are a separate,
+  // session-authenticated surface (routes/qr-smart-card.ts) -- an
+  // overlay browser-source token can read the enabled card and can never
+  // change it.
+  //
+  // THE RESPONSE CARRIES TWO STRINGS AND NOTHING ELSE. Owner decision,
+  // 2026-09-17 (reviews/2026-09-17-remaining-eight-modules-and-youtube-
+  // v1-amendment.md Part 1 §2): "The creator sets one destination and
+  // one label. The card shows or hides on a single toggle. That is the
+  // entire feature." app_private.list_overlay_qr_smart_card (migration
+  // 0144) returns exactly `destination text, label text`, so no scan
+  // count, view count, impression count, exposure count, card id or
+  // timestamp exists on this path at all -- because the function has no
+  // such column to return. projectOverlayQrSmartCard() then narrows a
+  // SECOND, independent time in front of whatever the store hands up, so
+  // the guarantee does not rest on a single layer.
+  //
+  // THE DESTINATION IS DATA, NEVER SOMETHING THIS SERVER OR THE CANVAS
+  // FETCHES (§9.1.1). It crosses this boundary as an ordinary JSON string
+  // field, exactly like `label` -- there is no redirect, no server-side
+  // fetch of it, and the client renders it as a first-party-generated QR
+  // code image (apps/web/app/overlay/canvas/modules/
+  // qr-smart-card-logic.ts), never a link the runtime navigates to or
+  // embeds.
+  //
+  // THE TOGGLE IS NOT A SEPARATE FIELD HERE, AND THAT IS DELIBERATE. The
+  // function's own `where card.is_enabled` predicate (migration 0144)
+  // means a row is returned ONLY when the card is on -- so a disabled
+  // card and a channel that has never configured one both answer with
+  // the identical `qrSmartCard: null`, exactly like an unrecognised,
+  // expired, revoked or foreign token. All four mean "paint nothing" to
+  // the card. A MISSING bearer token is still 401: that is a malformed
+  // request, not an empty answer.
+  app.get<{ Params: { overlayId: string }; Headers: { authorization?: string } }>('/v1/overlay-widgets/:overlayId/qr-smart-card', {
+    schema: {
+      params: overlayParams,
+      headers: { type: 'object', properties: { authorization: { type: 'string', maxLength: 512 } } },
+    },
+  }, async (request, reply) => {
+    const token = bearerToken(request.headers.authorization);
+    if (!token) return reply.code(401).send({ schemaVersion: 'v1', errorCode: 'overlay_unauthorized', message: 'The QR smart card is not available', traceId: request.id });
+    if (!overlayQrSmartCard) return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The QR smart card is temporarily unavailable', traceId: request.id, retryable: true });
+    try {
+      const card = await overlayQrSmartCard.getForOverlay(token, request.params.overlayId);
+      return reply.code(200).send({ schemaVersion: 'v1', qrSmartCard: projectOverlayQrSmartCard(card) });
+    } catch (error) {
+      logSafeError(request, 'overlay_qr_smart_card_read_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'master_canvas_store_unavailable', message: 'The QR smart card is temporarily unavailable', traceId: request.id, retryable: true });
     }
   });
 }

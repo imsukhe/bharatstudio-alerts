@@ -2059,6 +2059,122 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/overlay-widgets/{overlayId}/qr-smart-card:
+    get:
+      tags: [Overlay]
+      operationId: getOverlayQrSmartCard
+      summary: The channel's enabled QR smart card destination and label, or null.
+      description: >-
+        Master Canvas module #10 (QR Smart Card). Owner decision, 2026-09-17: "The creator
+        sets one destination and one label. The card shows or hides on a single toggle. That
+        is the entire feature." No scene profile, no CMP-17 (Clutch Mode) dependency, no
+        destination allow-list, no link shortening, and no scan, view, impression or exposure
+        counter of any kind - not authorised, and not present in the schema behind this read.
+
+        Aggregate-free by construction: the returned column set is two strings, destination
+        and label. No card id, no timestamp and - pointedly - no enabled flag: the function's
+        own `where is_enabled` predicate means a row is returned ONLY when the card is on, so
+        the row's presence already carries the toggle's true state. A disabled card and a
+        channel that has never configured one answer with the identical null, exactly like an
+        unrecognised, expired, revoked or foreign token.
+
+        The destination is DATA, never a fetch target (9.1.1): it is rendered client-side as a
+        first-party-generated QR code image, never a link the Master Canvas runtime fetches,
+        navigates to or embeds.
+
+        Bounded to the channel's current card and never a history (12.7). Not tier-gated:
+        qr_smart_card is one of 0131's own twenty catalogue module keys, and the 30.3 render
+        cap is the only gate that applies.
+      security: [{ overlayToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OverlayId'
+      responses:
+        '200':
+          description: Token-scoped QR smart card destination and label for this overlay, or null.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverlayQrSmartCardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/qr-smart-card:
+    get:
+      tags: [QR smart card]
+      operationId: getChannelQrSmartCard
+      security: [{ bearerAuth: [] }]
+      description: >-
+        The channel's current QR smart card, or null when none has been configured. Available
+        at every tier: storing, viewing and exporting a durable creator record is never
+        tier-gated (12.6). The 30.3 Master Canvas module cap governs only whether the Canvas
+        renders the card.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's current QR smart card, or null when none is configured.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelQrSmartCardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    put:
+      tags: [QR smart card]
+      operationId: setChannelQrSmartCard
+      summary: Set the destination and label. Creates the card on first call, updates it after.
+      description: >-
+        Owner/admin only. Upsert semantics: creates the card (with the toggle defaulted off)
+        on the first call, and updates destination/label on every later call without touching
+        the toggle - two independent writes for two independent creator decisions. The body
+        carries destination and label and nothing else: a request carrying an allow-list, a
+        short-link flag, a scan count or a scene id is rejected with 400, because this module
+        holds no such concept. Both fields are bounded 1-120 characters, reusing the
+        already-decided challenge-title bound (migration 0109 line 67) rather than a fresh
+        number chosen for a URL.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertQrSmartCardRequest' }
+      responses:
+        '200':
+          description: The card after the write.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelQrSmartCardResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/qr-smart-card/enabled:
+    put:
+      tags: [QR smart card]
+      operationId: setChannelQrSmartCardEnabled
+      summary: The single toggle - show or hide the card on the Master Canvas.
+      description: >-
+        Owner/admin only. Idempotent: the body carries the value rather than requesting a
+        toggle, the same shape /v1/channels/{channelId}/safe-mode already uses. Never creates
+        a card - a channel that has never set a destination/label has nothing to toggle, and
+        this returns 404 rather than implicitly creating an empty enabled card.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetQrSmartCardEnabledRequest' }
+      responses:
+        '200':
+          description: The card after the toggle.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelQrSmartCardResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-lottie/{overlayId}:
     get:
       tags: [Overlay]
@@ -2910,6 +3026,83 @@ components:
         silently turned safe mode off and released a channel's held alert flow.
       properties:
         enabled: { enum: [true, false] }
+    QrSmartCard:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, destination, label, isEnabled, createdAt, updatedAt]
+      description: >-
+        Creator-facing QR smart card. One destination, one label, one toggle - owner decision,
+        2026-09-17: "That is the entire feature." No scene profile, no allow-list, no
+        short-link, no scan/view/impression/exposure counter field exists on this type, and
+        none may be added without a fresh owner decision overturning this one.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        destination:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: >-
+            Rendered client-side as a first-party QR code image. Data, never a link the Master
+            Canvas runtime fetches, navigates to or embeds (9.1.1).
+        label: { type: string, minLength: 1, maxLength: 120 }
+        isEnabled:
+          type: boolean
+          description: The single toggle. Whether the card shows on the Master Canvas.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChannelQrSmartCardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, card]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        card:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/QrSmartCard'
+    UpsertQrSmartCardRequest:
+      type: object
+      additionalProperties: false
+      required: [destination, label]
+      description: >-
+        The destination and label, and nothing else. additionalProperties false is
+        load-bearing: a body carrying an allow-list, a short-link flag, a scan count or a
+        scene id is rejected with 400 before the store is ever called - this module holds no
+        such concept. Both bounds are migration 0109 line 67's already-decided
+        challenge-title bound, reused rather than a fresh number chosen for a URL. Never
+        touches the toggle; use the /enabled endpoint for that.
+      properties:
+        destination: { type: string, minLength: 1, maxLength: 120 }
+        label: { type: string, minLength: 1, maxLength: 120 }
+    SetQrSmartCardEnabledRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      description: The single toggle's value, not a toggle request - the same shape ChannelSafeModeRequest uses.
+      properties:
+        enabled: { enum: [true, false] }
+    OverlayQrSmartCard:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, destination, label]
+      description: >-
+        Overlay projection: two fields, 12.7-bounded. No card id, no timestamp and no enabled
+        flag - the row's presence already carries the toggle's true state, because the read it
+        comes from returns a row only when the card is on.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        destination: { type: string, minLength: 1, maxLength: 120 }
+        label: { type: string, minLength: 1, maxLength: 120 }
+    OverlayQrSmartCardResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, qrSmartCard]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        qrSmartCard:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/OverlayQrSmartCard'
     OverlayModeratorStatusResponse:
       type: object
       additionalProperties: false

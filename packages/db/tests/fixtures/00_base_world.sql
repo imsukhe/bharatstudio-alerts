@@ -87,7 +87,21 @@ on conflict (channel_id, user_id) do nothing;
 --   ...6600-...66ff                           prf02_slice7_qr_smart_card OWN fixture (overlay sessions)
 --   ...5e00-...5eff                           prf02_slice7_vertical_layout OWN fixture (channels, memberships, entitlement versions, overlay sessions)
 --   ...5f00-...5fff                           ctl_capability_registry OWN fixture (staff user, channels, memberships, entitlement versions)
+--   ...6a00-...6aff                           goa_completion_latch OWN fixture (payments, refunds; reuses base_world channel/users)
 --
--- Next free block for a new test's own fixture: ...1720 upward (that
--- range itself is heavily used by other files already -- verify
--- freeness by grep before use regardless of what this note says).
+-- CORRECTION 2026-09-17: the note below previously said "...1720 upward",
+-- but ...1720-...1747 were already in use by
+-- l04_l14_anonymous_payment_identity.sql and
+-- l16d_public_paid_vote_catalogue.sql. Grep the literal suffix before
+-- trusting this note; that grep is what caught the collision.
+--
+-- SECOND CORRECTION, same day: ctl_capability_registry and
+-- goa_completion_latch were built by two CONCURRENT lanes and BOTH
+-- independently verified ...5f00 free and BOTH claimed it -- each checked
+-- against the same base commit, so neither could see the other. goa was
+-- moved to ...6a00 at merge. Verifying freeness proves nothing about a
+-- lane running beside you: a coordinator must PRE-ASSIGN fixture ranges
+-- the way migration numbers are pre-assigned.
+--
+-- Next free block for a new test's own fixture: ...6b00 upward (verify by
+-- grep regardless of what this note says).

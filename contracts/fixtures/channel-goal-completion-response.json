@@ -1,0 +1,14 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-goal-completion-response.schema.json",
+  "schemaVersion": "v1",
+  "goalId": "00000000-0000-4000-8000-000000005f01",
+  "completed": true,
+  "completedAt": "2026-09-17T10:00:00.000Z",
+  "completedProgressPaise": 1000000,
+  "targetAmountPaiseAtCompletion": 1000000,
+  "progressPaise": 400000,
+  "targetAmountPaise": 1000000,
+  "lastReopenedAt": null,
+  "lastReopenedByUserId": null,
+  "lastReopenReason": null
+}

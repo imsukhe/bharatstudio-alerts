@@ -40,6 +40,16 @@ const updateBody = {
   },
 } as const;
 
+// GOA-03: reason bound reused verbatim from 0059's manual-review reason
+// (packages/db/migrations/0059_v1_l04_reconciliation_manual_review_quarantine.sql,
+// `check (char_length(reason) between 1 and 500)`).
+const reopenBody = {
+  type: 'object', additionalProperties: false, required: ['reason'],
+  properties: {
+    reason: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const;
+
 function unavailable(reply: { code: (status: number) => { send: (body: unknown) => unknown } }, traceId: string) {
   return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'goal_store_unavailable', message: 'Support goals are temporarily unavailable', traceId, retryable: true });
 }
@@ -126,6 +136,49 @@ export async function registerGoalRoutes(app: FastifyInstance, sessions?: Sessio
     } catch (error) {
       logSafeError(request, 'goal_end_failed', error);
       return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'goal_store_unavailable', message: 'The support goal could not be ended', traceId: request.id, retryable: true });
+    }
+  });
+
+  // GOA-01/GOA-02: completion read. app_private.get_channel_goal_completion
+  // (0150) opportunistically latches (writes goal_completed once,
+  // idempotently) on every read, so this is always current. A refund never
+  // un-completes a goal — see domain/goal-store.ts's GoalCompletion doc
+  // comment for what each field freezes vs. stays live.
+  app.get<{ Params: { channelId: string; goalId: string } }>('/v1/channels/:channelId/goals/:goalId/completion', {
+    preHandler: auth,
+    schema: { params: goalParams },
+  }, async (request, reply) => {
+    if (!store || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await store.getCompletion(request.auth.userId, request.params.channelId, request.params.goalId);
+      return result.outcome === 'ok'
+        ? reply.code(200).send(result.completion)
+        : reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Support goal not found', traceId: request.id });
+    } catch (error) {
+      logSafeError(request, 'goal_completion_read_failed', error);
+      return unavailable(reply, request.id);
+    }
+  });
+
+  // GOA-03: manual reopen — explicit, reason-required, audited. Owner/admin
+  // only, same role bound as /end and PATCH above.
+  app.post<{ Params: { channelId: string; goalId: string }; Body: { reason: string } }>('/v1/channels/:channelId/goals/:goalId/reopen', {
+    preHandler: termsAuth,
+    schema: { params: goalParams, body: reopenBody },
+  }, async (request, reply) => {
+    if (!store || !request.auth) return unavailable(reply, request.id);
+    try {
+      const result = await store.reopenCompletion(request.auth.userId, request.params.channelId, request.params.goalId, request.body);
+      switch (result.outcome) {
+        case 'ok': return reply.code(200).send(result.completion);
+        case 'forbidden': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Support goal not found', traceId: request.id });
+        case 'not_found': return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'Support goal not found', traceId: request.id });
+        case 'not_completed': return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'goal_not_completed', message: 'This support goal is not currently completed, so it cannot be reopened', traceId: request.id });
+        case 'invalid': return reply.code(400).send({ schemaVersion: 'v1', errorCode: 'invalid_reopen_reason', message: 'A reopen reason (1-500 characters) is required', traceId: request.id });
+      }
+    } catch (error) {
+      logSafeError(request, 'goal_completion_reopen_failed', error);
+      return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'goal_store_unavailable', message: 'The support goal could not be reopened', traceId: request.id, retryable: true });
     }
   });
 

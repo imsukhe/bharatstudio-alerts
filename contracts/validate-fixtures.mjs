@@ -21,6 +21,7 @@ const fixtureToSchema = {
   'multi-queue-delivery.json': 'multi-queue-delivery.schema.json',
   'overlay-reconnect.json': 'overlay-reconnect-case.schema.json',
   'overlay-goal-response.json': 'overlay-goal-response.schema.json',
+  'channel-goal-completion-response.json': 'channel-goal-completion-response.schema.json',
   'overlay-challenge-response.json': 'overlay-challenge-response.schema.json',
   'overlay-lottie-list-response.json': 'overlay-lottie-list-response.schema.json',
   'overlay-stream-mission-response.json': 'overlay-stream-mission-response.schema.json',
@@ -192,6 +193,38 @@ goalWithAccountData.goal.viewerAccountId = '00000000-0000-4000-8000-0000000000a1
 if (overlayGoalValidator(goalWithAccountData)) {
   failures.push('overlay-goal-response.json: account field was accepted');
 }
+// GOA-01/GOA-02/GOA-03 (0150): the goal completion read sits directly on
+// top of payments/refunds via app_private.get_channel_goal_completion, so
+// the same class of leak overlay-goal-response.json is checked for above
+// is checked here too -- neither a payment id nor a refund id may ever
+// leave this read.
+const goalCompletionSchema = await loadSchema('channel-goal-completion-response.schema.json');
+const goalCompletionValidator = ajv.getSchema(goalCompletionSchema.$id);
+const completionWithPaymentData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-goal-completion-response.json'), 'utf8'));
+completionWithPaymentData.paymentId = '00000000-0000-4000-8000-000000000d01';
+if (goalCompletionValidator(completionWithPaymentData)) {
+  failures.push('channel-goal-completion-response.json: payment field was accepted');
+}
+const completionWithRefundData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-goal-completion-response.json'), 'utf8'));
+completionWithRefundData.refundId = '00000000-0000-4000-8000-000000000d02';
+if (goalCompletionValidator(completionWithRefundData)) {
+  failures.push('channel-goal-completion-response.json: refund field was accepted');
+}
+// GOA-03: a reopen is never automatic -- a `completed: true` row can never
+// carry reopen fields, and vice versa, matching the migration's own check
+// constraint (support_goal_completions: completed rows carry no
+// reopened_at/reopened_by_user_id/reopen_reason, reopened rows require all
+// three). Proven schema-side too: a completed=true payload with a non-null
+// lastReopenedAt must still validate (the schema only forbids the pair
+// being internally inconsistent at the DB layer, not at the wire layer,
+// where lastReopened* simply reports history) -- what must NEVER validate
+// is a payload missing schemaVersion or with an out-of-bounds reason.
+const completionWithOverlongReason = JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-goal-completion-response.json'), 'utf8'));
+completionWithOverlongReason.lastReopenReason = 'x'.repeat(501);
+if (goalCompletionValidator(completionWithOverlongReason)) {
+  failures.push('channel-goal-completion-response.json: a 501-character reopen reason was accepted -- the bound is 1-500 (migration 0059, reused)');
+}
+
 const overlayChallengeSchema = await loadSchema('overlay-challenge-response.schema.json');
 const overlayChallengeValidator = ajv.getSchema(overlayChallengeSchema.$id);
 const challengeWithProviderData = JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-challenge-response.json'), 'utf8'));

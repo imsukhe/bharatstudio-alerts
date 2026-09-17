@@ -2,9 +2,13 @@ import type { Sql, TransactionSql } from 'postgres';
 import type {
   CreateGoalInput,
   CreateGoalResult,
+  GetGoalCompletionResult,
+  GoalCompletion,
   GoalStore,
   GoalWindow,
   MutateGoalResult,
+  ReopenGoalCompletionInput,
+  ReopenGoalCompletionResult,
   SupportGoal,
   UpdateGoalInput,
 } from '../domain/goal-store.js';
@@ -33,6 +37,35 @@ type GoalRow = {
   started_at: Date;
   ended_at: Date | null;
 };
+
+type GoalCompletionRow = {
+  goal_id: string;
+  completed: boolean;
+  completed_at: Date | null;
+  completed_progress_paise: string | number | null;
+  target_amount_paise_at_completion: string | number | null;
+  progress_paise: string | number;
+  target_amount_paise: string | number;
+  last_reopened_at: Date | null;
+  last_reopened_by_user_id: string | null;
+  last_reopen_reason: string | null;
+};
+
+function toGoalCompletion(row: GoalCompletionRow): GoalCompletion {
+  return {
+    schemaVersion: 'v1',
+    goalId: row.goal_id,
+    completed: row.completed,
+    completedAt: row.completed_at ? row.completed_at.toISOString() : null,
+    completedProgressPaise: row.completed_progress_paise === null ? null : Number(row.completed_progress_paise),
+    targetAmountPaiseAtCompletion: row.target_amount_paise_at_completion === null ? null : Number(row.target_amount_paise_at_completion),
+    progressPaise: Number(row.progress_paise),
+    targetAmountPaise: Number(row.target_amount_paise),
+    lastReopenedAt: row.last_reopened_at ? row.last_reopened_at.toISOString() : null,
+    lastReopenedByUserId: row.last_reopened_by_user_id,
+    lastReopenReason: row.last_reopen_reason,
+  };
+}
 
 function toSupportGoal(channelId: string, row: GoalRow): SupportGoal {
   return {
@@ -118,6 +151,46 @@ export function createSqlGoalStore(sql: Sql): GoalStore {
       }
       const ended = await this.get(userId, channelId, goalId);
       return ended ? { outcome: 'ok', goal: ended } : { outcome: 'not_found' };
+    },
+
+    // GOA-01/GOA-02: app_private.get_channel_goal_completion (0150)
+    // opportunistically latches (writes goal_completed once, idempotently)
+    // before reading, so this always returns the current, up-to-date
+    // completion state. "not found" and "not authorized" are the same
+    // P0002 answer on the SQL side (same shape 0135's end_stream_mission
+    // uses), which is why this method has no separate 'forbidden' outcome.
+    async getCompletion(userId, channelId, goalId): Promise<GetGoalCompletionResult> {
+      try {
+        const rows = await inUserTransaction(sql, userId, (tx) => tx<GoalCompletionRow[]>`
+          select goal_id, completed, completed_at, completed_progress_paise, target_amount_paise_at_completion,
+                 progress_paise, target_amount_paise, last_reopened_at, last_reopened_by_user_id, last_reopen_reason
+            from app_private.get_channel_goal_completion(${channelId}::uuid, ${goalId}::uuid)
+        `);
+        const row = rows[0];
+        return row ? { outcome: 'ok', completion: toGoalCompletion(row) } : { outcome: 'not_found' };
+      } catch (error) {
+        if (isPgErrorWithMessage(error, 'support goal not found')) return { outcome: 'not_found' };
+        throw error;
+      }
+    },
+
+    // GOA-03: manual reopen — explicit, reason-required, audited.
+    // app_private.reopen_support_goal_completion (0150) never fires as a
+    // side effect of anything else; this is the only call site.
+    async reopenCompletion(userId, channelId, goalId, input: ReopenGoalCompletionInput): Promise<ReopenGoalCompletionResult> {
+      try {
+        await inUserTransaction(sql, userId, (tx) => tx`
+          select app_private.reopen_support_goal_completion(${channelId}::uuid, ${goalId}::uuid, ${input.reason})
+        `);
+      } catch (error) {
+        if (isPgErrorWithMessage(error, 'not authorized')) return { outcome: 'forbidden' };
+        if (isPgErrorWithMessage(error, 'support goal not found')) return { outcome: 'not_found' };
+        if (isPgErrorWithMessage(error, 'support goal is not completed')) return { outcome: 'not_completed' };
+        if (isPgErrorWithMessage(error, 'a reopen reason is required')) return { outcome: 'invalid' };
+        throw error;
+      }
+      const result = await this.getCompletion(userId, channelId, goalId);
+      return result.outcome === 'ok' ? { outcome: 'ok', completion: result.completion } : { outcome: 'not_found' };
     },
   };
 }

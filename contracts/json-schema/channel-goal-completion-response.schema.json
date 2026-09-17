@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-goal-completion-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema", "schemaVersion", "goalId", "completed", "completedAt", "completedProgressPaise",
+    "targetAmountPaiseAtCompletion", "progressPaise", "targetAmountPaise", "lastReopenedAt",
+    "lastReopenedByUserId", "lastReopenReason"
+  ],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "goalId": { "type": "string", "format": "uuid" },
+    "completed": { "type": "boolean" },
+    "completedAt": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }] },
+    "completedProgressPaise": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
+    "targetAmountPaiseAtCompletion": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 1000 }] },
+    "progressPaise": { "type": "integer", "minimum": 0 },
+    "targetAmountPaise": { "type": "integer", "minimum": 1000 },
+    "lastReopenedAt": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }] },
+    "lastReopenedByUserId": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "uuid" }] },
+    "lastReopenReason": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 500 }] }
+  }
+}

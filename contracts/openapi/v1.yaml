@@ -1133,6 +1133,61 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '503':
           $ref: '#/components/responses/RetryableFailure'
+  /v1/channels/{channelId}/goals/{goalId}/completion:
+    get:
+      tags: [Goals]
+      operationId: getChannelGoalCompletion
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-01/GOA-02: whether this goal's support_goal_completions latch (packages/db/migrations/0150)
+        has fired. This is NOT the same as the goal's live `reached` flag (still purely derived,
+        can flip back false after a refund) - `completed` is written once, the first time
+        progress crosses the target, and a later refund never un-writes it: completedAt and
+        completedProgressPaise stay exactly as first observed while progressPaise keeps moving
+        live. An unknown, other-channel or unauthorised goal is one indistinguishable 404.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: The goal's current completion state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GoalCompletion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/goals/{goalId}/reopen:
+    post:
+      tags: [Goals]
+      operationId: reopenChannelGoalCompletion
+      security: [{ bearerAuth: [] }]
+      description: >-
+        GOA-03: manually reopen a completed goal. Owner/admin only, reason required (1-500
+        characters, the bound reused from migration 0059's manual-review reason), and always
+        audited (packages/db/migrations/0150's support_goal_completions.reopened_by_user_id/
+        reopen_reason) - never automatic, never a side effect of a refund or of any read. A
+        goal that was never completed, or is already reopened, is a 409, not a 404 and not a
+        400.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReopenGoalCompletionRequest' }
+      responses:
+        '200':
+          description: The goal's completion state after reopening.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GoalCompletion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-goals/{overlayId}:
     get:
       tags: [Overlay]
@@ -2905,6 +2960,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    GoalId:
+      name: goalId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     LobbySessionId:
       name: lobbyId
       in: path
@@ -3043,6 +3103,39 @@ components:
       properties:
         status: { type: string, const: not_ready }
         reason: { type: string, enum: [runtime_adapters_not_configured, runtime_dependency_unavailable] }
+    GoalCompletion:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - goalId
+        - completed
+        - completedAt
+        - completedProgressPaise
+        - targetAmountPaiseAtCompletion
+        - progressPaise
+        - targetAmountPaise
+        - lastReopenedAt
+        - lastReopenedByUserId
+        - lastReopenReason
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        goalId: { type: string, format: uuid }
+        completed: { type: boolean }
+        completedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        completedProgressPaise: { oneOf: [{ type: 'null' }, { type: integer, minimum: 0 }] }
+        targetAmountPaiseAtCompletion: { oneOf: [{ type: 'null' }, { type: integer, minimum: 1000 }] }
+        progressPaise: { type: integer, minimum: 0 }
+        targetAmountPaise: { type: integer, minimum: 1000 }
+        lastReopenedAt: { oneOf: [{ type: 'null' }, { type: string, format: date-time }] }
+        lastReopenedByUserId: { oneOf: [{ type: 'null' }, { type: string, format: uuid }] }
+        lastReopenReason: { oneOf: [{ type: 'null' }, { type: string, minLength: 1, maxLength: 500 }] }
+    ReopenGoalCompletionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
     OverlayGoal:
       type: object
       additionalProperties: false

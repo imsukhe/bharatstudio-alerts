@@ -30,8 +30,18 @@ docker run -d --rm --name "$CONTAINER" \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=template_bs \
   postgres:16-alpine >/dev/null
 
+# The official postgres image performs its own initdb on a fresh (unvolumed)
+# container: it starts a TEMPORARY server on the Unix socket to run init
+# scripts, shuts it down, then starts the real long-running server. A bare
+# `pg_isready` loop can catch that temporary server's brief readiness window
+# and declare victory, moments before its socket disappears -- the next
+# command then fails with "No such file or directory" even though nothing
+# is actually broken. Every fresh container here logs "database system is
+# ready to accept connections" exactly twice (temporary, then real); only
+# the second one, confirmed by a subsequent pg_isready, is the real server.
 i=0
-until docker exec "$CONTAINER" pg_isready -U postgres -d template_bs >/dev/null 2>&1; do
+until [ "$(docker logs "$CONTAINER" 2>&1 | grep -c 'database system is ready to accept connections')" -ge 2 ] \
+  && docker exec "$CONTAINER" pg_isready -U postgres -d template_bs >/dev/null 2>&1; do
   i=$((i + 1)); [ "$i" -gt 60 ] && { echo "postgres did not become ready"; exit 1; }
   sleep 1
 done

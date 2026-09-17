@@ -16,6 +16,8 @@ import { registerChannelRoutes } from './routes/channels.js';
 import type { AlertStore } from './domain/alert-store.js';
 import { registerAlertRoutes } from './routes/alerts.js';
 import { registerCompanionRoutes } from './routes/companion.js';
+import type { CompanionLiveOpsStore } from './domain/companion-live-ops.js';
+import { registerCompanionLiveOpsRoutes } from './routes/companion-live-ops.js';
 import type { CompanionPairingStore } from './domain/companion-pairing.js';
 import { registerCompanionPairingRoutes } from './routes/companion-pairing.js';
 import type { OverlayStore } from './domain/overlay-store.js';
@@ -245,6 +247,7 @@ export type AppDependencies = {
   paymentMethodUpdates?: PaymentMethodUpdateService;
   companionFeatures?: CompanionFeatureStore;
   companionEntitlement?: CompanionEntitlementStore;
+  companionLiveOps?: CompanionLiveOpsStore;
   seats?: SeatStore;
   goals?: GoalStore;
   overlayGoals?: OverlayGoalStore;
@@ -556,6 +559,7 @@ export async function buildApp(
   await registerAdminRoutes(app, dependencies.sessions, dependencies.admin, dependencies.ingestFailures, dependencies.staffCreatorPackReview);
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account, dependencies.paymentMethodUpdates);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account, dependencies.companionFeatures, dependencies.companionEntitlement);
+  await registerCompanionLiveOpsRoutes(app, dependencies.sessions, dependencies.companionLiveOps);
   await registerCompanionPairingRoutes(app, dependencies.sessions, dependencies.companionPairing);
   await registerAssistRoutes(app, dependencies.sessions, dependencies.assist, dependencies.account);
   await registerInsightsRoutes(app, dependencies.sessions, dependencies.insights);

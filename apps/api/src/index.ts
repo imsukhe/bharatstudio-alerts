@@ -37,6 +37,7 @@ import { createYoutubeOAuthClient } from './domain/youtube-oauth-client.js';
 import { createBillingPaymentMethodService } from './db/billing-payment-method-client.js';
 import { createSqlCompanionFeatureStore } from './db/companion-feature-store.js';
 import { createSqlCompanionEntitlementStore } from './db/companion-entitlement-sql-store.js';
+import { createSqlCompanionLiveOpsStore } from './db/companion-live-ops-store.js';
 import { createSqlSeatStore } from './db/seat-store.js';
 import { createSqlGoalStore } from './db/goal-store.js';
 import { createSqlGoalOverlayStore } from './db/goal-overlay-store.js';
@@ -212,6 +213,9 @@ const app = await buildApp(config, {
   youtubeOAuthClient: youtubeOAuthConfig ? createYoutubeOAuthClient(youtubeOAuthConfig) : undefined,
   companionFeatures: sql ? createSqlCompanionFeatureStore(sql) : undefined,
   companionEntitlement: sql ? createSqlCompanionEntitlementStore(sql) : undefined,
+  // CMP-94/CMP-22/CMP-30 (migration 0161). Main `sql` pool, not
+  // derivedReadSql -- see db/companion-live-ops-store.ts's own header.
+  companionLiveOps: sql ? createSqlCompanionLiveOpsStore(sql) : undefined,
   seats: sql ? createSqlSeatStore(sql) : undefined,
   goals: sql ? createSqlGoalStore(sql) : undefined,
   overlayGoals: sql ? createSqlGoalOverlayStore(derivedReadSql!) : undefined,

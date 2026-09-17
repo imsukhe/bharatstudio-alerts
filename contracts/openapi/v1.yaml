@@ -3767,6 +3767,168 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/channels/{channelId}/companion/stream-markers:
+    post:
+      tags: [Companion]
+      operationId: createCompanionStreamMarker
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCompanionStreamMarkerRequest' }
+      responses:
+        '201':
+          description: CMP-22 quick-note stream marker created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionStreamMarkerResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    get:
+      tags: [Companion]
+      operationId: listCompanionStreamMarkers
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Active (non-deleted) CMP-22 stream markers for the channel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionStreamMarkerList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/stream-markers/{markerId}:
+    delete:
+      tags: [Companion]
+      operationId: deleteCompanionStreamMarker
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: markerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: CMP-22 marker retracted -- soft-deleted, the real inverse the CMP-94 Recent Actions undo affordance calls.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionStreamMarkerDeleteResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/recent-actions:
+    get:
+      tags: [Companion]
+      operationId: getCompanionRecentActions
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        '200':
+          description: CMP-94 Recent Actions -- a short, recency-ordered projection over the existing audit trail, role-scoped (operators/moderators never see a financial-category entry) with one-tap undo only where a real inverse exists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionRecentActionList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/wrap-stream:
+    post:
+      tags: [Companion]
+      operationId: beginCompanionStreamWrap
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '201':
+          description: CMP-30 Wrap Stream begun (or the already-in-flight attempt returned, idempotently). Owner/admin only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionWrapStreamBeginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/wrap-stream/{wrapSessionId}:
+    get:
+      tags: [Companion]
+      operationId: getCompanionStreamWrapSession
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: wrapSessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The wrap-stream session state plus its prepare-only (never auto-posted) prepared items.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionWrapStreamReadResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/wrap-stream/{wrapSessionId}/confirm-stop:
+    post:
+      tags: [Companion]
+      operationId: confirmCompanionStreamWrapStop
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: wrapSessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmCompanionStreamWrapStopRequest' }
+      responses:
+        '200':
+          description: Caller-confirmed stop state recorded. The server never itself verifies OBS or broadcast status -- see migration 0161's own header.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionWrapStreamConfirmStopResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/companion/wrap-stream/{wrapSessionId}/summary:
+    post:
+      tags: [Companion]
+      operationId: generateCompanionStreamWrapSummary
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - name: wrapSessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Private stream summary generated, plus CMP-22-derived chapters and the other fire_mode=prepare-only deliverables. Requires a confirmed stop.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanionWrapStreamSummaryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /internal/maintenance/{job}:
     post:
       tags: [Internal]
@@ -7215,3 +7377,132 @@ components:
         job: { type: string, enum: [overlay-sessions] }
         status: { type: string, enum: [accepted, completed, already_completed] }
         runId: { type: string, format: uuid }
+    CompanionStreamMarker:
+      type: object
+      additionalProperties: false
+      required: [markerId, markerType, label, markerAt, createdAt]
+      properties:
+        markerId: { type: string, format: uuid }
+        markerType: { type: string, enum: [note, clip_moment, sponsor_mention, technical_issue] }
+        label: { type: string, minLength: 1, maxLength: 500 }
+        markerAt: { type: string, format: date-time }
+        actorUserId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+    CreateCompanionStreamMarkerRequest:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 500 }
+        markerType: { type: string, enum: [note, clip_moment, sponsor_mention, technical_issue] }
+        markerAt: { type: string, format: date-time }
+    CompanionStreamMarkerResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, marker]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        marker: { $ref: '#/components/schemas/CompanionStreamMarker' }
+    CompanionStreamMarkerList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, markers]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        markers: { type: array, items: { $ref: '#/components/schemas/CompanionStreamMarker' } }
+    CompanionStreamMarkerDeleteResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, markerId, deletedAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        markerId: { type: string, format: uuid }
+        deletedAt: { type: string, format: date-time }
+    CompanionRecentAction:
+      type: object
+      additionalProperties: false
+      required: [actionId, action, category, targetType, targetId, actorUserId, occurredAt, reversible, reason]
+      properties:
+        actionId: { type: string, format: uuid }
+        action: { type: string, minLength: 1, maxLength: 200 }
+        category: { type: string, enum: [operational, financial] }
+        targetType: { type: string, minLength: 1, maxLength: 200 }
+        targetId: { type: [string, 'null'] }
+        actorUserId: { type: [string, 'null'], format: uuid }
+        occurredAt: { type: string, format: date-time }
+        reversible: { type: boolean }
+        reason: { type: [string, 'null'] }
+    CompanionRecentActionList:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, channelId, actions]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        channelId: { type: string, format: uuid }
+        actions: { type: array, items: { $ref: '#/components/schemas/CompanionRecentAction' } }
+    ConfirmCompanionStreamWrapStopRequest:
+      type: object
+      additionalProperties: false
+      required: [obsStoppedConfirmed, broadcastCompleteConfirmed]
+      properties:
+        obsStoppedConfirmed: { enum: [true, false] }
+        broadcastCompleteConfirmed: { enum: [true, false] }
+    CompanionWrapStreamBeginResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, wrapSessionId, status, createdAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        wrapSessionId: { type: string, format: uuid }
+        status: { type: string, enum: [confirming_stop, stop_confirmed, summary_ready] }
+        createdAt: { type: string, format: date-time }
+    CompanionWrapStreamConfirmStopResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, wrapSessionId, status, confirmedStopAt]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        wrapSessionId: { type: string, format: uuid }
+        status: { type: string, enum: [confirming_stop, stop_confirmed, summary_ready] }
+        confirmedStopAt: { type: [string, 'null'], format: date-time }
+    CompanionStreamWrapSession:
+      type: object
+      additionalProperties: false
+      required: [wrapSessionId, status, obsStoppedConfirmed, broadcastCompleteConfirmed, confirmedStopAt, windowSince, windowUntil, summary, createdAt, updatedAt]
+      properties:
+        wrapSessionId: { type: string, format: uuid }
+        status: { type: string, enum: [confirming_stop, stop_confirmed, summary_ready] }
+        obsStoppedConfirmed: { type: boolean }
+        broadcastCompleteConfirmed: { type: boolean }
+        confirmedStopAt: { type: [string, 'null'], format: date-time }
+        windowSince: { type: [string, 'null'], format: date-time }
+        windowUntil: { type: [string, 'null'], format: date-time }
+        summary: { type: [object, 'null'], additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CompanionWrapStreamSummaryResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, session]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        session: { $ref: '#/components/schemas/CompanionStreamWrapSession' }
+    CompanionWrapPreparedItem:
+      type: object
+      additionalProperties: false
+      required: [itemId, itemKind, fireMode, content, createdAt]
+      properties:
+        itemId: { type: string, format: uuid }
+        itemKind: { type: string, enum: [vod_chapters, supporter_thankyou_comment, finance_delta_summary, followup_clip_review_task] }
+        fireMode: { type: string, enum: [prepare, fire] }
+        content: {}
+        createdAt: { type: string, format: date-time }
+    CompanionWrapStreamReadResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, session, preparedItems]
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        session: { $ref: '#/components/schemas/CompanionStreamWrapSession' }
+        preparedItems: { type: array, items: { $ref: '#/components/schemas/CompanionWrapPreparedItem' } }

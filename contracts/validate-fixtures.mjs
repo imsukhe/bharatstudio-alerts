@@ -50,6 +50,7 @@ const fixtureToSchema = {
   'overlay-qr-smart-card-response.json': 'overlay-qr-smart-card-response.schema.json',
   'channel-canvas-layout-response.json': 'channel-canvas-layout-response.schema.json',
   'overlay-canvas-layout-response.json': 'overlay-canvas-layout-response.schema.json',
+  'channel-capabilities-response.json': 'channel-capabilities-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
   'payment-webhook-delivery.json': 'payment-webhook-delivery.schema.json',
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',

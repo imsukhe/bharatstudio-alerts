@@ -112,6 +112,14 @@ import type { QrSmartCardStore, QrSmartCardOverlayStore } from './domain/qr-smar
 import { registerQrSmartCardRoutes } from './routes/qr-smart-card.js';
 import type { CanvasLayoutStore, CanvasLayoutOverlayStore } from './domain/canvas-layout-store.js';
 import { registerCanvasLayoutRoutes } from './routes/canvas-layout.js';
+// CTL phase 1 (migration 0149): the capability control plane's only
+// phase-1 route, a creator/dashboard read of the resolved capability
+// blob. Its own file -- not part of registerMasterCanvasRoutes' overlay
+// module list (this plane has no overlay-facing surface in phase 1) and
+// not folded into routes/insights.ts (CTL is its own subsystem, not a
+// dashboard analytics read that happens to share a shape).
+import type { CapabilityStore } from './domain/capability-store.js';
+import { registerCapabilityRoutes } from './routes/capabilities.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -235,6 +243,9 @@ export type AppDependencies = {
   overlayQrSmartCard?: QrSmartCardOverlayStore;
   canvasLayout?: CanvasLayoutStore;
   overlayCanvasLayout?: CanvasLayoutOverlayStore;
+  // CTL phase 1 (migration 0149). Creator/dashboard read only -- no
+  // overlay counterpart in phase 1.
+  capabilities?: CapabilityStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -464,6 +475,7 @@ export async function buildApp(
   await registerSafeSoundboardRoutes(app, dependencies.sessions, dependencies.safeSoundboard, dependencies.account, dependencies.safeSoundboardUploadCaps);
   await registerQrSmartCardRoutes(app, dependencies.sessions, dependencies.qrSmartCards, dependencies.account);
   await registerCanvasLayoutRoutes(app, dependencies.sessions, dependencies.canvasLayout, dependencies.account);
+  await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

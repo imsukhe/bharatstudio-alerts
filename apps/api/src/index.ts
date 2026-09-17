@@ -70,6 +70,11 @@ import { createSqlQrSmartCardOverlayStore } from './db/qr-smart-card-overlay-sto
 // each store file's own header.
 import { createSqlCanvasLayoutStore } from './db/canvas-layout-store.js';
 import { createSqlCanvasLayoutOverlayStore } from './db/canvas-layout-overlay-store.js';
+// CTL phase 1 (migration 0149): capability control plane, creator/
+// dashboard read only. Wired to derivedReadSql like every other
+// widget/dashboard read (RT-10/RT-11) -- see db/capability-store.ts's
+// own header.
+import { createSqlCapabilityStore } from './db/capability-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -290,6 +295,7 @@ const app = await buildApp(config, {
   // is a derived read and uses derivedReadSql, which is also what makes
   // it visible to rule 3 of scan-required-queries.mjs.
   canvasLayout: sql ? createSqlCanvasLayoutStore(sql) : undefined,
+  capabilities: sql ? createSqlCapabilityStore(derivedReadSql!) : undefined,
   overlayCanvasLayout: sql ? createSqlCanvasLayoutOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;

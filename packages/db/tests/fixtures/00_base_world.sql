@@ -86,5 +86,8 @@ on conflict (channel_id, user_id) do nothing;
 --   ...5d00-...5dff                           prf02_slice7_sponsor_card OWN fixture (channels, memberships, overlay sessions)
 --   ...6600-...66ff                           prf02_slice7_qr_smart_card OWN fixture (overlay sessions)
 --   ...5e00-...5eff                           prf02_slice7_vertical_layout OWN fixture (channels, memberships, entitlement versions, overlay sessions)
+--   ...5f00-...5fff                           ctl_capability_registry OWN fixture (staff user, channels, memberships, entitlement versions)
 --
--- Next free block for a new test's own fixture: ...1720 upward.
+-- Next free block for a new test's own fixture: ...1720 upward (that
+-- range itself is heavily used by other files already -- verify
+-- freeness by grep before use regardless of what this note says).

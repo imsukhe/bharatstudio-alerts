@@ -2232,6 +2232,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/capabilities:
+    get:
+      tags: [Capabilities]
+      operationId: getChannelCapabilities
+      security: [{ bearerAuth: [] }]
+      description: >-
+        CTL phase 1 (migration 0149): the capability control plane's only phase-1 route. Reads
+        the CTL-03 resolved capability blob for the WHOLE channel in one call - never one
+        request per capability flag. app_private.get_channel_capabilities resolves every
+        registered capability's kill -> denylist -> rollout -> tier -> override precedence
+        (CTL-02) server-side and returns a single object mapping capability key to boolean,
+        cached and versioned by `generation` (CTL-03). This is a read-only creator/dashboard
+        surface: there is no write route here in phase 1 - CTL-04's future admin UI (a
+        different repository) is what will call the staff write path this migration ships at
+        the database layer. The registry structurally cannot contain a capability gating a
+        durable creator record (CTL-14, 12.6) and carries no per-tier retention field (CTL-15,
+        12.6.2) - both are schema-level properties of migration 0149, not something this
+        response can violate.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: The channel's resolved capability blob.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChannelCapabilitiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-widgets/{overlayId}/canvas-layout:
     get:
       tags: [Overlay]
@@ -3224,6 +3253,30 @@ components:
         store is ever called - this setting holds no such concept.
       properties:
         layout: { enum: [horizontal, vertical] }
+    ChannelCapabilitiesResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, generation, resolvedAt, capabilities]
+      description: >-
+        CTL-03's resolved capability blob (migration 0149): every registered capability's
+        resolved boolean for this channel, in ONE object - never one field fetched per
+        capability. `generation` is the global registry generation this blob was resolved
+        against (advances on any registry/denylist/override write); `resolvedAt` is when this
+        blob was computed, which may be earlier than the request time on a cache hit
+        (app_private.get_channel_capabilities serves a cached row when the generation and the
+        channel's current tier both still match what was cached). `capabilities` has no fixed
+        key set in this schema - it is a dictionary keyed by whatever capability_key values are
+        currently registered, each a plain boolean already resolved through kill -> denylist ->
+        rollout -> tier -> override (CTL-02). There is no capability whose key could ever gate a
+        durable creator record (CTL-14) and no per-tier retention value can appear here (CTL-15)
+        - both are schema-level guarantees of the registry this blob is resolved from.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        generation: { type: integer, minimum: 1 }
+        resolvedAt: { type: string, format: date-time }
+        capabilities:
+          type: object
+          additionalProperties: { type: boolean }
     OverlayCanvasLayout:
       type: object
       additionalProperties: false

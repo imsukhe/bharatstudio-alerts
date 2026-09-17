@@ -1,0 +1,10 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-capabilities-response.schema.json",
+  "schemaVersion": "v1",
+  "generation": 7,
+  "resolvedAt": "2026-09-17T10:05:00.000Z",
+  "capabilities": {
+    "team_seat_extra_producer": true,
+    "ai_usage_higher_quota": false
+  }
+}

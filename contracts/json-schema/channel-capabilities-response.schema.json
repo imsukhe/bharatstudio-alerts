@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-capabilities-response.schema.json",
+  "title": "Channel capabilities response (CTL phase 1, capability control plane, migration 0149)",
+  "description": "CTL-03's resolved capability blob: every registered capability's resolved boolean for this channel, in ONE object -- never one field fetched per capability. generation is the global registry generation this blob was resolved against; resolvedAt is when it was computed (may be earlier than the request on a cache hit). capabilities has no fixed key set -- it is a dictionary keyed by whatever capability_key values are currently registered, each already resolved through kill -> denylist -> rollout -> tier -> override (CTL-02). No key here can ever gate a durable creator record (CTL-14) and no per-tier retention value can appear (CTL-15) -- both are guarantees of the registry this blob is resolved from, not of this response shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "generation", "resolvedAt", "capabilities"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "generation": { "type": "integer", "minimum": 1 },
+    "resolvedAt": { "type": "string", "format": "date-time" },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    }
+  }
+}

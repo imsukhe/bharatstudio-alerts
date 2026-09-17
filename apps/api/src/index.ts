@@ -79,6 +79,13 @@ import { createSqlCapabilityStore } from './db/capability-store.js';
 // surface (propose/approve/reject/kill/revert), so it takes the MAIN
 // pool `sql`, not derivedReadSql -- see db/capability-change-management-store.ts's own header.
 import { createSqlCapabilityChangeManagementStore } from './db/capability-change-management-store.js';
+// SAF phase 1 (migration 0151): moderation pipeline spine, corpus
+// management only. ONE file, TWO pools -- the list read is wired to
+// derivedReadSql (RT-10/RT-11), create/remove stay on the main `sql`
+// pool -- see db/safety-corpus-store.ts's own header for why this store
+// takes both rather than splitting into a creator/overlay pair the way
+// every other dual-pool surface in this file does.
+import { createSqlSafetyCorpusStore } from './db/safety-corpus-store.js';
 // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). Two files,
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
@@ -300,6 +307,7 @@ const app = await buildApp(config, {
   // it visible to rule 3 of scan-required-queries.mjs.
   canvasLayout: sql ? createSqlCanvasLayoutStore(sql) : undefined,
   capabilities: sql ? createSqlCapabilityStore(derivedReadSql!) : undefined,
+  safetyCorpus: sql ? createSqlSafetyCorpusStore(sql, derivedReadSql!) : undefined,
   overlayCanvasLayout: sql ? createSqlCanvasLayoutOverlayStore(derivedReadSql!) : undefined,
   // PRF-02 slice 5, module #9. The creator store carries writes, so it
   // uses the main pool exactly as goals/challenges/masterCanvasModules do;

@@ -2516,6 +2516,79 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/safety/corpus-terms:
+    get:
+      tags: [Moderation]
+      operationId: listSafetyCorpusTerms
+      security: [{ bearerAuth: [] }]
+      description: >-
+        SAF phase 1 (migration 0151, the moderation pipeline spine). Global terms plus this
+        channel's own, in ONE read - SAF-05's "global plus per-creator" as one call, never two a
+        caller has to remember to make. app_private.get_safety_corpus_terms is the ONLY reachable
+        read path (bsa_app has no SELECT grant on safety_corpus_terms itself, revoked from both
+        public and bsa_app - SAF-01's structural "one pipeline" guard). This is corpus
+        MANAGEMENT only - it does not run any text through the pipeline
+        (apps/api/src/domain/safety-pipeline.ts), which is not wired into any live surface yet.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      responses:
+        '200':
+          description: Every corpus term visible to this channel (global plus its own).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SafetyCorpusTermListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+    post:
+      tags: [Moderation]
+      operationId: createSafetyCorpusTerm
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Adds one term to THIS channel's own corpus. Owner/admin only
+        (app_private.create_safety_corpus_term, migration 0151). There is no way to create a
+        GLOBAL term (channel_id null) through this route - that stays a staff-only, data-layer
+        primitive with no HTTP surface in this phase, the same CTL-04 admin-UI deferral migration
+        0149 already established. `displayDecision`/`ttsDecision`/`moderatorReviewDecision` are
+        the SAF-09 per-surface decisions this term forces when matched - `payment` and
+        `storedRecord` are never configurable per term; both are structural constants enforced at
+        the database layer (see the evidence table's own CHECK constraints).
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSafetyCorpusTermRequest' }
+      responses:
+        '201':
+          description: The created term.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SafetyCorpusTerm' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
+  /v1/channels/{channelId}/safety/corpus-terms/{termId}:
+    delete:
+      tags: [Moderation]
+      operationId: deleteSafetyCorpusTerm
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Removes one of THIS channel's own corpus terms. Owner/admin only. A global term, or a
+        term belonging to a different channel, is never removable through this route -
+        app_private.delete_safety_corpus_term (migration 0151) returns the identical "not found"
+        either way, so this endpoint cannot be used to enumerate another channel's corpus.
+      parameters:
+        - $ref: '#/components/parameters/ChannelId'
+        - $ref: '#/components/parameters/SafetyCorpusTermId'
+      responses:
+        '204':
+          description: The term was removed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/RetryableFailure' }
   /v1/overlay-widgets/{overlayId}/canvas-layout:
     get:
       tags: [Overlay]
@@ -3175,6 +3248,11 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,99}$' }
+    SafetyCorpusTermId:
+      name: termId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     LobbySessionId:
       name: lobbyId
       in: path
@@ -3692,6 +3770,79 @@ components:
       additionalProperties: false
       properties:
         reason: { type: string, maxLength: 500 }
+    SafetyDecisionValue:
+      type: string
+      description: >-
+        SAF-09's shared decision vocabulary, FULL-PRODUCT-DEFINITION.md S12.2.1's own pipeline
+        diagram: "allow, mask, hold, block", per surface.
+      enum: [allow, mask, hold, block]
+    SafetyCorpusTerm:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - termId
+        - scope
+        - term
+        - wholeWord
+        - displayDecision
+        - ttsDecision
+        - moderatorReviewDecision
+        - createdAt
+      description: >-
+        SAF phase 1 (migration 0151). One row of the compiled corpus. `scope` is `global` (this
+        term applies to every channel) or `channel` (this channel's own addition) -
+        `app_private.get_safety_corpus_terms` returns both together, SAF-05's "global plus
+        per-creator" as one read. `wholeWord` selects whole-word matching (a match only counts at
+        a word boundary) versus substring matching - the two are always distinct rows, never a
+        setting that applies to the whole corpus. `displayDecision`/`ttsDecision` and
+        `moderatorReviewDecision` (`allow` or `hold` - "queued for a human or not",
+        FULL-PRODUCT-DEFINITION.md S12.2.4) are what this term forces on those three surfaces
+        when it matches - `payment` and the stored-record surface are never configurable per
+        term (see SafetyCorpusTermListResponse's own description for why).
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        termId: { type: string, format: uuid }
+        scope: { type: string, enum: [global, channel] }
+        term: { type: string, minLength: 1, maxLength: 200 }
+        wholeWord: { type: boolean }
+        displayDecision: { $ref: '#/components/schemas/SafetyDecisionValue' }
+        ttsDecision: { $ref: '#/components/schemas/SafetyDecisionValue' }
+        moderatorReviewDecision: { type: string, enum: [allow, hold] }
+        createdAt: { type: string, format: date-time }
+    SafetyCorpusTermListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items]
+      description: >-
+        SAF-01/SAF-05: every corpus term visible to the calling channel - global terms plus this
+        channel's own, in the ONE response this ONE read produces. There is no separate global-
+        only or channel-only variant of this shape: SAF-01 requires exactly one corpus, so there
+        is exactly one list shape. `payment` and the stored-record surface never appear anywhere
+        in this response because no corpus term can ever configure them -
+        FULL-PRODUCT-DEFINITION.md S12.2.4: "Payment: Never affected by content... Stored record:
+        Always stored in full" - both are structural constants enforced where evidence is
+        actually recorded (packages/db/migrations/0151's safety_moderation_actions CHECK
+        constraints), not a property any corpus term shape could vary.
+      properties:
+        schemaVersion: { type: string, const: v1 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SafetyCorpusTerm' }
+    CreateSafetyCorpusTermRequest:
+      type: object
+      additionalProperties: false
+      required: [term, displayDecision, ttsDecision, moderatorReviewDecision]
+      description: >-
+        Adds one term to the calling channel's own corpus. `wholeWord` defaults to true when
+        omitted. The 200-character bound on `term` is reused verbatim from
+        packages/db/migrations/0151's own `check (char_length(btrim(term)) between 1 and 200)`.
+      properties:
+        term: { type: string, minLength: 1, maxLength: 200 }
+        wholeWord: { type: boolean }
+        displayDecision: { $ref: '#/components/schemas/SafetyDecisionValue' }
+        ttsDecision: { $ref: '#/components/schemas/SafetyDecisionValue' }
+        moderatorReviewDecision: { type: string, enum: [allow, hold] }
     OverlayCanvasLayout:
       type: object
       additionalProperties: false

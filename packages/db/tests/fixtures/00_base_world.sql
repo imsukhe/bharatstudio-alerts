@@ -88,6 +88,7 @@ on conflict (channel_id, user_id) do nothing;
 --   ...5e00-...5eff                           prf02_slice7_vertical_layout OWN fixture (channels, memberships, entitlement versions, overlay sessions)
 --   ...5f00-...5fff                           ctl_capability_registry OWN fixture (staff user, channels, memberships, entitlement versions)
 --   ...6a00-...6aff                           goa_completion_latch OWN fixture (payments, refunds; reuses base_world channel/users)
+--   ...6b00-...6bff                           saf_pipeline_spine OWN fixture (staff user, two channels, memberships) -- pre-assigned to this lane by the coordinator, not independently verified free (see the correction below for why)
 --
 -- CORRECTION 2026-09-17: the note below previously said "...1720 upward",
 -- but ...1720-...1747 were already in use by
@@ -103,5 +104,8 @@ on conflict (channel_id, user_id) do nothing;
 -- lane running beside you: a coordinator must PRE-ASSIGN fixture ranges
 -- the way migration numbers are pre-assigned.
 --
--- Next free block for a new test's own fixture: ...6b00 upward (verify by
+--   ...6b00-...6bff                           saf_pipeline_spine OWN fixture
+--   ...6c00-...6cff                           ctl_change_management OWN fixture (self-contained)
+--
+-- Next free block for a new test's own fixture: ...6d00 upward (verify by
 -- grep regardless of what this note says).

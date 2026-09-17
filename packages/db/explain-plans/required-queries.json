@@ -186,6 +186,11 @@
       "function": "app_private.staff_list_capability_changes",
       "artifact": "capability-change-management-list.explain.md",
       "note": "new in CTL phase 2 Lane A, migration 0152 (change management over the phase-1 capability control plane). Not caught by any of the three scan rules -- apps/api/src/db/capability-change-management-store.ts is constructed in apps/api/src/index.ts with the MAIN pool sql, never derivedReadSql (this is a platform-staff governance write surface, not a widget/dashboard read), and neither its name nor its file matches the overlay/master-canvas conventions. Manifested anyway, for the same reason capability-resolution.explain.md above was: this task's own vertical-slice instructions require an explain-plan entry regardless of overlay-facing status, and this function is the representative capture for the whole migration's shared shape -- every staff_* function in 0152 returns through app_private.capability_change_row, which performs the identical two-correlated-subquery staff/owner approval-count aggregate this listing query performs directly. Returns exactly the 18-column CapabilityChangeRequest projection asserted in packages/db/tests/ctl_change_management.sql against information_schema.parameters. Also performs CTL-06's lazy-apply pass (every approved-and-due row is applied via app_private.apply_due_capability_change before the listing query runs) -- at the seed size this artifact was captured against, zero rows were due, so that loop contributes nothing to the captured plan; its own shape (a single-row UPDATE by primary key) is exercised functionally, not plan-captured, in the SQL test file."
+    },
+    {
+      "function": "app_private.get_safety_corpus_terms",
+      "artifact": "safety-corpus-terms.explain.md",
+      "note": "new in SAF phase 1, migration 0151 (the moderation pipeline spine). Global plus this channel's own corpus terms, in one read -- SAF-05's 'global plus per-creator' as one call, never two. Caught by rule 3: apps/api/src/index.ts constructs createSqlSafetyCorpusStore with BOTH sql and derivedReadSql (apps/api/src/db/safety-corpus-store.ts), and this function is called on the derivedReadSql-backed path (list()) as well as re-read after a write inside create() -- both call sites are the SAME function, covered by this one entry. The returned column set (id, channel_id, term, whole_word, display_decision, tts_decision, moderator_review_decision, created_at) is asserted exactly in packages/db/tests/saf_pipeline_spine.sql against information_schema.parameters. bsa_app has no SELECT/INSERT/UPDATE/DELETE grant on safety_corpus_terms at all (revoked from both public and bsa_app, asserted behaviourally in the SQL test) -- this function is the only reachable read path, the same SAF-01 structural guard migration 0149 already established for CTL-03."
     }
   ],
   "exemptions": [
@@ -224,6 +229,14 @@
     {
       "function": "app_private.get_creator_activation_state",
       "reason": "creator-dashboard activation-checklist read, not an overlay read -- determined the same three ways. (1) ROUTING -- reached only via registerInsightsRoutes serving GET /v1/channels/:channelId/activation-state (apps/api/src/routes/insights.ts:30), a creator-session route; no overlay registrar receives dependencies.insights. (2) SIGNATURE AND BODY -- packages/db/migrations/0133_v1_ops08_ops11_activation_and_revenue_kpis.sql:46 defines it as (target_channel_id uuid) returning six booleans/timestamps guarded by app_private.can_access_channel; it takes no overlay id and no token fingerprint. Note it does READ overlay_connected state, which is why it must be judged rather than dismissed on its name: it reports to the CREATOR whether an overlay has ever connected, it does not serve bytes or rows to an overlay session. (3) SCOPE -- OPS-08 dashboard analytics, PRF-11 territory per active/tasks/RT-12.md's Boundaries. Visible to rule 3 because it runs on RT-10/RT-11's derived-read pool."
+    },
+    {
+      "function": "app_private.create_safety_corpus_term",
+      "reason": "a creator-initiated WRITE (adds one term to the calling corpus), not a read that backs a widget/dashboard display -- RT-12 manifests reads, not mutations. Swept in only because rule 3 scans the whole createSqlSafetyCorpusStore factory body (apps/api/src/db/safety-corpus-store.ts), which also wires the list() read to derivedReadSql in the same file -- see that file's own header for why one file carries both pools."
+    },
+    {
+      "function": "app_private.delete_safety_corpus_term",
+      "reason": "a creator-initiated WRITE (removes one of the calling channel's own corpus terms), not a read that backs a widget/dashboard display -- RT-12 manifests reads, not mutations. Swept in for the same reason as app_private.create_safety_corpus_term above: rule 3 scans the whole createSqlSafetyCorpusStore factory body, not only the derivedReadSql-backed call."
     }
   ]
 }

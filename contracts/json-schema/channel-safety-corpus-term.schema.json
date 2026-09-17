@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-safety-corpus-term.schema.json",
+  "title": "Safety corpus term (SAF phase 1, moderation pipeline spine, migration 0151)",
+  "description": "One row of the compiled corpus. scope is 'global' (applies to every channel) or 'channel' (this channel's own addition) -- app_private.get_safety_corpus_terms returns both together, SAF-05's 'global plus per-creator' as one read. displayDecision/ttsDecision/moderatorReviewDecision are what this term forces on those surfaces when it matches (SAF-09); payment and the stored-record surface are never configurable per term.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "termId", "scope", "term", "wholeWord", "displayDecision", "ttsDecision", "moderatorReviewDecision", "createdAt"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "termId": { "type": "string", "format": "uuid" },
+    "scope": { "enum": ["global", "channel"] },
+    "term": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "wholeWord": { "type": "boolean" },
+    "displayDecision": { "enum": ["allow", "mask", "hold", "block"] },
+    "ttsDecision": { "enum": ["allow", "mask", "hold", "block"] },
+    "moderatorReviewDecision": { "enum": ["allow", "hold"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

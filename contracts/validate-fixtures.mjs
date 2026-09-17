@@ -53,6 +53,8 @@ const fixtureToSchema = {
   'overlay-canvas-layout-response.json': 'overlay-canvas-layout-response.schema.json',
   'channel-capabilities-response.json': 'channel-capabilities-response.schema.json',
   'capability-change-detail-response.json': 'capability-change-detail-response.schema.json',
+  'channel-safety-corpus-term.json': 'channel-safety-corpus-term.schema.json',
+  'channel-safety-corpus-term-list-response.json': 'channel-safety-corpus-term-list-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
   'payment-webhook-delivery.json': 'payment-webhook-delivery.schema.json',
   'payment-webhook-duplicate.json': 'payment-webhook-duplicate.schema.json',

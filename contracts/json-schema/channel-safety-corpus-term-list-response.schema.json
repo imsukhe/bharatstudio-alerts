@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bharatstudio.in/contracts/v1/channel-safety-corpus-term-list-response.schema.json",
+  "title": "Safety corpus term list response (SAF phase 1, migration 0151)",
+  "description": "SAF-01/SAF-05: every corpus term visible to the calling channel -- global terms plus this channel's own, in the ONE response this ONE read produces. payment and the stored-record surface never appear anywhere in this response because no corpus term can ever configure them (FULL-PRODUCT-DEFINITION.md S12.2.4) -- both are structural constants enforced where evidence is actually recorded, not a property any corpus term shape could vary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "items"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri" },
+    "schemaVersion": { "const": "v1" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "termId", "scope", "term", "wholeWord", "displayDecision", "ttsDecision", "moderatorReviewDecision", "createdAt"],
+        "properties": {
+          "schemaVersion": { "const": "v1" },
+          "termId": { "type": "string", "format": "uuid" },
+          "scope": { "enum": ["global", "channel"] },
+          "term": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "wholeWord": { "type": "boolean" },
+          "displayDecision": { "enum": ["allow", "mask", "hold", "block"] },
+          "ttsDecision": { "enum": ["allow", "mask", "hold", "block"] },
+          "moderatorReviewDecision": { "enum": ["allow", "hold"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

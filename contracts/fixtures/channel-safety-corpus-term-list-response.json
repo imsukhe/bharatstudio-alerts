@@ -1,0 +1,28 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-safety-corpus-term-list-response.schema.json",
+  "schemaVersion": "v1",
+  "items": [
+    {
+      "schemaVersion": "v1",
+      "termId": "00000000-0000-4000-8000-0000000099a1",
+      "scope": "global",
+      "term": "example-global-term",
+      "wholeWord": true,
+      "displayDecision": "mask",
+      "ttsDecision": "block",
+      "moderatorReviewDecision": "hold",
+      "createdAt": "2026-09-17T09:00:00.000Z"
+    },
+    {
+      "schemaVersion": "v1",
+      "termId": "00000000-0000-4000-8000-0000000099a2",
+      "scope": "channel",
+      "term": "example-channel-term",
+      "wholeWord": false,
+      "displayDecision": "block",
+      "ttsDecision": "block",
+      "moderatorReviewDecision": "hold",
+      "createdAt": "2026-09-17T10:00:00.000Z"
+    }
+  ]
+}

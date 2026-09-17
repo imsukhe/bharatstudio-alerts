@@ -126,6 +126,15 @@ import { registerCapabilityRoutes } from './routes/capabilities.js';
 // registrar, same posture as CTL phase 1's own capabilities.ts.
 import type { CapabilityChangeManagementStore } from './domain/capability-change-management.js';
 import { registerCapabilityChangeManagementRoutes } from './routes/capability-change-management.js';
+// SAF phase 1 (migration 0151): the moderation pipeline spine's only
+// phase-1 route -- corpus management (list/add/remove a term in THIS
+// channel's own corpus). Its own file, not folded into any overlay
+// registrar: nothing in this phase is wired into a live payment/TTS/
+// chat/alert surface (see routes/safety-corpus.ts and the migration's
+// own header). The pipeline itself (domain/safety-pipeline.ts) has no
+// HTTP surface at all in this phase.
+import type { SafetyCorpusStore } from './domain/safety-corpus-store.js';
+import { registerSafetyCorpusRoutes } from './routes/safety-corpus.js';
 import type { IngestFailureAdminStore } from './domain/ingest-failure-admin.js';
 import type { StaffCreatorPackReviewStore } from './domain/staff-creator-pack-review.js';
 import type { Sql } from 'postgres';
@@ -255,6 +264,10 @@ export type AppDependencies = {
   // CTL phase 2, Lane A (migration 0152). Platform-staff governance
   // over the same registry -- staged changes, approvals, kill, revert.
   capabilityChangeManagement?: CapabilityChangeManagementStore;
+  // SAF phase 1 (migration 0151). Corpus management only -- the pipeline
+  // itself (domain/safety-pipeline.ts) is not wired to any dependency
+  // here, because nothing calls it live yet.
+  safetyCorpus?: SafetyCorpusStore;
   // PRF-02 slice 5, §6 catalogue module #9 (Stream Mission Card). The
   // creator store is a write/read surface on the main pool; the overlay
   // store is a derived read on RT-10/RT-11's derivedReadSql pool.
@@ -486,6 +499,7 @@ export async function buildApp(
   await registerCanvasLayoutRoutes(app, dependencies.sessions, dependencies.canvasLayout, dependencies.account);
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
   await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
+  await registerSafetyCorpusRoutes(app, dependencies.sessions, dependencies.safetyCorpus);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);
   await registerChallengeRoutes(app, dependencies.sessions, dependencies.challenges, dependencies.account, dependencies.overlayChallenges);
   await registerTemplateRoutes(app, dependencies.sessions, dependencies.templates);

@@ -65,6 +65,8 @@ import { createSqlSafeSoundboardOverlayStore } from './db/safe-soundboard-overla
 // two pools, deliberately -- see each store file's own header.
 import { createSqlStreamMissionStore } from './db/stream-mission-store.js';
 import { createSqlStreamMissionOverlayStore } from './db/stream-mission-overlay-store.js';
+import { createSqlSponsorCardStore } from './db/sponsor-card-store.js';
+import { createSqlSponsorCardOverlayStore } from './db/sponsor-card-overlay-store.js';
 import { createSqlReputationStore } from './db/reputation-sql-store.js';
 import { createSqlProviderCapabilitySnapshotStore } from './db/payment-provider-capability-snapshot-store.js';
 import { createSqlChallengeStore } from './db/challenge-store.js';
@@ -270,6 +272,16 @@ const app = await buildApp(config, {
   // also what makes it visible to rule 3 of scan-required-queries.mjs.
   streamMissions: sql ? createSqlStreamMissionStore(sql) : undefined,
   overlayStreamMission: sql ? createSqlStreamMissionOverlayStore(derivedReadSql!) : undefined,
+  // PRF-02 slice 7, §6 catalogue module #11 (Sponsor Card). The creator
+  // store carries writes, so it uses the main pool exactly as
+  // streamMissions/giveawayTournaments do; the overlay store is a
+  // derived read and uses derivedReadSql, which is also what makes it
+  // visible to rule 3 of scan-required-queries.mjs. Neither is
+  // constructed with a tier: `sponsor_card` is already one of migration
+  // 0131's twenty catalogue keys, and there is no second entitlement to
+  // wire in here.
+  sponsorCards: sql ? createSqlSponsorCardStore(sql) : undefined,
+  overlaySponsorCard: sql ? createSqlSponsorCardOverlayStore(derivedReadSql!) : undefined,
   reputation: sql ? createSqlReputationStore(sql) : undefined,
   capabilitySnapshots: sql ? createSqlProviderCapabilitySnapshotStore(sql) : undefined,
   challenges: sql ? createSqlChallengeStore(sql) : undefined,

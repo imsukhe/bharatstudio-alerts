@@ -42,6 +42,8 @@ const fixtureToSchema = {
   'channel-soundboard-catalogue-list-response.json': 'channel-soundboard-catalogue-list-response.schema.json',
   'channel-soundboard-upload-response.json': 'channel-soundboard-upload-response.schema.json',
   'trigger-soundboard-play-response.json': 'trigger-soundboard-play-response.schema.json',
+  'overlay-sponsor-card-response.json': 'overlay-sponsor-card-response.schema.json',
+  'channel-sponsor-card-response.json': 'channel-sponsor-card-response.schema.json',
   'public-reaction-send-response.json': 'public-reaction-send-response.schema.json',
   'channel-safe-mode-response.json': 'channel-safe-mode-response.schema.json',
   'overlay-sse-event.json': 'overlay-sse-event.schema.json',
@@ -824,6 +826,128 @@ const tournamentConcluded = await channelTournamentFixture();
 tournamentConcluded.tournament.concludedAt = '2026-09-17T11:30:00.000Z';
 if (!channelTournamentValidator(tournamentConcluded)) {
   failures.push('channel-tournament-response.json: a concluded tournament must remain a valid, readable durable record (12.6)');
+}
+
+// PRF-02 slice 7, §6 catalogue module #11 (Sponsor Card). THE CARD
+// RENDERS THE SPONSOR AND COUNTS NOTHING (owner decision, 2026-09-17) --
+// the exposure event log named in the original catalogue row is DROPPED,
+// not narrowed. No impression, exposure, view, duration, "shown at" or
+// "displayed at" field may appear on either projection, and no
+// url/href/src-shaped field may appear either -- the logo is an asset
+// reference (channelId + sha256, §19.1), never a fetchable third-party
+// URL (§9.1.1).
+const overlaySponsorCardSchema = await loadSchema('overlay-sponsor-card-response.schema.json');
+const overlaySponsorCardValidator = ajv.getSchema(overlaySponsorCardSchema.$id);
+async function overlaySponsorCardFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'overlay-sponsor-card-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  // The whole point of the 2026-09-17 decision: nothing is counted.
+  ['impressionCount', 4021], ['exposureCount', 4021], ['viewCount', 4021],
+  ['shownAt', '2026-09-17T10:00:00.000Z'], ['displayedAt', '2026-09-17T10:00:00.000Z'],
+  ['lastShownAt', '2026-09-17T10:00:00.000Z'], ['durationMs', 5000], ['totalDisplaySeconds', 300],
+  // Fields that exist on the CREATOR projection but must never reach the
+  // overlay: an id, the schedule, the enabled flag, timestamps.
+  ['sponsorCardId', '00000000-0000-4000-8000-000000005b51'],
+  ['enabled', true],
+  ['scheduleStartsAt', '2026-09-17T09:00:00.000Z'], ['scheduleEndsAt', '2026-09-17T11:00:00.000Z'],
+  ['createdAt', '2026-09-17T10:00:00.000Z'], ['updatedAt', '2026-09-17T10:05:00.000Z'],
+  // §9.1.1: no field capable of carrying a third-party URL, script,
+  // iframe or stylesheet onto the Master Canvas.
+  ['logoUrl', 'https://example.invalid/logo.png'], ['sponsorUrl', 'https://example.invalid'],
+  ['clickThroughUrl', 'https://example.invalid/click'], ['iframeSrc', 'https://example.invalid/embed'],
+]) {
+  const polluted = await overlaySponsorCardFixture();
+  polluted.sponsorCard[field] = value;
+  if (overlaySponsorCardValidator(polluted)) {
+    failures.push(`overlay-sponsor-card-response.json: ${field} was accepted -- the Sponsor Card renders the sponsor and counts nothing (2026-09-17 decision), and no field may carry a third-party URL onto the Master Canvas (9.1.1)`);
+  }
+}
+// A null sponsorCard is what a disabled card, a card outside its
+// schedule, an unrecognised token and a channel with no card at all all
+// return -- every one of them means paint nothing.
+const sponsorCardAbsent = await overlaySponsorCardFixture();
+sponsorCardAbsent.sponsorCard = null;
+if (!overlaySponsorCardValidator(sponsorCardAbsent)) {
+  failures.push('overlay-sponsor-card-response.json: a null sponsorCard must be a VALID answer -- it is what a disabled card, a card outside its schedule and an unrecognised token all return');
+}
+// A card with no logo is a perfectly good answer -- the logo is optional.
+const sponsorCardNoLogo = await overlaySponsorCardFixture();
+sponsorCardNoLogo.sponsorCard.logoMimeType = null;
+sponsorCardNoLogo.sponsorCard.logoStorageKey = null;
+if (!overlaySponsorCardValidator(sponsorCardNoLogo)) {
+  failures.push('overlay-sponsor-card-response.json: a sponsor card with no logo must be a valid answer');
+}
+// Logo fields are all-or-nothing: one present without the other is a
+// partial row, not a state.
+for (const [field] of [['logoMimeType'], ['logoStorageKey']]) {
+  const polluted = await overlaySponsorCardFixture();
+  polluted.sponsorCard[field] = null;
+  if (overlaySponsorCardValidator(polluted)) {
+    failures.push(`overlay-sponsor-card-response.json: ${field} alone set to null (its partner still present) was accepted -- the logo pair must be all-or-nothing`);
+  }
+}
+
+const channelSponsorCardSchema = await loadSchema('channel-sponsor-card-response.schema.json');
+const channelSponsorCardValidator = ajv.getSchema(channelSponsorCardSchema.$id);
+async function channelSponsorCardFixture() {
+  return JSON.parse(await fs.readFile(path.join(fixtureDir, 'channel-sponsor-card-response.json'), 'utf8'));
+}
+for (const [field, value] of [
+  ['impressionCount', 4021], ['exposureCount', 4021], ['viewCount', 4021],
+  ['shownAt', '2026-09-17T10:00:00.000Z'], ['displayedAt', '2026-09-17T10:00:00.000Z'],
+  ['lastShownAt', '2026-09-17T10:00:00.000Z'], ['durationMs', 5000],
+  ['logoUrl', 'https://example.invalid/logo.png'], ['sponsorUrl', 'https://example.invalid'],
+]) {
+  const polluted = await channelSponsorCardFixture();
+  polluted.sponsorCard[field] = value;
+  if (channelSponsorCardValidator(polluted)) {
+    failures.push(`channel-sponsor-card-response.json: ${field} was accepted -- the Sponsor Card renders the sponsor and counts nothing, and no field may carry a third-party URL`);
+  }
+}
+// Logo and schedule pairs are each all-or-nothing on the creator
+// projection too.
+for (const field of ['logoContentSha256', 'logoMimeType', 'logoByteSize', 'logoStorageKey']) {
+  const polluted = await channelSponsorCardFixture();
+  polluted.sponsorCard.logoContentSha256 = 'ab'.repeat(32);
+  polluted.sponsorCard.logoMimeType = 'image/png';
+  polluted.sponsorCard.logoByteSize = 4096;
+  polluted.sponsorCard.logoStorageKey = `x/${'ab'.repeat(32)}`;
+  polluted.sponsorCard[field] = null;
+  if (channelSponsorCardValidator(polluted)) {
+    failures.push(`channel-sponsor-card-response.json: ${field} alone set to null (its logo partners still present) was accepted -- the logo quadruple must be all-or-nothing`);
+  }
+}
+for (const field of ['scheduleStartsAt', 'scheduleEndsAt']) {
+  const polluted = await channelSponsorCardFixture();
+  polluted.sponsorCard.scheduleStartsAt = '2026-09-17T19:00:00.000Z';
+  polluted.sponsorCard.scheduleEndsAt = '2026-09-17T21:00:00.000Z';
+  polluted.sponsorCard[field] = null;
+  if (channelSponsorCardValidator(polluted)) {
+    failures.push(`channel-sponsor-card-response.json: ${field} alone set to null (its schedule partner still present) was accepted -- the schedule pair must be all-or-nothing`);
+  }
+}
+const channelSponsorCardAbsent = await channelSponsorCardFixture();
+channelSponsorCardAbsent.sponsorCard = null;
+if (!channelSponsorCardValidator(channelSponsorCardAbsent)) {
+  failures.push('channel-sponsor-card-response.json: a null sponsorCard must be a VALID answer -- it is what a channel with none configured returns, at every tier');
+}
+// A scheduled window is a valid state -- an instruction about the future.
+const channelSponsorCardScheduled = await channelSponsorCardFixture();
+channelSponsorCardScheduled.sponsorCard.scheduleStartsAt = '2026-09-17T19:00:00.000Z';
+channelSponsorCardScheduled.sponsorCard.scheduleEndsAt = '2026-09-17T21:00:00.000Z';
+if (!channelSponsorCardValidator(channelSponsorCardScheduled)) {
+  failures.push('channel-sponsor-card-response.json: a scheduled placement window must be a valid answer');
+}
+// A card disabled and with no logo at all is a valid answer too.
+const channelSponsorCardMinimal = await channelSponsorCardFixture();
+channelSponsorCardMinimal.sponsorCard.enabled = false;
+channelSponsorCardMinimal.sponsorCard.logoContentSha256 = null;
+channelSponsorCardMinimal.sponsorCard.logoMimeType = null;
+channelSponsorCardMinimal.sponsorCard.logoByteSize = null;
+channelSponsorCardMinimal.sponsorCard.logoStorageKey = null;
+if (!channelSponsorCardValidator(channelSponsorCardMinimal)) {
+  failures.push('channel-sponsor-card-response.json: a disabled card with no logo must be a valid answer -- the logo and the schedule are both optional');
 }
 
 const overlayHypeSchema = await loadSchema('overlay-hype-response.schema.json');

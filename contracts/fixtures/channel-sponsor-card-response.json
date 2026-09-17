@@ -1,0 +1,18 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/channel-sponsor-card-response.schema.json",
+  "schemaVersion": "v1",
+  "sponsorCard": {
+    "schemaVersion": "v1",
+    "sponsorCardId": "00000000-0000-4000-8000-000000005b51",
+    "sponsorName": "Acme Energy Drinks",
+    "logoContentSha256": "abababababababababababababababababababababababababababababababab",
+    "logoMimeType": "image/png",
+    "logoByteSize": 4096,
+    "logoStorageKey": "00000000-0000-4000-8000-000000005b11/abababababababababababababababababababababababababababababababab",
+    "enabled": true,
+    "scheduleStartsAt": null,
+    "scheduleEndsAt": null,
+    "createdAt": "2026-09-17T10:00:00.000Z",
+    "updatedAt": "2026-09-17T10:05:00.000Z"
+  }
+}

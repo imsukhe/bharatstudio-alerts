@@ -1,0 +1,10 @@
+{
+  "$schema": "https://bharatstudio.in/contracts/v1/overlay-sponsor-card-response.schema.json",
+  "schemaVersion": "v1",
+  "sponsorCard": {
+    "schemaVersion": "v1",
+    "sponsorName": "Acme Energy Drinks",
+    "logoMimeType": "image/png",
+    "logoStorageKey": "00000000-0000-4000-8000-000000005b11/abababababababababababababababababababababababababababababababab"
+  }
+}

@@ -63,7 +63,11 @@ psql < "$ROOT/packages/db/tests/l02_security_remediations.sql"
 # file above the intended baseline can still be excluded on demand via
 # MAX_MIGRATION.
 MAX_MIGRATION_NUMBER=${MAX_MIGRATION:-$(ls "$ROOT"/packages/db/migrations/*.sql | sed 's#.*/##' | cut -c1-4 | sort -n | tail -1)}
-MAX_MIGRATION_NUMBER=$((10#$MAX_MIGRATION_NUMBER))
+# Strip leading zeros portably. `$((10#$n))` is a bashism: /bin/sh is dash on
+# Ubuntu CI and rejects it ("arithmetic expression: expecting EOF"), while
+# macOS /bin/sh is bash and accepts it -- so it passed locally and broke in CI.
+MAX_MIGRATION_NUMBER=$(printf %s "$MAX_MIGRATION_NUMBER" | sed 's/^0*//')
+[ -n "$MAX_MIGRATION_NUMBER" ] || MAX_MIGRATION_NUMBER=0
 
 n=3
 while [ "$n" -le "$MAX_MIGRATION_NUMBER" ]; do

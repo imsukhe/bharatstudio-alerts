@@ -140,3 +140,22 @@ export function isPlatformAdminCheck(store?: { isPlatformAdmin(userId: string): 
 export function requirePlatformAdmin(sessions?: SessionStore, store?: { isPlatformAdmin(userId: string): Promise<boolean> }) {
   return [requireAuth(sessions), isPlatformAdminCheck(store)];
 }
+
+/** CTL-13: privileged capability-control changes require a recent, durable
+ * session-bound passkey assertion. Missing configuration/store is a 503, not
+ * an accidental downgrade to admin-password-only access. */
+export function requirePlatformAdminMfa(
+  sessions?: SessionStore,
+  store?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  mfa?: { isVerified(input: { userId: string; sessionId: string; maxAgeSeconds: number }): Promise<boolean> },
+  maxAgeSeconds?: number,
+) {
+  return [...requirePlatformAdmin(sessions, store), async function checkMfa(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    if (!request.auth) return;
+    if (!mfa || !maxAgeSeconds) { await reply.code(503).send({ schemaVersion: 'v1', errorCode: 'admin_mfa_unavailable', message: 'Privileged passkey authentication is temporarily unavailable', traceId: request.id, retryable: true }); return; }
+    try {
+      if (await mfa.isVerified({ ...request.auth, maxAgeSeconds })) return;
+    } catch { await reply.code(503).send({ schemaVersion: 'v1', errorCode: 'admin_mfa_unavailable', message: 'Privileged passkey authentication is temporarily unavailable', traceId: request.id, retryable: true }); return; }
+    await reply.code(428).send({ schemaVersion: 'v1', errorCode: 'admin_mfa_required', message: 'Verify your passkey before making privileged changes', traceId: request.id, retryable: false });
+  }];
+}

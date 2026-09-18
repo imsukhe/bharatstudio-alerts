@@ -8,6 +8,8 @@ import type { PublicChannelRepository } from './domain/public-channel.js';
 import { registerPublicRoutes } from './routes/public.js';
 import type { GoogleIdentityVerifier } from './auth/google.js';
 import type { SessionStore } from './auth/session-store.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from './domain/admin-passkeys.js';
+import { registerAdminPasskeyRoutes } from './routes/admin-passkeys.js';
 import { installAuthState } from './auth/pre-handler.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerMeRoutes } from './routes/me.js';
@@ -324,6 +326,8 @@ export type AppDependencies = {
   // CTL phase 2, Lane A (migration 0152). Platform-staff governance
   // over the same registry -- staged changes, approvals, kill, revert.
   capabilityChangeManagement?: CapabilityChangeManagementStore;
+  adminPasskeys?: AdminPasskeyStore;
+  adminWebAuthn?: AdminWebAuthnConfig;
   // CTL registry spec alignment (migration 0153). Single-admin, immediate
   // §20.2 field writes -- see the import site above for why this is a
   // separate surface from capabilityChangeManagement.
@@ -561,7 +565,7 @@ export async function buildApp(
   await registerPaymentLedgerRoutes(app, dependencies.sessions, dependencies.paymentLedger);
   await registerReferralRoutes(app, dependencies.sessions, dependencies.referrals);
   await registerBrandingRoutes(app, dependencies.sessions, dependencies.branding, dependencies.account);
-  await registerAdminRoutes(app, dependencies.sessions, dependencies.admin, dependencies.ingestFailures, dependencies.staffCreatorPackReview);
+  await registerAdminRoutes(app, dependencies.sessions, dependencies.admin, dependencies.ingestFailures, dependencies.staffCreatorPackReview, dependencies.adminPasskeys, dependencies.adminWebAuthn);
   await registerAlertRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.paymentSubscriptions, config.paymentEnvironment ?? (config.nodeEnv === 'production' ? 'live' : 'test'), dependencies.account, dependencies.paymentMethodUpdates);
   await registerCompanionRoutes(app, dependencies.sessions, dependencies.alerts, dependencies.account, dependencies.companionFeatures, dependencies.companionEntitlement);
   await registerCompanionLiveOpsRoutes(app, dependencies.sessions, dependencies.companionLiveOps);
@@ -585,13 +589,14 @@ export async function buildApp(
   await registerQrSmartCardRoutes(app, dependencies.sessions, dependencies.qrSmartCards, dependencies.account);
   await registerCanvasLayoutRoutes(app, dependencies.sessions, dependencies.canvasLayout, dependencies.account);
   await registerCapabilityRoutes(app, dependencies.sessions, dependencies.capabilities);
-  await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin);
-  await registerCapabilityRegistryAdminRoutes(app, dependencies.sessions, dependencies.capabilityRegistryAdmin, dependencies.admin);
+  await registerAdminPasskeyRoutes(app, dependencies.sessions, dependencies.adminPasskeys, dependencies.adminWebAuthn, dependencies.admin);
+  await registerCapabilityChangeManagementRoutes(app, dependencies.sessions, dependencies.capabilityChangeManagement, dependencies.admin, dependencies.adminPasskeys, dependencies.adminWebAuthn);
+  await registerCapabilityRegistryAdminRoutes(app, dependencies.sessions, dependencies.capabilityRegistryAdmin, dependencies.admin, dependencies.adminPasskeys, dependencies.adminWebAuthn);
   await registerPublicCapabilityMatrixRoutes(app, dependencies.publicCapabilityMatrix);
-  await registerCapabilityMatrixAdminRoutes(app, dependencies.sessions, dependencies.capabilityMatrixAdmin, dependencies.marketingRevalidateWebhook, dependencies.admin);
-  await registerPlatformOwnerRoutes(app, dependencies.sessions, dependencies.platformOwner, dependencies.admin);
-  await registerPlatformAdminRoutes(app, dependencies.sessions, dependencies.platformAdmin, dependencies.admin);
-  await registerCapabilityKillEventRoutes(app, dependencies.sessions, dependencies.capabilityKillEvents, dependencies.admin);
+  await registerCapabilityMatrixAdminRoutes(app, dependencies.sessions, dependencies.capabilityMatrixAdmin, dependencies.marketingRevalidateWebhook, dependencies.admin, dependencies.adminPasskeys, dependencies.adminWebAuthn);
+  await registerPlatformOwnerRoutes(app, dependencies.sessions, dependencies.platformOwner, dependencies.admin, dependencies.adminPasskeys, dependencies.adminWebAuthn);
+  await registerPlatformAdminRoutes(app, dependencies.sessions, dependencies.platformAdmin, dependencies.admin, dependencies.adminPasskeys, dependencies.adminWebAuthn);
+  await registerCapabilityKillEventRoutes(app, dependencies.sessions, dependencies.capabilityKillEvents, dependencies.admin, dependencies.adminPasskeys, dependencies.adminWebAuthn);
   await registerSafetyCorpusRoutes(app, dependencies.sessions, dependencies.safetyCorpus);
   await registerUrlDomainRuleRoutes(app, dependencies.sessions, dependencies.safetyDomainRules);
   await registerReputationRoutes(app, dependencies.sessions, dependencies.reputation);

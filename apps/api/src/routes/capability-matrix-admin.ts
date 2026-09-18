@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePlatformAdmin } from '../auth/pre-handler.js';
+import { requirePlatformAdminMfa } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import type { CapabilityMatrixAdminStore } from '../domain/capability-matrix-admin.js';
 import type { MarketingRevalidateWebhook } from '../domain/marketing-revalidate-webhook.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from '../domain/admin-passkeys.js';
 
 // CTL-10/CTL-11 (migration 0160). Platform-staff-only publish surface,
-// same requirePlatformAdmin gate as routes/capability-registry-admin.ts.
+// same requirePlatformAdminMfa gate as routes/capability-registry-admin.ts.
 // Own file, own store -- this is the publish/introspection half of the
 // public matrix plane; routes/public-capability-matrix.ts is the public
 // read half.
@@ -37,8 +38,10 @@ export async function registerCapabilityMatrixAdminRoutes(
   store?: CapabilityMatrixAdminStore,
   webhook?: MarketingRevalidateWebhook,
   adminGate?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  adminPasskeys?: AdminPasskeyStore,
+  adminWebAuthn?: AdminWebAuthnConfig,
 ): Promise<void> {
-  const adminAuth = requirePlatformAdmin(sessions, adminGate);
+  const adminAuth = requirePlatformAdminMfa(sessions, adminGate, adminPasskeys, adminWebAuthn?.mfaMaxAgeSeconds);
 
   app.post<{ Body: { reason: string } }>('/v1/admin/capability-matrix/publish', {
     preHandler: adminAuth,

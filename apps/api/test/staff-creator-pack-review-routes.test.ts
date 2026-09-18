@@ -5,6 +5,7 @@ import { installAuthState } from '../src/auth/pre-handler.js';
 import { registerAdminRoutes } from '../src/routes/admin.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore } from '../src/domain/admin.js';
+import type { AdminPasskeyStore } from '../src/domain/admin-passkeys.js';
 import type {
   CreatorPackReviewDetail,
   PendingCreatorPackEntry,
@@ -20,10 +21,29 @@ function buildTestApp(
   sessions: SessionStore,
   store: AdminStore | undefined,
   staffStore: StaffCreatorPackReviewStore | undefined,
+  mfaVerified = true,
 ) {
   const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
-  return registerAdminRoutes(app, sessions, store, undefined, staffStore).then(() => app);
+  const mfa: AdminPasskeyStore = {
+    async list() { return []; },
+    async begin() {},
+    async finishRegistration() {},
+    async finishAssertion() { return '2026-09-18T00:00:00.000Z'; },
+    async isVerified() { return mfaVerified; },
+    async requestRecovery() { return '00000000-0000-4000-8000-00000000aa01'; },
+    async listPendingRecoveries() { return []; },
+    async approveRecovery() { return { status: 'awaiting_second_approval' as const, completedAt: null }; },
+  };
+  return registerAdminRoutes(
+    app,
+    sessions,
+    store,
+    undefined,
+    staffStore,
+    mfa,
+    { rpId: 'admin.test', origins: ['http://localhost:3100'], challengeTtlSeconds: 60, mfaMaxAgeSeconds: 60 },
+  ).then(() => app);
 }
 
 const staffUserId = '00000000-0000-4000-8000-000000000991';
@@ -135,6 +155,19 @@ test('a channel owner cannot reach a staff creator-pack review route by any path
 
   const review = await app.inject({ method: 'POST', url: `/v1/admin/creator-packs/${packId}/review`, headers: ownerHeaders, payload: { approved: true } });
   assert.equal(review.statusCode, 403);
+
+  await app.close();
+});
+
+test('a platform admin without a recent passkey assertion cannot inspect or review creator packs', async () => {
+  const app = await buildTestApp(sessions, roleGateStore(), staffStore(), false);
+
+  const list = await app.inject({ method: 'GET', url: '/v1/admin/creator-packs/pending', headers: staffHeaders });
+  assert.equal(list.statusCode, 428);
+  assert.equal(list.json().errorCode, 'admin_mfa_required');
+
+  const review = await app.inject({ method: 'POST', url: `/v1/admin/creator-packs/${packId}/review`, headers: staffHeaders, payload: { approved: true } });
+  assert.equal(review.statusCode, 428);
 
   await app.close();
 });

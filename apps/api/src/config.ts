@@ -7,6 +7,9 @@ export type RuntimeConfig = {
   databaseUrlApp?: string;
   databaseUrlDirect?: string;
   googleClientId?: string;
+  // CTL-13: absent configuration intentionally makes privileged MFA routes
+  // unavailable. Values are deployment decisions, never local defaults.
+  adminWebAuthn?: { rpId: string; origins: string[]; challengeTtlSeconds: number; mfaMaxAgeSeconds: number };
   paymentEnvironment?: 'test' | 'live';
   paymentServiceOrigin?: string;
   paymentServiceAudience?: string;
@@ -227,6 +230,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     }
     return parsed;
   }
+  const adminWebAuthnRpId = env.ADMIN_WEBAUTHN_RP_ID;
+  const adminWebAuthnOrigins = (env.ADMIN_WEBAUTHN_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  // CTL-13 owner decision: these are a security policy, not a deployment
+  // tuning knob. Keeping them fixed prevents one environment from silently
+  // weakening the approved five-minute ceremony / fifteen-minute elevation.
+  if (env.ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS || env.ADMIN_MFA_MAX_AGE_SECONDS) {
+    throw new Error('ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS and ADMIN_MFA_MAX_AGE_SECONDS are fixed by CTL-13 policy and must not be configured');
+  }
+  const adminWebAuthnFields = [Boolean(adminWebAuthnRpId), adminWebAuthnOrigins.length > 0];
+  if (adminWebAuthnFields.some(Boolean) && !adminWebAuthnFields.every(Boolean)) throw new Error('ADMIN_WEBAUTHN_RP_ID and ADMIN_WEBAUTHN_ORIGINS must be configured together');
+  for (const origin of adminWebAuthnOrigins) {
+    const parsed = parseAppOrigin(origin, nodeEnv);
+    if (parsed !== origin.replace(/\/$/, '')) throw new Error('ADMIN_WEBAUTHN_ORIGINS must be canonical origins');
+    const host = new URL(parsed).hostname;
+    if (adminWebAuthnRpId && host !== adminWebAuthnRpId && !host.endsWith(`.${adminWebAuthnRpId}`)) {
+      throw new Error('Each ADMIN_WEBAUTHN_ORIGINS host must equal or be a subdomain of ADMIN_WEBAUTHN_RP_ID');
+    }
+  }
+  const adminWebAuthn = adminWebAuthnFields.every(Boolean) ? { rpId: adminWebAuthnRpId!, origins: adminWebAuthnOrigins, challengeTtlSeconds: 300, mfaMaxAgeSeconds: 900 } : undefined;
   const overlayMaxInstanceSubscribers = optionalPositiveInt('OVERLAY_MAX_INSTANCE_SUBSCRIBERS');
   const overlayMaxChannelSubscribers = optionalPositiveInt('OVERLAY_MAX_CHANNEL_SUBSCRIBERS');
   const derivedReadMaxConcurrent = optionalPositiveInt('WIDGET_ANALYTICS_MAX_CONCURRENT_READS');
@@ -324,6 +346,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     soundboardUploadMaxByteSize,
     mediaCdnBaseUrl,
     googleClientId,
+    adminWebAuthn,
     paymentEnvironment,
     paymentServiceOrigin,
     paymentServiceAudience,

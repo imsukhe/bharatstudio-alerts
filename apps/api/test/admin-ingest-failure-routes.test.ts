@@ -6,6 +6,7 @@ import { registerAdminRoutes } from '../src/routes/admin.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore } from '../src/domain/admin.js';
 import type { IngestFailureAdminStore, IngestFailureEntry } from '../src/domain/ingest-failure-admin.js';
+import type { AdminPasskeyStore } from '../src/domain/admin-passkeys.js';
 
 // This suite builds its own minimal `createTestFastify()` instance (rather than
 // apps/api/src/app.ts's buildApp, as admin-routes.test.ts does) because
@@ -17,7 +18,8 @@ import type { IngestFailureAdminStore, IngestFailureEntry } from '../src/domain/
 function buildTestApp(sessions: SessionStore, store: AdminStore | undefined, ingestFailureStore: IngestFailureAdminStore | undefined) {
   const app = createTestFastify();
   app.addHook('onRequest', async (request) => installAuthState(request));
-  return registerAdminRoutes(app, sessions, store, ingestFailureStore).then(() => app);
+  const mfa: AdminPasskeyStore = { async list() { return []; }, async begin() {}, async finishRegistration() {}, async finishAssertion() { return '2026-09-18T00:00:00.000Z'; }, async isVerified() { return true; }, async requestRecovery() { return '00000000-0000-4000-8000-00000000aa01'; }, async listPendingRecoveries() { return []; }, async approveRecovery() { return { status: 'awaiting_second_approval' as const, completedAt: null }; } };
+  return registerAdminRoutes(app, sessions, store, ingestFailureStore, undefined, mfa, { rpId: 'admin.test', origins: ['http://localhost:3100'], challengeTtlSeconds: 60, mfaMaxAgeSeconds: 60 }).then(() => app);
 }
 
 const adminUserId = '00000000-0000-4000-8000-000000000901';

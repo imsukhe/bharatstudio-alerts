@@ -148,8 +148,6 @@ export interface CapabilityChangeManagementStore {
   listApprovals(userId: string, changeRequestId: string): Promise<CapabilityChangeApproval[]>;
   approveChange(userId: string, changeRequestId: string, approvalKind: CapabilityApprovalKind): Promise<CapabilityChangeRequest>;
   rejectChange(userId: string, changeRequestId: string, reason: string): Promise<CapabilityChangeRequest>;
-  // CTL-07 rule 3: single-admin, immediate.
-  killCapability(userId: string, capabilityKey: string, reason: string | null): Promise<CapabilityChangeRequest>;
   // CTL-08: one action, immediate, append-only.
   revertCapability(userId: string, capabilityKey: string, reason: string | null): Promise<CapabilityChangeRequest>;
 }

@@ -9,11 +9,10 @@
 // billing exemption -- neither mechanism exists anywhere in this schema
 // yet).
 //
-// Distinct from routes/capability-change-management.ts's existing
-// staff_kill_capability_now (migration 0152) -- that remains the
-// ordinary, no-expiry, no-ratification per-capability kill path,
-// untouched by this migration. This file is the FULLER §20.6.1
-// subsystem, its own tables, its own functions.
+// The legacy no-expiry/no-ratification API route over
+// staff_kill_capability_now (migration 0152) is deliberately absent.
+// This file is the sole §20.6.1 API subsystem, with its own tables and
+// functions.
 //
 // Platform-staff only (app_private.is_platform_admin()) -- same gate
 // every other file in this directory uses.

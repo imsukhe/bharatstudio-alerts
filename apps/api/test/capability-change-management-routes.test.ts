@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildApp } from '../src/app.js';
+import { buildApp as rawBuildApp, type AppDependencies } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore } from '../src/domain/admin.js';
+import type { AdminPasskeyStore } from '../src/domain/admin-passkeys.js';
 import {
   CapabilityChangeManagementError,
   type CapabilityChangeManagementStore,
@@ -47,6 +48,13 @@ const admin: AdminStore = {
   async listChannelEntitlementHistory() { return []; },
   async overrideChannelEntitlement() { return null; },
 };
+const verifiedPasskeySession: AdminPasskeyStore = {
+  async list() { return []; }, async begin() {}, async finishRegistration() {}, async finishAssertion() { return '2026-09-18T00:00:00.000Z'; }, async isVerified() { return true; }, async requestRecovery() { return '00000000-0000-4000-8000-00000000aa01'; }, async listPendingRecoveries() { return []; }, async approveRecovery() { return { status: 'awaiting_second_approval' as const, completedAt: null }; },
+};
+const mfaConfig = { rpId: 'admin.test', origins: ['http://localhost:3103'], challengeTtlSeconds: 60, mfaMaxAgeSeconds: 60 };
+function buildApp(testConfig: RuntimeConfig, dependencies: AppDependencies) {
+  return rawBuildApp(testConfig, { ...dependencies, adminPasskeys: verifiedPasskeySession, adminWebAuthn: mfaConfig });
+}
 
 const sampleChange: CapabilityChangeRequest = {
   schemaVersion: 'v1',
@@ -86,7 +94,6 @@ function fakeStore(overrides: Partial<CapabilityChangeManagementStore> = {}): Ca
     async listApprovals() { return []; },
     async approveChange() { return { ...sampleChange, status: 'approved', staffApprovalCount: 2 }; },
     async rejectChange() { return { ...sampleChange, status: 'rejected', decidedAt: '2026-09-17T11:00:00.000Z' }; },
-    async killCapability() { return { ...sampleChange, changeKind: 'kill', status: 'applied', proposedKillSwitch: true }; },
     async revertCapability() { return { ...sampleChange, changeKind: 'revert', status: 'applied' }; },
     ...overrides,
   };
@@ -111,6 +118,14 @@ test('capability change management: platform-admin gate, same posture as the DLQ
   await app.close();
 });
 
+test('capability change management: privileged routes deny an admin without a recent passkey assertion', async () => {
+  const app = await rawBuildApp(config, { sessions, admin, capabilityChangeManagement: fakeStore(), adminPasskeys: { ...verifiedPasskeySession, async isVerified() { return false; } }, adminWebAuthn: mfaConfig });
+  const response = await app.inject({ method: 'POST', url: '/v1/admin/capability-registry/changes', headers, payload: { capabilityKey: 'ctl_route_probe', capacityClass: 'team_seat', description: 'probe' } });
+  assert.equal(response.statusCode, 428);
+  assert.equal(response.json().errorCode, 'admin_mfa_required');
+  await app.close();
+});
+
 test('capability change management: every route fails closed (503) with no configured store', async () => {
   const app = await buildApp(config, { sessions, admin });
   const routes: Array<{ method: 'GET' | 'POST'; url: string; payload: Record<string, unknown> }> = [
@@ -119,7 +134,6 @@ test('capability change management: every route fails closed (503) with no confi
     { method: 'GET', url: `/v1/admin/capability-registry/changes/${changeId}`, payload: {} },
     { method: 'POST', url: `/v1/admin/capability-registry/changes/${changeId}/approve`, payload: { approvalKind: 'staff' } },
     { method: 'POST', url: `/v1/admin/capability-registry/changes/${changeId}/reject`, payload: { reason: 'no' } },
-    { method: 'POST', url: '/v1/admin/capability-registry/ctl_probe/kill', payload: {} },
     { method: 'POST', url: '/v1/admin/capability-registry/ctl_probe/revert', payload: {} },
   ];
   for (const route of routes) {
@@ -221,7 +235,7 @@ test('capability change management: get returns the change plus its approvals, 4
   await app.close();
 });
 
-test('capability change management: approve/reject/kill/revert happy paths', async () => {
+test('capability change management: approve/reject/revert happy paths', async () => {
   const app = await buildApp(config, { sessions, admin, capabilityChangeManagement: fakeStore() });
 
   const approved = await app.inject({ method: 'POST', url: `/v1/admin/capability-registry/changes/${changeId}/approve`, headers, payload: { approvalKind: 'staff' } });
@@ -232,13 +246,31 @@ test('capability change management: approve/reject/kill/revert happy paths', asy
   assert.equal(rejected.statusCode, 200);
   assert.equal(rejected.json().status, 'rejected');
 
-  const killed = await app.inject({ method: 'POST', url: '/v1/admin/capability-registry/ctl_route_probe/kill', headers, payload: { reason: 'incident' } });
-  assert.equal(killed.statusCode, 200);
-  assert.equal(killed.json().changeKind, 'kill');
-
   const reverted = await app.inject({ method: 'POST', url: '/v1/admin/capability-registry/ctl_route_probe/revert', headers, payload: {} });
   assert.equal(reverted.statusCode, 200);
   assert.equal(reverted.json().changeKind, 'revert');
+  await app.close();
+});
+
+test('capability change management: legacy immediate kill route is absent and cannot reach a store', async () => {
+  let called = false;
+  const app = await buildApp(config, {
+    sessions, admin,
+    capabilityChangeManagement: fakeStore({
+      async revertCapability() {
+        called = true;
+        return { ...sampleChange, changeKind: 'revert', status: 'applied' };
+      },
+    }),
+  });
+  const response = await app.inject({
+    method: 'POST',
+    url: '/v1/admin/capability-registry/ctl_route_probe/kill',
+    headers,
+    payload: { reason: 'must not be accepted' },
+  });
+  assert.equal(response.statusCode, 404);
+  assert.equal(called, false);
   await app.close();
 });
 

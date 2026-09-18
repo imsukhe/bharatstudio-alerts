@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePlatformAdmin } from '../auth/pre-handler.js';
+import { requirePlatformAdminMfa } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import { PlatformOwnerError, type PlatformOwnerStore } from '../domain/platform-owner.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from '../domain/admin-passkeys.js';
 
 // Migration 0155, Job 1. Platform-staff-only surface over app_private.
 // staff_set_platform_owner -- the ONE path that can ever change
-// app_users.is_platform_owner. Same requirePlatformAdmin gate, same
+// app_users.is_platform_owner. Same requirePlatformAdminMfa gate, same
 // unavailable-but-safe-503 posture as every other admin route in this
 // codebase. Deliberately its own file, not folded into admin.ts -- this
 // is a distinct, narrow, security-sensitive surface (see domain/
@@ -32,8 +33,10 @@ export async function registerPlatformOwnerRoutes(
   sessions?: SessionStore,
   store?: PlatformOwnerStore,
   adminGate?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  adminPasskeys?: AdminPasskeyStore,
+  adminWebAuthn?: AdminWebAuthnConfig,
 ): Promise<void> {
-  const adminAuth = requirePlatformAdmin(sessions, adminGate);
+  const adminAuth = requirePlatformAdminMfa(sessions, adminGate, adminPasskeys, adminWebAuthn?.mfaMaxAgeSeconds);
 
   // Owner decision 2026-09-17: never self-conferred (app_private.
   // staff_set_platform_owner rejects actor = targetUserId, 403), always

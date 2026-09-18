@@ -13,13 +13,10 @@
 // projection would break, so the six new §20.2 fields are NOT staged/
 // approved through that workflow in this migration. They are settable
 // only through the single-admin, immediate, still-versioned-and-audited
-// path this file backs (app_private.staff_set_capability_registry_entry
+// CREATE path this file backs (app_private.staff_set_capability_registry_entry
 // / staff_get_capability_registry_entry / staff_list_capability_registry_entries,
-// migration 0153) -- the same "single platform admin, no approval round,
-// still fully audited via the registry's own table-level triggers"
-// posture app_private.staff_kill_capability_now and
-// staff_revert_capability_registry_entry (migration 0152) already use
-// for their own immediate writes.
+// migration 0153). The SQL function rejects existing rows; update/revert
+// operations use the governed change-management surface.
 //
 // Platform-staff only (app_private.is_platform_admin()) -- same gate
 // domain/capability-change-management.ts and admin.ts already use.

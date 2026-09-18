@@ -1,15 +1,16 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePlatformAdmin } from '../auth/pre-handler.js';
+import { requirePlatformAdminMfa } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import { CapabilityRegistryAdminError, type CapabilityKind, type CapabilityRegistryAdminStore } from '../domain/capability-registry-admin.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from '../domain/admin-passkeys.js';
 
 // CTL registry spec alignment (migration 0153). Platform-staff-only
 // surface over the §20.2 fields migration 0149 did not ship -- kind,
 // limits, beta, marketing_visible, marketing_label, marketing_blurb.
 // Deliberately its OWN file and its OWN endpoints, not folded into
 // routes/capability-change-management.ts: this is a single-admin,
-// immediate write (mirroring app_private.staff_kill_capability_now /
+// immediate create only (the SQL function rejects existing rows; unlike
 // staff_revert_capability_registry_entry's own posture), not a
 // two-staff-approved staged change -- see migration 0153's own header
 // and domain/capability-registry-admin.ts for exactly why the six new
@@ -41,8 +42,10 @@ export async function registerCapabilityRegistryAdminRoutes(
   sessions?: SessionStore,
   store?: CapabilityRegistryAdminStore,
   adminGate?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  adminPasskeys?: AdminPasskeyStore,
+  adminWebAuthn?: AdminWebAuthnConfig,
 ): Promise<void> {
-  const adminAuth = requirePlatformAdmin(sessions, adminGate);
+  const adminAuth = requirePlatformAdminMfa(sessions, adminGate, adminPasskeys, adminWebAuthn?.mfaMaxAgeSeconds);
 
   app.get('/v1/admin/capability-registry/entries', {
     preHandler: adminAuth,

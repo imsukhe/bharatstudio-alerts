@@ -82,10 +82,9 @@ import { createSqlCapabilityStore } from './db/capability-store.js';
 // surface (propose/approve/reject/kill/revert), so it takes the MAIN
 // pool `sql`, not derivedReadSql -- see db/capability-change-management-store.ts's own header.
 import { createSqlCapabilityChangeManagementStore } from './db/capability-change-management-store.js';
-// CTL registry spec alignment (migration 0153): the §20.2 fields --
-// single-admin, immediate write on the MAIN pool (mirrors
-// staff_kill_capability_now / staff_revert_capability_registry_entry's
-// own posture), not the two-staff-approved staged workflow above -- see
+// CTL registry spec alignment (migration 0153): a single-admin,
+// immediate CREATE-only path for §20.2 registry fields on the MAIN pool.
+// Updates use the two-staff-approved workflow above; see
 // db/capability-registry-admin-store.ts's own header.
 import { createSqlCapabilityRegistryAdminStore } from './db/capability-registry-admin-store.js';
 // CTL-10/CTL-11 (migration 0160): the public capability matrix (read),
@@ -102,6 +101,7 @@ import { createSqlCapabilityKillEventStore } from './db/capability-kill-events-s
 // Single-admin-reachable, main pool -- same posture as platform-owner-
 // store.js immediately above.
 import { createSqlPlatformAdminStore } from './db/platform-admin-store.js';
+import { createSqlAdminPasskeyStore } from './db/admin-passkey-store.js';
 // SAF phase 1 (migration 0151): moderation pipeline spine, corpus
 // management only. ONE file, TWO pools -- the list read is wired to
 // derivedReadSql (RT-10/RT-11), create/remove stay on the main `sql`
@@ -397,6 +397,8 @@ const app = await buildApp(config, {
   marketingRevalidateWebhook: createFetchMarketingRevalidateWebhook(config.marketingRevalidateWebhookUrl, config.marketingRevalidateWebhookSecret),
   platformOwner: sql ? createSqlPlatformOwnerStore(sql) : undefined,
   platformAdmin: sql ? createSqlPlatformAdminStore(sql) : undefined,
+  adminPasskeys: sql ? createSqlAdminPasskeyStore(sql) : undefined,
+  adminWebAuthn: config.adminWebAuthn,
   capabilityKillEvents: sql ? createSqlCapabilityKillEventStore(sql) : undefined,
   assist: sql ? createSqlAssistStore(sql) : undefined,
   sql,

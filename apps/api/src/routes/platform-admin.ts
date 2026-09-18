@@ -1,14 +1,15 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePlatformAdmin } from '../auth/pre-handler.js';
+import { requirePlatformAdminMfa } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import { PlatformAdminError, type PlatformAdminStore } from '../domain/platform-admin.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from '../domain/admin-passkeys.js';
 
 // Migration 0156 (ADM-07). Platform-staff-only surface over app_private.
 // staff_set_platform_admin -- the ONE path that can ever change
 // app_users.is_platform_admin through the application layer -- and
 // app_private.staff_list_platform_admins, a read of the current
-// registry. Same requirePlatformAdmin gate, same unavailable-but-safe-503
+// registry. Same requirePlatformAdminMfa gate, same unavailable-but-safe-503
 // posture as every other admin route in this codebase. Modelled directly
 // on routes/platform-owner.ts (migration 0155, Job 1); its own file for
 // the same reason that one is its own file -- a distinct, narrow,
@@ -32,8 +33,10 @@ export async function registerPlatformAdminRoutes(
   sessions?: SessionStore,
   store?: PlatformAdminStore,
   adminGate?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  adminPasskeys?: AdminPasskeyStore,
+  adminWebAuthn?: AdminWebAuthnConfig,
 ): Promise<void> {
-  const adminAuth = requirePlatformAdmin(sessions, adminGate);
+  const adminAuth = requirePlatformAdminMfa(sessions, adminGate, adminPasskeys, adminWebAuthn?.mfaMaxAgeSeconds);
 
   // ADM-07: never self-conferred (app_private.staff_set_platform_admin
   // rejects actor = targetUserId, 403, in both the grant and the revoke

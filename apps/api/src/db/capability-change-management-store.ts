@@ -217,24 +217,6 @@ export function createSqlCapabilityChangeManagementStore(sql: Sql): CapabilityCh
         throw error;
       }
     },
-    async killCapability(userId, capabilityKey, reason): Promise<CapabilityChangeRequest> {
-      try {
-        const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`
-          select id, capability_key, change_kind, status, proposed_capacity_class, proposed_description,
-          proposed_kill_switch, proposed_rollout_percentage, proposed_min_tier,
-          proposed_kind, proposed_limits, proposed_beta, proposed_marketing_visible, proposed_marketing_label, proposed_marketing_blurb,
-          effective_at, requires_owner_signoff, staff_approval_count, owner_approval_count, created_by, created_at,
-          applied_at, decided_at, reason
-            from app_private.staff_kill_capability_now(${capabilityKey}, ${reason})
-        `);
-        const row = rows[0];
-        if (!row) throw new CapabilityChangeManagementError('capability_not_found', 'kill returned no row');
-        return fromRow(row);
-      } catch (error) {
-        if (hasSqlstate(error, '22023')) throw classify(error);
-        throw error;
-      }
-    },
     async revertCapability(userId, capabilityKey, reason): Promise<CapabilityChangeRequest> {
       try {
         const rows = await inUserTransaction(sql, userId, (tx) => tx<ChangeRow[]>`

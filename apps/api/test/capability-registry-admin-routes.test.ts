@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildApp } from '../src/app.js';
+import { buildApp as rawBuildApp, type AppDependencies } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore } from '../src/domain/admin.js';
+import type { AdminPasskeyStore } from '../src/domain/admin-passkeys.js';
 import {
   CapabilityRegistryAdminError,
   type CapabilityRegistryAdminStore,
@@ -46,6 +47,13 @@ const admin: AdminStore = {
   async listChannelEntitlementHistory() { return []; },
   async overrideChannelEntitlement() { return null; },
 };
+const verifiedPasskeySession: AdminPasskeyStore = {
+  async list() { return []; }, async begin() {}, async finishRegistration() {}, async finishAssertion() { return '2026-09-18T00:00:00.000Z'; }, async isVerified() { return true; }, async requestRecovery() { return '00000000-0000-4000-8000-00000000aa01'; }, async listPendingRecoveries() { return []; }, async approveRecovery() { return { status: 'awaiting_second_approval' as const, completedAt: null }; },
+};
+const mfaConfig = { rpId: 'admin.test', origins: ['http://localhost:3104'], challengeTtlSeconds: 60, mfaMaxAgeSeconds: 60 };
+function buildApp(testConfig: RuntimeConfig, dependencies: AppDependencies) {
+  return rawBuildApp(testConfig, { ...dependencies, adminPasskeys: verifiedPasskeySession, adminWebAuthn: mfaConfig });
+}
 
 const sampleEntry: CapabilityRegistryEntry = {
   schemaVersion: 'v1',
@@ -87,6 +95,14 @@ test('capability registry admin: platform-admin gate, same posture as capability
 
   const unauthenticated = await app.inject({ method: 'GET', url: '/v1/admin/capability-registry/entries' });
   assert.equal(unauthenticated.statusCode, 401);
+  await app.close();
+});
+
+test('capability registry admin: privileged routes deny an admin without a recent passkey assertion', async () => {
+  const app = await rawBuildApp(config, { sessions, admin, capabilityRegistryAdmin: fakeStore(), adminPasskeys: { ...verifiedPasskeySession, async isVerified() { return false; } }, adminWebAuthn: mfaConfig });
+  const response = await app.inject({ method: 'PUT', url: '/v1/admin/capability-registry/entries/ctl_route_registry_probe', headers, payload: fullBody() });
+  assert.equal(response.statusCode, 428);
+  assert.equal(response.json().errorCode, 'admin_mfa_required');
   await app.close();
 });
 

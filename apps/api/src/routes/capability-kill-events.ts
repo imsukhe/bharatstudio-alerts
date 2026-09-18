@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePlatformAdmin } from '../auth/pre-handler.js';
+import { requirePlatformAdminMfa } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import { CapabilityKillEventError, type CapabilityKillEventStore } from '../domain/capability-kill-events.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from '../domain/admin-passkeys.js';
 
 // Migration 0155, Job 2. Platform-staff-only surface over §20.6.1's
 // emergency global_kill path -- fire, ratify, propose/approve an
 // extension, file a post-incident review, get/list. Same
-// requirePlatformAdmin gate, same unavailable-but-safe-503 posture as
+// requirePlatformAdminMfa gate, same unavailable-but-safe-503 posture as
 // every other admin route in this codebase. Its own file, its own
 // migration, its own subsystem -- distinct from routes/capability-
 // change-management.ts's existing kill (migration 0152's ordinary,
@@ -44,8 +45,10 @@ export async function registerCapabilityKillEventRoutes(
   sessions?: SessionStore,
   store?: CapabilityKillEventStore,
   adminGate?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  adminPasskeys?: AdminPasskeyStore,
+  adminWebAuthn?: AdminWebAuthnConfig,
 ): Promise<void> {
-  const adminAuth = requirePlatformAdmin(sessions, adminGate);
+  const adminAuth = requirePlatformAdminMfa(sessions, adminGate, adminPasskeys, adminWebAuthn?.mfaMaxAgeSeconds);
 
   // WHO MAY FIRE / WHAT IT DOES: one admin, alone, immediate. Reason
   // mandatory; affected/live channel counts caller-supplied (§20.6's own

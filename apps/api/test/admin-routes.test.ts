@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildApp } from '../src/app.js';
+import { buildApp as rawBuildApp, type AppDependencies } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore, ChannelEntitlementAdminView, DlqEntry } from '../src/domain/admin.js';
+import type { AdminPasskeyStore } from '../src/domain/admin-passkeys.js';
 
 const config: RuntimeConfig = { nodeEnv: 'test', host: '127.0.0.1', port: 4100, appOrigin: 'http://localhost:3100', paymentEnvironment: 'test' };
 const adminUserId = '00000000-0000-4000-8000-000000000901';
@@ -45,6 +46,8 @@ function adminOnlyStore(overrides: Partial<AdminStore> = {}): AdminStore {
     ...overrides,
   };
 }
+const mfa: AdminPasskeyStore = { async list() { return []; }, async begin() {}, async finishRegistration() {}, async finishAssertion() { return '2026-09-18T00:00:00.000Z'; }, async isVerified() { return true; }, async requestRecovery() { return '00000000-0000-4000-8000-00000000aa01'; }, async listPendingRecoveries() { return []; }, async approveRecovery() { return { status: 'awaiting_second_approval' as const, completedAt: null }; } };
+function buildApp(testConfig: RuntimeConfig, dependencies: AppDependencies) { return rawBuildApp(testConfig, { ...dependencies, adminPasskeys: mfa, adminWebAuthn: { rpId: 'admin.test', origins: ['http://localhost:3100'], challengeTtlSeconds: 60, mfaMaxAgeSeconds: 60 } }); }
 
 test('the admin DLQ list is reachable only by a platform admin, never a plain authenticated user', async () => {
   const app = await buildApp(config, { sessions, admin: adminOnlyStore() });
@@ -59,6 +62,17 @@ test('the admin DLQ list is reachable only by a platform admin, never a plain au
 
   const unauthenticated = await app.inject({ method: 'GET', url: '/v1/admin/dlq' });
   assert.equal(unauthenticated.statusCode, 401);
+  await app.close();
+});
+
+test('identity-only bootstrap is limited to whoami; every operational admin route fails closed without MFA', async () => {
+  const app = await rawBuildApp(config, { sessions, admin: adminOnlyStore() });
+  const headers = { authorization: `Bearer ${'a'.repeat(48)}` };
+  const whoami = await app.inject({ method: 'GET', url: '/v1/admin/whoami', headers });
+  assert.equal(whoami.statusCode, 200);
+  const dlq = await app.inject({ method: 'GET', url: '/v1/admin/dlq', headers });
+  assert.equal(dlq.statusCode, 503);
+  assert.equal(dlq.json().errorCode, 'admin_mfa_unavailable');
   await app.close();
 });
 

@@ -98,6 +98,15 @@ test('APP_ORIGIN is a strict credentialed-CORS origin and is normalized before s
   assert.equal(normalized.appOrigin, 'https://alerts.example');
 });
 
+test('admin WebAuthn uses the approved fixed security lifetimes and still requires an RP/origin pair', () => {
+  const base = { NODE_ENV: 'test', APP_ORIGIN: 'http://localhost:3100' };
+  assert.throws(() => loadConfig({ ...base, ADMIN_WEBAUTHN_RP_ID: 'admin.example' }), /must be configured together/);
+  assert.throws(() => loadConfig({ ...base, ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS: '60' }), /fixed by CTL-13 policy/);
+  assert.throws(() => loadConfig({ ...base, ADMIN_WEBAUTHN_RP_ID: 'admin.example', ADMIN_WEBAUTHN_ORIGINS: 'https://other.example' }), /must equal or be a subdomain/);
+  const configured = loadConfig({ ...base, ADMIN_WEBAUTHN_RP_ID: 'admin.example', ADMIN_WEBAUTHN_ORIGINS: 'https://admin.example' });
+  assert.deepEqual(configured.adminWebAuthn, { rpId: 'admin.example', origins: ['https://admin.example'], challengeTtlSeconds: 300, mfaMaxAgeSeconds: 900 });
+});
+
 test('health endpoint is available without exposing runtime details', async () => {
   const app = await buildApp(config);
   const response = await app.inject({ method: 'GET', url: '/healthz' });

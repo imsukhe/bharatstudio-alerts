@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildApp } from '../src/app.js';
+import { buildApp as rawBuildApp, type AppDependencies } from '../src/app.js';
 import type { RuntimeConfig } from '../src/config.js';
 import type { SessionStore } from '../src/auth/session-store.js';
 import type { AdminStore } from '../src/domain/admin.js';
+import type { AdminPasskeyStore } from '../src/domain/admin-passkeys.js';
 import { PlatformAdminError, type PlatformAdminChange, type PlatformAdminListEntry, type PlatformAdminStore } from '../src/domain/platform-admin.js';
 
 /*
@@ -44,6 +45,8 @@ const admin: AdminStore = {
   async listChannelEntitlementHistory() { return []; },
   async overrideChannelEntitlement() { return null; },
 };
+const mfa: AdminPasskeyStore = { async list() { return []; }, async begin() {}, async finishRegistration() {}, async finishAssertion() { return '2026-09-18T00:00:00.000Z'; }, async isVerified() { return true; }, async requestRecovery() { return '00000000-0000-4000-8000-00000000aa01'; }, async listPendingRecoveries() { return []; }, async approveRecovery() { return { status: 'awaiting_second_approval' as const, completedAt: null }; } };
+function buildApp(testConfig: RuntimeConfig, dependencies: AppDependencies) { return rawBuildApp(testConfig, { ...dependencies, adminPasskeys: mfa, adminWebAuthn: { rpId: 'admin.test', origins: ['http://localhost:3106'], challengeTtlSeconds: 60, mfaMaxAgeSeconds: 60 } }); }
 
 const sampleChange: PlatformAdminChange = {
   schemaVersion: 'v1', userId: targetUserId, isPlatformAdmin: true, changedBy: adminUserId, changedAt: '2026-09-17T09:00:00.000Z', reason: 'promoting to admin',

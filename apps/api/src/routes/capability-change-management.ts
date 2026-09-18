@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { requirePlatformAdmin } from '../auth/pre-handler.js';
+import { requirePlatformAdminMfa } from '../auth/pre-handler.js';
 import type { SessionStore } from '../auth/session-store.js';
 import { CapabilityChangeManagementError, type CapabilityChangeKindTaxonomy, type CapabilityChangeManagementStore, type CapabilityChangeStatus } from '../domain/capability-change-management.js';
 import { logSafeError } from '../observability/safe-log.js';
+import type { AdminPasskeyStore, AdminWebAuthnConfig } from '../domain/admin-passkeys.js';
 
 // CTL phase 2, Lane A (migration 0152). Platform-staff-only governance
 // surface over the phase-1 capability control plane -- same
@@ -65,8 +66,10 @@ export async function registerCapabilityChangeManagementRoutes(
   sessions?: SessionStore,
   store?: CapabilityChangeManagementStore,
   adminGate?: { isPlatformAdmin(userId: string): Promise<boolean> },
+  adminPasskeys?: AdminPasskeyStore,
+  adminWebAuthn?: AdminWebAuthnConfig,
 ): Promise<void> {
-  const adminAuth = requirePlatformAdmin(sessions, adminGate);
+  const adminAuth = requirePlatformAdminMfa(sessions, adminGate, adminPasskeys, adminWebAuthn?.mfaMaxAgeSeconds);
 
   // CTL-06: propose an ordinary governed change. effectiveAt omitted
   // means "now" -- an unstaged change still goes through the same
@@ -195,26 +198,6 @@ export async function registerCapabilityChangeManagementRoutes(
     } catch (error) {
       if (error instanceof CapabilityChangeManagementError) return errorResponse(reply, request.id, error);
       logSafeError(request, 'capability_change_reject_failed', error);
-      return unavailable(reply, request.id);
-    }
-  });
-
-  // CTL-07 rule 3: single-admin global_kill, immediate. No approval body
-  // at all -- see this migration's own header for why.
-  app.post<{ Params: { capabilityKey: string }; Body: { reason?: string } }>('/v1/admin/capability-registry/:capabilityKey/kill', {
-    preHandler: adminAuth,
-    schema: {
-      params: capabilityKeyParams,
-      body: { type: 'object', additionalProperties: false, properties: { reason: { type: 'string', maxLength: 500 } } },
-    },
-  }, async (request, reply) => {
-    if (!store || !request.auth) return unavailable(reply, request.id);
-    try {
-      const change = await store.killCapability(request.auth.userId, request.params.capabilityKey, request.body?.reason ?? null);
-      return reply.code(200).send(change);
-    } catch (error) {
-      if (error instanceof CapabilityChangeManagementError) return errorResponse(reply, request.id, error);
-      logSafeError(request, 'capability_kill_failed', error);
       return unavailable(reply, request.id);
     }
   });

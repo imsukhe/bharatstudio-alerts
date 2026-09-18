@@ -6,7 +6,15 @@ const DEFAULT_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
 type ListenClient = {
-  listen(channel: string, onnotify: (value: string) => void, onlisten?: () => void): Promise<unknown>;
+  listen(
+    channel: string,
+    onnotify: (value: string) => void,
+    onlisten?: () => void,
+    // The generic seam's existing callers may omit this callback. The direct
+    // adapter below supplies it so a socket which drops *after* a successful
+    // LISTEN cannot remain represented as healthy.
+    onclose?: () => void,
+  ): Promise<unknown>;
   end(options?: { timeout?: number }): Promise<void>;
 };
 
@@ -100,8 +108,15 @@ export function createOverlayWakeup(client: ListenClient, options: WakeupOptions
     reconnectTimer.unref?.();
   };
 
-  const onListenerFailure = () => {
+  // A failed request and a close event can describe the same attempt. Keep an
+  // attempt identity so either path settles waiters/schedules at most once,
+  // and so an old socket cannot change the health of its replacement.
+  let activeAttempt = 0;
+
+  const onListenerFailure = (attempt: number) => {
+    if (attempt !== activeAttempt) return;
     if (closed) return;
+    activeAttempt += 1;
     connected = false;
     failures += 1;
     reconnects += 1;
@@ -114,21 +129,23 @@ export function createOverlayWakeup(client: ListenClient, options: WakeupOptions
 
   const connect = () => {
     if (closed) return;
+    const attempt = activeAttempt + 1;
+    activeAttempt = attempt;
     connected = false;
     try {
-      const request = client.listen(CHANNEL, notify, () => {
+      const onRegistered = () => {
+        if (closed || attempt !== activeAttempt) return;
         connected = true;
         delay = reconnectDelayMs;
-      });
-      // postgres.js resolves listen() after the LISTEN command is registered;
-      // it does not resolve when the connection later closes. Treating a
-      // successful registration as disconnect would immediately mark every
-      // real listener unhealthy and schedule a reconnect loop. Registration
-      // failure is the only setup failure surfaced by this boundary; the
-      // postgres.js listener owns reconnecting a dropped socket.
-      void request.catch(onListenerFailure);
+      };
+      const onClosed = () => onListenerFailure(attempt);
+      const request = client.listen(CHANNEL, notify, onRegistered, onClosed);
+      // A registration rejection and post-registration close share the same
+      // attempt guard above. The direct adapter makes both observable; test
+      // doubles that expose only a rejected request retain the old behavior.
+      void request.catch(onClosed);
     } catch {
-      onListenerFailure();
+      onListenerFailure(attempt);
     }
   };
 
@@ -205,10 +222,78 @@ export function createDirectOverlayWakeup(
   databaseUrlDirect: string,
   options: WakeupOptions = {},
 ): OverlayWakeup {
-  const sql: Sql = postgres(databaseUrlDirect, { max: 1, prepare: false });
+  // postgres.js's public sql.listen() intentionally owns a private listener
+  // connection and re-registers it after a close. That convenience behaviour
+  // is useful generally, but it gives this API no close signal: health could
+  // remain true during a post-registration outage. This adapter owns exactly
+  // one explicit `LISTEN` connection instead. postgres 3.4.9 invokes these
+  // connection callbacks on the dedicated socket; package/version evidence is
+  // exercised by integration/overlay-wakeup.integration.ts.
+  //
+  // onnotify is implemented by the installed postgres runtime but omitted
+  // from its TypeScript declaration. Constrain its use to this adapter and
+  // keep the cast local; the integration test sends a real pg_notify through
+  // this path so a package upgrade cannot silently preserve a fake unit test.
+  type RuntimeListenerOptions = {
+    max: number;
+    prepare: boolean;
+    idle_timeout: null;
+    max_lifetime: null;
+    fetch_types: boolean;
+    connection: { application_name: string };
+    onclose: () => void;
+    onnotify: (channel: string, payload: string) => void;
+  };
+  type RuntimePostgresFactory = (url: string, options: RuntimeListenerOptions) => Sql;
+  const createRuntimeListener = postgres as unknown as RuntimePostgresFactory;
+  let activeListener: Sql | undefined;
+
+  const directClient: ListenClient = {
+    async listen(channel, onnotify, onlisten, onclose) {
+      // The only caller is this module's constant. Refuse a widened future
+      // call rather than turn a query identifier into a hidden input surface.
+      if (channel !== CHANNEL) throw new Error('unexpected_overlay_notification_channel');
+
+      let listener: Sql;
+      listener = createRuntimeListener(databaseUrlDirect, {
+        max: 1,
+        prepare: false,
+        idle_timeout: null,
+        max_lifetime: null,
+        fetch_types: false,
+        connection: { application_name: 'bharatstudio-alerts-overlay-wakeup' },
+        onclose: () => {
+          if (activeListener === listener) activeListener = undefined;
+          onclose?.();
+        },
+        onnotify: (receivedChannel, payload) => {
+          if (receivedChannel === CHANNEL) onnotify(payload);
+        },
+      });
+      activeListener = listener;
+
+      try {
+        // CHANNEL is fixed and validated above. It contains no user/config
+        // value; quote the identifier from that sole constant so a future
+        // constant edit cannot make the guard and executed command diverge.
+        await listener.unsafe(`listen "${CHANNEL.replace(/"/g, '""')}"`);
+        onlisten?.();
+      } catch (error) {
+        if (activeListener === listener) activeListener = undefined;
+        await listener.end({ timeout: 5 }).catch(() => undefined);
+        throw error;
+      }
+    },
+    async end(options) {
+      const listener = activeListener;
+      activeListener = undefined;
+      if (listener) await listener.end(options);
+    },
+  };
+
   // RT-02: the notification already carries channelId
   // (app_private.notify_overlay_wakeup, packages/db/migrations/0005). Only
   // that channel's subscribers wake; an unrelated channel's stream never
   // performs a store read for it.
-  return createOverlayWakeup(sql, options);
+  return createOverlayWakeup(directClient, options);
 }

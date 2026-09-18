@@ -171,3 +171,111 @@ end
 $$;
 
 reset role;
+
+-- 6. AUD-PAY-02: reservation is durable but not consumption. A transient
+-- checkout failure can retry only the original key/order; another key never
+-- gets the amount or a second order, and completion is the sole transition
+-- to used.
+do $$
+declare
+  reservation record;
+  repeated record;
+  conflicting record;
+  resolved record;
+  legacy_consume_count integer;
+  completed boolean;
+begin
+  perform app_private.create_tip_intent(
+    '00000000-0000-4000-8000-000000000913',
+    '00000000-0000-4000-8000-000000000091', repeat('e', 64),
+    8200, 'Retry Donor', 'provider outage must not burn this link',
+    'youtube', null, 30
+  );
+
+  select * into reservation from app_private.reserve_tip_intent_checkout(
+    repeat('e', 64), 'synthetic-tipintent-reservation-0001',
+    '00000000-0000-4000-8000-000000000931'
+  );
+  if reservation.state <> 'reserved'
+     or reservation.order_id <> '00000000-0000-4000-8000-000000000931'
+     or reservation.amount_paise <> 8200
+     or reservation.checkout_idempotency_key <> 'synthetic-tipintent-reservation-0001' then
+    raise exception 'reservation did not return the stable checkout binding: %', reservation;
+  end if;
+
+  select * into repeated from app_private.reserve_tip_intent_checkout(
+    repeat('e', 64), 'synthetic-tipintent-reservation-0001',
+    '00000000-0000-4000-8000-000000000932'
+  );
+  if repeated.state <> 'reserved'
+     or repeated.order_id <> reservation.order_id
+     or repeated.amount_paise <> reservation.amount_paise then
+    raise exception 'same-key retry did not receive its original reservation: %', repeated;
+  end if;
+
+  select * into conflicting from app_private.reserve_tip_intent_checkout(
+    repeat('e', 64), 'synthetic-tipintent-reservation-0002',
+    '00000000-0000-4000-8000-000000000933'
+  );
+  if conflicting.state <> 'in_progress'
+     or conflicting.order_id is not null
+     or conflicting.amount_paise is not null
+     or conflicting.channel_id is not null then
+    raise exception 'different-key reservation leaked or created checkout data: %', conflicting;
+  end if;
+
+  -- The retired immediate-consume helper cannot steal a reservation.
+  select count(*) into legacy_consume_count from app_private.consume_tip_intent(
+    repeat('e', 64), '00000000-0000-4000-8000-000000000934'
+  );
+  if legacy_consume_count <> 0 then
+    raise exception 'legacy consume bypassed a checkout reservation';
+  end if;
+
+  select * into resolved from app_private.get_tip_intent_by_token_hash(repeat('e', 64));
+  if resolved.state <> 'ready' then
+    raise exception 'reservation must not consume a TipIntent before local order confirmation';
+  end if;
+
+  select app_private.complete_tip_intent_checkout(
+    repeat('e', 64), '00000000-0000-4000-8000-000000000931',
+    'synthetic-tipintent-reservation-wrong'
+  ) into completed;
+  if completed then
+    raise exception 'wrong completion key finalized a TipIntent';
+  end if;
+
+  select app_private.complete_tip_intent_checkout(
+    repeat('e', 64), '00000000-0000-4000-8000-000000000931',
+    'synthetic-tipintent-reservation-0001'
+  ) into completed;
+  if not completed then
+    raise exception 'matching checkout completion did not consume its TipIntent';
+  end if;
+  select * into resolved from app_private.get_tip_intent_by_token_hash(repeat('e', 64));
+  if resolved.state <> 'used' or resolved.amount_paise is not null then
+    raise exception 'completed TipIntent did not become private used state: %', resolved;
+  end if;
+
+  -- A lost HTTP response after completion may be recovered only by the
+  -- original page key; a fresh key still learns no order or tip data.
+  select * into repeated from app_private.reserve_tip_intent_checkout(
+    repeat('e', 64), 'synthetic-tipintent-reservation-0001',
+    '00000000-0000-4000-8000-000000000935'
+  );
+  if repeated.state <> 'completed'
+     or repeated.order_id <> '00000000-0000-4000-8000-000000000931'
+     or repeated.amount_paise <> 8200 then
+    raise exception 'same-key completed checkout could not be recovered: %', repeated;
+  end if;
+  select * into conflicting from app_private.reserve_tip_intent_checkout(
+    repeat('e', 64), 'synthetic-tipintent-reservation-0003',
+    '00000000-0000-4000-8000-000000000936'
+  );
+  if conflicting.state <> 'used'
+     or conflicting.order_id is not null
+     or conflicting.amount_paise is not null then
+    raise exception 'different key recovered a completed checkout: %', conflicting;
+  end if;
+end
+$$;

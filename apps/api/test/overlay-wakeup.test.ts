@@ -78,6 +78,60 @@ test('listener rejection rejects every outstanding waiter across every channel, 
   await wakeup.close();
 });
 
+test('a post-registration direct-listener close immediately fails waits, stays unhealthy until replacement registration, and ignores stale callbacks', async () => {
+  let listens = 0;
+  let firstRegistered: (() => void) | undefined;
+  let firstClosed: (() => void) | undefined;
+  let secondRegistered: (() => void) | undefined;
+  let secondNotify: ((value: string) => void) | undefined;
+  const client = {
+    listen(
+      _channel: string,
+      onnotify: (value: string) => void,
+      onlisten?: () => void,
+      onclose?: () => void,
+    ) {
+      listens += 1;
+      if (listens === 1) {
+        firstRegistered = onlisten;
+        firstClosed = onclose;
+        onlisten?.();
+        return new Promise<never>(() => {});
+      }
+      secondRegistered = onlisten;
+      secondNotify = onnotify;
+      return new Promise<never>(() => {});
+    },
+    async end() {},
+  };
+  const wakeup = createOverlayWakeup(client, { reconnectDelayMs: 5, maxReconnectDelayMs: 5 });
+  assert.equal(wakeup.health().connected, true, 'initial successful registration is healthy');
+  const subscription = wakeup.subscribe('channel-a')!;
+  const lostWait = subscription.wait(100);
+
+  firstClosed?.();
+  await assert.rejects(lostWait, /overlay_listener_unavailable/);
+  assert.deepEqual(wakeup.health(), { connected: false, reconnects: 1, failures: 1 });
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(listens, 2, 'one close must schedule exactly one replacement attempt');
+  firstRegistered?.();
+  assert.equal(wakeup.health().connected, false, 'a stale registration callback must not revive the failed listener');
+  firstClosed?.();
+  assert.deepEqual(wakeup.health(), { connected: false, reconnects: 1, failures: 1 }, 'a stale close callback must not double-count or schedule another reconnect');
+
+  secondRegistered?.();
+  assert.equal(wakeup.health().connected, true, 'only the replacement successful registration restores health');
+  const recoveredWait = subscription.wait(100);
+  secondNotify?.(JSON.stringify({ channelId: 'channel-a', eventId: 'recovered-event' }));
+  assert.equal(await recoveredWait, 'notification', 'the replacement listener must retain channel-scoped wake-up delivery');
+
+  subscription.release();
+  await wakeup.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(listens, 2, 'shutdown must not schedule a third reconnect');
+});
+
 // RT-02.1 — a notification for channel A wakes only channel A's
 // subscribers; a channel B subscriber never resolves from it.
 // The wake-up registry's per-wait timeout (src/db/overlay-wakeup.ts:169) and

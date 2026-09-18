@@ -334,6 +334,8 @@ paths:
                 $ref: '#/components/schemas/CreateTipOrderResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/RetryableFailure'
         '429':
@@ -495,7 +497,7 @@ paths:
               $ref: '#/components/schemas/ConfirmTipIntentRequest'
       responses:
         '201':
-          description: Payment-provider order created from the server-side TipIntent values.
+          description: Payment-provider order created from the server-side TipIntent values, or the same durable order recovered with the original Idempotency-Key after an ambiguous response.
           content:
             application/json:
               schema:
@@ -503,7 +505,11 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: Link already used, or a different Idempotency-Key attempted to create a second checkout while the original reservation is recoverable only with its original key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '410': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/RetryableFailure' }
@@ -6745,6 +6751,10 @@ components:
         donorDisplayName: { type: [string, 'null'], maxLength: 80 }
         message: { type: [string, 'null'], maxLength: 500 }
         alertConsent: { type: boolean, default: true }
+        turnstileToken:
+          type: [string, 'null']
+          maxLength: 2048
+          description: Opaque, short-lived public-payment bot-verification response. The API verifies it server-side when the configured policy requires it; it is never payment truth or an identity.
         interactionDefinitionId:
           type: [string, 'null']
           format: uuid

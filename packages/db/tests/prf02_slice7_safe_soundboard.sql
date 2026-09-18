@@ -329,6 +329,48 @@ end
 $$;
 
 -- =====================================================================
+-- AUD-SB-01: a valid durable trigger invokes the existing channel-scoped
+-- wake-up function only after insert. The SQL body is inspected directly
+-- because PostgreSQL async notifications are delivered to a LISTEN client at
+-- transaction commit and are not queryable as a relation inside this isolated
+-- proof session. The preceding rejected-trigger cases prove each guard raises
+-- before this post-insert line can execute.
+-- =====================================================================
+do $$
+declare function_definition text; is_security_definer boolean; function_config text[];
+begin
+  select pg_catalog.pg_get_functiondef(p.oid), p.prosecdef, p.proconfig
+    into function_definition, is_security_definer, function_config
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'app_private'
+     and p.proname = 'trigger_soundboard_play'
+     and pg_catalog.pg_get_function_identity_arguments(p.oid) = 'target_channel_id uuid, target_catalogue_entry_id uuid, target_upload_id uuid';
+
+  if function_definition is null then
+    raise exception 'trigger_soundboard_play is missing';
+  end if;
+  if position('insert into public.channel_soundboard_plays' in function_definition) = 0
+     or position('perform app_private.notify_overlay_wakeup(target_channel_id, new_id)' in function_definition) = 0
+     or position('perform app_private.notify_overlay_wakeup(target_channel_id, new_id)' in function_definition)
+        < position('insert into public.channel_soundboard_plays' in function_definition) then
+    raise exception 'a valid soundboard trigger must issue the existing wake-up only after its durable insert';
+  end if;
+  -- `pg_get_functiondef` is display-formatted and normalizes SET syntax
+  -- across PostgreSQL versions. `prosecdef` / `proconfig` are the canonical
+  -- catalog facts the runtime actually enforces.
+  if not is_security_definer
+     or coalesce(array_position(function_config, 'search_path=pg_catalog, public, app_private'), 0) = 0 then
+    raise exception 'soundboard trigger must preserve its security-definer/search-path boundary';
+  end if;
+  if not has_function_privilege('bsa_app', 'app_private.trigger_soundboard_play(uuid, uuid, uuid)', 'execute')
+     or has_function_privilege('public', 'app_private.trigger_soundboard_play(uuid, uuid, uuid)', 'execute') then
+    raise exception 'soundboard trigger grants drifted from bsa_app-only execution';
+  end if;
+end
+$$;
+
+-- =====================================================================
 -- The overlay read.
 -- =====================================================================
 do $$

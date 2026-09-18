@@ -20,6 +20,7 @@ import {
 import { playAudioWithTimeout } from '../tts-runtime';
 import { browserTtsFallback, cancelBrowserTts, shouldShowWatermark, speakWithBrowserTts } from './tts-fallback';
 import { getApiOrigin } from '../../lib/api-origin';
+import { safeOverlayAudioUrl } from '../alert-audio-url';
 import type { AnimationItem } from 'lottie-web';
 
 function textValue(payload: Record<string, unknown>, key: string): string {
@@ -52,16 +53,6 @@ function playChime(): void {
   oscillator.start();
   oscillator.stop(context.currentTime + 0.24);
   oscillator.addEventListener('ended', () => { void context.close(); }, { once: true });
-}
-
-function safeAudioUrl(value: string): string | undefined {
-  try {
-    const url = new URL(value, window.location.origin);
-    if (url.origin !== window.location.origin || !url.pathname.startsWith('/v1/overlay-audio/')) return undefined;
-    return url.toString();
-  } catch {
-    return undefined;
-  }
 }
 
 // A creator-uploaded Lottie document rendered inside a live overlay
@@ -319,7 +310,7 @@ export default function BrowserOverlayPage() {
   const mode = config.queue.mode;
   const style = first ? styleFor(first, config) : config.defaultStyle;
   const overlayToken = typeof window !== 'undefined' ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token') : null;
-  const apiOriginForLottie = (() => { try { return getApiOrigin(); } catch { return undefined; } })();
+  const apiOrigin = (() => { try { return getApiOrigin(); } catch { return undefined; } })();
   // The connection-status dot is opt-in via ?debug=1, never part of the
   // plain session URL a creator pastes into OBS (see overlay/setup/page.tsx
   // — session.streamUrl carries no such param). This overlay must render
@@ -328,10 +319,10 @@ export default function BrowserOverlayPage() {
   const debugStatusVisible = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
 
   function lottieForStyle(displayStyle: string): { url: string; token: string } | undefined {
-    if (config.reducedMotion || !overlayToken || !apiOriginForLottie) return undefined;
+    if (config.reducedMotion || !overlayToken || !apiOrigin) return undefined;
     const artifactId = lottieAssets.get(displayStyle);
     if (!artifactId) return undefined;
-    return { url: `${apiOriginForLottie}/v1/overlay-lottie/${encodeURIComponent(params.overlayId)}/${encodeURIComponent(artifactId)}`, token: overlayToken };
+    return { url: `${apiOrigin}/v1/overlay-lottie/${encodeURIComponent(params.overlayId)}/${encodeURIComponent(artifactId)}`, token: overlayToken };
   }
   const overlayStyle = { '--overlay-offset-x': `${config.display.offsetX}px`, '--overlay-offset-y': `${config.display.offsetY}px`, '--overlay-scale': String(config.display.scale), '--overlay-width': `${config.display.widthPercent}%` } as React.CSSProperties;
 
@@ -343,7 +334,7 @@ export default function BrowserOverlayPage() {
     let objectUrl: string | undefined;
     let cancelled = false;
     const play = async () => {
-      const url = plan.mode === 'audio' && plan.audioUrl ? safeAudioUrl(plan.audioUrl) : undefined;
+      const url = plan.mode === 'audio' && plan.audioUrl && apiOrigin ? safeOverlayAudioUrl(plan.audioUrl, apiOrigin) : undefined;
       if (url) {
         try {
           // Audio playback cannot attach Authorization headers through the
@@ -380,7 +371,7 @@ export default function BrowserOverlayPage() {
       objectUrl = undefined;
       cancelBrowserTts();
     };
-  }, [currentGroup, first, config]);
+  }, [currentGroup, first, config, apiOrigin]);
 
   return (
     <main className={`browser-overlay anchor-${config.display.anchor}`} data-reduced-motion={config.reducedMotion ? 'true' : 'false'} style={overlayStyle} aria-live="polite">

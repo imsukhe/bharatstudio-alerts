@@ -230,7 +230,7 @@ test('deactivate() mid-audio-playback is safe and idempotent: the in-flight play
   module.activate();
   connection.emitData(fakeItem({
     cursor: 'c1', eventIdNum: 1,
-    payload: { displayName: 'Riya', amountPaise: 10000, ttsAudioUrl: '/v1/overlay-audio/a1', configSnapshot: { tts: { enabled: true } } },
+    payload: { displayName: 'Riya', amountPaise: 10000, ttsAudioUrl: '/v1/overlay-audio/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002', configSnapshot: { tts: { enabled: true } } },
   }));
   await flush();
   audio.resolveOldest({ ok: true, blob: async () => new Blob(['bytes']) } as unknown as Response);
@@ -320,7 +320,7 @@ test('audio stays synchronised to the displayed item: a late-resolving fetch for
   module.activate();
   connection.emitData(fakeItem({
     cursor: 'c1', eventIdNum: 1,
-    payload: { displayName: 'Riya', amountPaise: 10000, ttsAudioUrl: '/v1/overlay-audio/a1', configSnapshot: { tts: { enabled: true } } },
+    payload: { displayName: 'Riya', amountPaise: 10000, ttsAudioUrl: '/v1/overlay-audio/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002', configSnapshot: { tts: { enabled: true } } },
   }));
   connection.emitData(fakeItem({ cursor: 'c2', eventIdNum: 2, payload: { displayName: 'Aman', amountPaise: 5000 } }));
   await flush(); // c1 displayed; its audio fetch is in flight (held by `audio`)

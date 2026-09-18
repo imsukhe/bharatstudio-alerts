@@ -113,6 +113,9 @@
  */
 
 export type MasterCanvasConnectionListener = () => void;
+/** Called only after the existing shared SSE transport has established a
+ * connection. Unlike `subscribe()`, this is not a per-event snapshot signal. */
+export type MasterCanvasConnectionLifecycleListener = () => void;
 export type MasterCanvasConnectionEvent = { type: 'connected' } | { type: 'data'; payload: unknown };
 export type MasterCanvasConnectionEventListener = (event: MasterCanvasConnectionEvent) => void;
 export type MasterCanvasAcknowledgeResult = { ok: boolean; status?: number };
@@ -164,21 +167,35 @@ export interface MasterCanvasConnection {
    * never drops and no event-payload subscriber joins after the stream
    * was already running without one (see file header). */
   getOpenAttemptCount(): number;
-  /** Current subscriber count across both subscribe() and
-   * subscribeToEvents() — 0 means the stream is fully torn down. */
+  /** Current total subscriber count across regular snapshot, Canvas bootstrap
+   * lifecycle, and event-payload subscriptions — 0 means the stream is fully
+   * torn down. The type omits the bootstrap hook so ordinary modules cannot
+   * acquire it even though this diagnostic total includes it. */
   getSubscriberCount(): number;
+}
+
+/**
+ * Canvas-page-only recovery hook. It intentionally is not part of the module
+ * connection contract: ordinary modules get only snapshot/event delivery and
+ * cannot accidentally keep a transport alive for bootstrap work.
+ */
+export interface MasterCanvasBootstrapConnection {
+  /** Subscribe to successful (re)connection only. Shares the existing SSE
+   * transport and does not opt into event-payload parsing. */
+  subscribeToConnection(listener: MasterCanvasConnectionLifecycleListener): () => void;
 }
 
 const REFETCH_DEBOUNCE_MS = 200;
 const INITIAL_RECONNECT_DELAY_MS = 250;
 const MAX_RECONNECT_DELAY_MS = 4_000;
 
-export function createMasterCanvasConnection(config: MasterCanvasConnectionConfig): MasterCanvasConnection {
+export function createMasterCanvasConnection(config: MasterCanvasConnectionConfig): MasterCanvasConnection & MasterCanvasBootstrapConnection {
   const fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const setTimeoutImpl = config.setTimeoutImpl ?? globalThis.setTimeout.bind(globalThis);
   const clearTimeoutImpl = config.clearTimeoutImpl ?? globalThis.clearTimeout.bind(globalThis);
 
   const listeners = new Set<MasterCanvasConnectionListener>();
+  const connectionListeners = new Set<MasterCanvasConnectionLifecycleListener>();
   const eventListeners = new Set<MasterCanvasConnectionEventListener>();
   let openAttemptCount = 0;
   let running = false; // true from the moment start() decides to run through to full teardown
@@ -214,6 +231,17 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
     }
   }
 
+  function notifyConnected() {
+    for (const listener of connectionListeners) {
+      try {
+        listener();
+      } catch {
+        // Configuration recovery is optional best-effort work. A bad listener
+        // must not compromise the shared transport or any live alert module.
+      }
+    }
+  }
+
   function scheduleNotify() {
     if (debounceTimer !== undefined) clearTimeoutImpl(debounceTimer);
     debounceTimer = setTimeoutImpl(() => {
@@ -243,6 +271,7 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
     // it can resume its own pump/state-machine the way it used to on its
     // own dedicated stream's connect.
     notifyAll();
+    notifyConnected();
     notifyEvent({ type: 'connected' });
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -344,7 +373,15 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
       scheduleNotify();
       return () => {
         listeners.delete(listener);
-        if (listeners.size === 0 && eventListeners.size === 0) stop();
+        if (listeners.size === 0 && connectionListeners.size === 0 && eventListeners.size === 0) stop();
+      };
+    },
+    subscribeToConnection(listener) {
+      connectionListeners.add(listener);
+      start(); // shares the existing transport; no event payload subscription
+      return () => {
+        connectionListeners.delete(listener);
+        if (listeners.size === 0 && connectionListeners.size === 0 && eventListeners.size === 0) stop();
       };
     },
     subscribeToEvents(listener) {
@@ -354,7 +391,7 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
       if (wasRunningWithoutEventListener) forceReconnect();
       return () => {
         eventListeners.delete(listener);
-        if (listeners.size === 0 && eventListeners.size === 0) stop();
+        if (listeners.size === 0 && connectionListeners.size === 0 && eventListeners.size === 0) stop();
       };
     },
     async acknowledge(cursor, eventId) {
@@ -372,6 +409,6 @@ export function createMasterCanvasConnection(config: MasterCanvasConnectionConfi
       }
     },
     getOpenAttemptCount() { return openAttemptCount; },
-    getSubscriberCount() { return listeners.size + eventListeners.size; },
+    getSubscriberCount() { return listeners.size + connectionListeners.size + eventListeners.size; },
   };
 }

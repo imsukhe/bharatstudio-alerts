@@ -79,7 +79,8 @@
 import type { CanvasModuleDefinition } from '../master-canvas-runtime';
 import type { MasterCanvasConnection, MasterCanvasConnectionEvent } from '../master-canvas-connection';
 import { defaultCanvasTextStyles, type CanvasTextStyle } from '../text-rendering';
-import { playChime, safeAudioUrl } from '../alert-audio';
+import { playChime } from '../alert-audio';
+import { safeOverlayAudioUrl } from '../../alert-audio-url';
 import { playAudioWithTimeout } from '../../tts-runtime';
 import { browserTtsFallback, cancelBrowserTts, shouldShowWatermark, speakWithBrowserTts } from '../../[overlayId]/tts-fallback';
 import {
@@ -429,7 +430,7 @@ export function createSupportTheaterModule(options: SupportTheaterModuleOptions)
     if (group.length === 0) return;
     const plan = ttsPlaybackPlan(group[0]!, config);
     if (plan.mode === 'silent') return;
-    const url = plan.mode === 'audio' && plan.audioUrl ? safeAudioUrl(plan.audioUrl, options.apiOrigin) : undefined;
+    const url = plan.mode === 'audio' && plan.audioUrl ? safeOverlayAudioUrl(plan.audioUrl, options.apiOrigin) : undefined;
     if (url) {
       try {
         const response = await fetchImpl(url, { headers: { authorization: `Bearer ${options.token}` }, cache: 'no-store' });

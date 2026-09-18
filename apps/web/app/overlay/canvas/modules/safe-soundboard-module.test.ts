@@ -165,3 +165,31 @@ test('deactivate() is idempotent and stops any current audio', async () => {
   module.deactivate(); // must not throw a second time
   assert.equal(pauseCalls, 1);
 });
+
+test('hide/show cannot replay the same durable latest play, but a different later play still replaces it', async () => {
+  let current = play;
+  let pauseCalls = 0;
+  let audioCreated = 0;
+  const { connection, module } = mount(async () => current, {
+    createAudio: () => {
+      audioCreated += 1;
+      return { play: () => Promise.resolve(), pause: () => { pauseCalls += 1; } };
+    },
+  });
+  connection.fireChange();
+  await flush();
+  assert.equal(audioCreated, 1);
+
+  module.deactivate();
+  module.activate();
+  connection.fireChange();
+  await flush();
+  assert.equal(pauseCalls, 1, 'the hidden source stops current audio exactly once');
+  assert.equal(audioCreated, 1, 'reactivation must not replay the same durable latest play');
+
+  current = { ...play, playId: '00000000-0000-4000-8000-000000005c93', displayName: 'Drum Roll' };
+  connection.fireChange();
+  await flush();
+  assert.equal(pauseCalls, 1, 'there is no stale audio left to pause before the genuine next play');
+  assert.equal(audioCreated, 2, 'a different later play still starts once');
+});

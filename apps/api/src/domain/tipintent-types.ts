@@ -42,7 +42,12 @@ export type ResolvedTipIntent =
       message: string | null;
     };
 
-export type ConsumedTipIntent = {
+export type ReservedTipIntent = {
+  state: 'reserved' | 'completed';
+  /** Stable local payment-order id selected while the TipIntent row is locked. */
+  orderId: string;
+  /** Original payment-service idempotency key; never returned by public reads. */
+  idempotencyKey: string;
   channelId: string;
   amountPaise: number;
   currency: 'INR';
@@ -50,16 +55,21 @@ export type ConsumedTipIntent = {
   message: string | null;
 };
 
+export type TipIntentCheckoutReservation = ReservedTipIntent | { state: 'in_progress' | 'used' };
+
 export interface TipIntentRepository {
   create(input: CreateTipIntentInput): Promise<CreatedTipIntent>;
   /** Read-only. Never mutates state, safe to call repeatedly (e.g. page polling). */
   resolve(token: string): Promise<ResolvedTipIntent>;
   /**
-   * Atomically claims a 'ready' TipIntent for orderId, single-use. Returns
-   * null when the token is unknown, already used, or expired — callers
-   * must call resolve() first if they need to know WHICH of those it was
-   * for a human-readable response; consume() itself only distinguishes
-   * "claimed" from "not claimed".
+   * Atomically reserves the ready link's one stable payment-order identity,
+   * without consuming the link. Repeating the original idempotency key gets
+   * the same reservation; a different key learns only that a checkout is in
+   * progress. null means unknown, used, or expired (call resolve() to map it
+   * to a human-readable response). A matching key may also recover a
+   * completed reservation when the original 201 response was lost.
    */
-  consume(token: string, orderId: string): Promise<ConsumedTipIntent | null>;
+  reserveCheckout(token: string, idempotencyKey: string, orderId: string): Promise<TipIntentCheckoutReservation | null>;
+  /** Marks a matching, successfully-created local order as the link's one use. */
+  completeCheckout(token: string, orderId: string, idempotencyKey: string): Promise<boolean>;
 }

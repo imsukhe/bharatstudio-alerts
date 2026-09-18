@@ -7,10 +7,13 @@ import { fetchTipOrder, getOrCreateTipIdempotencyKey, shouldRetainTipIdempotency
 import { loadRazorpayCheckout } from './razorpay-loader';
 import { mintReceiptForConfirmedTip, receiptPath } from '../receipt-client';
 import { loadPublicPaidVoteCatalogue, type PublicPaidVoteDefinition } from './paid-vote-catalogue';
+import { missingProductionTurnstileSiteKey, publicTurnstileSiteKey, TurnstileChallenge } from '../turnstile-challenge';
 
-type TipFormProps = { handle: string; acceptingTips: boolean; minimumTipPaise: number };
+type TipFormProps = { handle: string; acceptingTips: boolean; minimumTipPaise: number; turnstileSiteKey?: string; turnstileNodeEnv?: string };
 
 const RAZORPAY_KEY_ID = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+const TURNSTILE_SITE_KEY = publicTurnstileSiteKey();
+const TURNSTILE_NODE_ENV = String(process.env.NODE_ENV ?? '');
 
 // A donor who paid but whose confirmation poll timed out (slow bank/webhook —
 // the exact case the architecture expects) previously had no way to check
@@ -61,7 +64,7 @@ function clearPendingOrder(handle: string): void {
   }
 }
 
-export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps) {
+export function TipForm({ handle, acceptingTips, minimumTipPaise, turnstileSiteKey = TURNSTILE_SITE_KEY, turnstileNodeEnv = TURNSTILE_NODE_ENV }: TipFormProps) {
   const [amount, setAmount] = useState('100');
   const [donorDisplayName, setDonorDisplayName] = useState('');
   const [message, setMessage] = useState('');
@@ -74,6 +77,8 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
   const [receiptToken, setReceiptToken] = useState<string | null>(null);
   const [paidVoteDefinitions, setPaidVoteDefinitions] = useState<PublicPaidVoteDefinition[]>([]);
   const [paidVoteSelection, setPaidVoteSelection] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileResetNonce, setTurnstileResetNonce] = useState(0);
   const idempotencyKey = useRef<string | null>(null);
 
   useEffect(() => {
@@ -103,6 +108,15 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
     optionKey: option.optionKey,
   })));
   const selectedPaidVote = paidVoteChoices.find((choice) => choice.value === paidVoteSelection);
+  const hasOutstandingOrder = pendingOrder !== null && state !== 'paid' && state !== 'expired';
+  const formLocked = !acceptingTips || state === 'submitting' || state === 'checking' || hasOutstandingOrder;
+
+  function beginChangedAttempt(): void {
+    // A deliberate content change is a new payment intent. Keep the
+    // idempotency key only for an unchanged retry, never across changed
+    // amount/name/message/consent/vote data.
+    idempotencyKey.current = null;
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,6 +125,16 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
     const minimumRupees = Math.ceil(minimumTipPaise / 100);
     if (!Number.isSafeInteger(rupees) || rupees < minimumRupees) {
       setError(`Enter an amount of at least ₹${minimumRupees.toLocaleString('en-IN')}.`);
+      setState('error');
+      return;
+    }
+    if (missingProductionTurnstileSiteKey(turnstileSiteKey, turnstileNodeEnv)) {
+      setError('Secure checkout is temporarily unavailable. Please try again later.');
+      setState('error');
+      return;
+    }
+    if (turnstileSiteKey && !turnstileToken) {
+      setError('Please complete the security check before continuing.');
       setState('error');
       return;
     }
@@ -131,6 +155,7 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
           donorDisplayName: donorDisplayName.trim() || null,
           message: message.trim() || null,
           alertConsent,
+          ...(turnstileToken ? { turnstileToken } : {}),
           ...(selectedPaidVote ? { interactionDefinitionId: selectedPaidVote.definitionId, voteOptionKey: selectedPaidVote.optionKey } : {}),
         }),
       } });
@@ -151,6 +176,13 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Secure checkout is temporarily unavailable.');
       setState('error');
+    } finally {
+      // A response token is one-time use even if the network outcome was
+      // ambiguous. A later order attempt must obtain a new response.
+      if (turnstileSiteKey) {
+        setTurnstileToken(null);
+        setTurnstileResetNonce((value) => value + 1);
+      }
     }
   }
 
@@ -169,6 +201,7 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
       const value = parsePublicOrderStatus(await response.json());
       if (!value) return false;
       if (value.status === 'paid') {
+        idempotencyKey.current = null;
         setState('paid');
         setNotice('Payment confirmed by BharatStudio. The creator’s alert will follow their configured display and consent settings.');
         // Receipt minting is intentionally best-effort and starts only after
@@ -182,6 +215,7 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
         return true;
       }
       if (value.status === 'expired' || value.status === 'failed') {
+        idempotencyKey.current = null;
         setState('expired');
         setNotice('No successful payment confirmation was received for this order. You can start a new tip if needed.');
         setPendingOrder(null);
@@ -244,15 +278,15 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
   return (
     <form className="tip-form" onSubmit={submit} aria-describedby="tip-form-helper">
       <label htmlFor="tip-amount">Amount</label>
-      <div className="amount-row"><span>₹</span><input id="tip-amount" inputMode="numeric" min={Math.ceil(minimumTipPaise / 100)} step="1" value={amount} onChange={(event) => setAmount(event.target.value)} disabled={!acceptingTips || state === 'submitting'} /></div>
+      <div className="amount-row"><span>₹</span><input id="tip-amount" inputMode="numeric" min={Math.ceil(minimumTipPaise / 100)} step="1" value={amount} onChange={(event) => { beginChangedAttempt(); setAmount(event.target.value); }} disabled={formLocked} /></div>
       <label htmlFor="tip-name">Name <span>(optional)</span></label>
-      <input id="tip-name" maxLength={80} value={donorDisplayName} onChange={(event) => setDonorDisplayName(event.target.value)} placeholder="How should we thank you?" disabled={!acceptingTips || state === 'submitting'} />
+      <input id="tip-name" maxLength={80} value={donorDisplayName} onChange={(event) => { beginChangedAttempt(); setDonorDisplayName(event.target.value); }} placeholder="How should we thank you?" disabled={formLocked} />
       <label htmlFor="tip-message">Message <span>(optional)</span></label>
-      <textarea id="tip-message" rows={4} maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Write something kind…" disabled={!acceptingTips || state === 'submitting'} />
+      <textarea id="tip-message" rows={4} maxLength={500} value={message} onChange={(event) => { beginChangedAttempt(); setMessage(event.target.value); }} placeholder="Write something kind…" disabled={formLocked} />
       {paidVoteChoices.length > 0 ? (
         <>
           <label htmlFor="tip-paid-vote">Add your support vote <span>(optional)</span></label>
-          <select id="tip-paid-vote" value={paidVoteSelection} onChange={(event) => setPaidVoteSelection(event.target.value)} disabled={!acceptingTips || state === 'submitting'}>
+          <select id="tip-paid-vote" value={paidVoteSelection} onChange={(event) => { beginChangedAttempt(); setPaidVoteSelection(event.target.value); }} disabled={formLocked}>
             <option value="">No support vote</option>
             {paidVoteChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
           </select>
@@ -260,22 +294,24 @@ export function TipForm({ handle, acceptingTips, minimumTipPaise }: TipFormProps
         </>
       ) : null}
       <label className="consent-row" htmlFor="tip-alert-consent">
-        <input id="tip-alert-consent" type="checkbox" checked={alertConsent} onChange={(event) => setAlertConsent(event.target.checked)} disabled={!acceptingTips || state === 'submitting'} />
+        <input id="tip-alert-consent" type="checkbox" checked={alertConsent} onChange={(event) => { beginChangedAttempt(); setAlertConsent(event.target.checked); }} disabled={formLocked} />
         <span>Allow this message to appear in the creator’s alert</span>
       </label>
-      <button className="primary-button full-width" type="submit" disabled={!acceptingTips || state === 'submitting' || state === 'checking'}>{state === 'submitting' ? 'Preparing secure checkout…' : state === 'checking' ? 'Checking payment confirmation…' : acceptingTips ? 'Continue to tip' : 'Tips are closed'}</button>
+      <TurnstileChallenge siteKey={turnstileSiteKey} onToken={setTurnstileToken} resetNonce={turnstileResetNonce} />
+      <button className="primary-button full-width" type="submit" disabled={formLocked}>{state === 'submitting' ? 'Preparing secure checkout…' : state === 'checking' ? 'Checking payment confirmation…' : hasOutstandingOrder ? 'Check payment status below' : acceptingTips ? 'Continue to tip' : 'Tips are closed'}</button>
       {state === 'created' && order ? <p className="inline-message" role="status">Order prepared for ₹{Math.round(order.amountPaise / 100)}. Complete the secure checkout window; payment confirmation is verified by the provider webhook.</p> : null}
       {state === 'paid' ? <p className="inline-message" role="status">Payment confirmed. Thank you for supporting the stream.</p> : null}
       {receiptToken ? <p className="inline-message"><a href={receiptPath(receiptToken)}>View your receipt</a></p> : null}
       {state === 'checking' ? <p className="inline-message" role="status">Payment submitted. Checking the server-confirmed status; this can take a few seconds.</p> : null}
       {notice ? <p className="inline-message" role="status">{notice}</p> : null}
       {state === 'error' ? <p className="error-text" role="alert">{error}</p> : null}
-      {pendingOrder && state === 'created' ? (
+      {pendingOrder && (state === 'created' || state === 'error') ? (
         <div className="pending-order-check">
           <p className="helper-text">
             Order reference: <code>{pendingOrder.orderId}</code> · ₹{Math.round(pendingOrder.amountPaise / 100).toLocaleString('en-IN')}. Save this if you need to contact support about this tip.
           </p>
           <button className="secondary-button" type="button" onClick={checkStatusNow}>Check status</button>
+          {order ? <button className="secondary-button" type="button" onClick={() => { void startCheckout({ providerOrderId: order.providerOrderId, localOrderId: order.orderId, amountPaise: order.amountPaise }); }}>Reopen secure checkout</button> : null}
         </div>
       ) : null}
       <p id="tip-form-helper" className="helper-text">The platform minimum is ₹10; this channel’s minimum is ₹{Math.ceil(minimumTipPaise / 100).toLocaleString('en-IN')}. Your payment is recorded independently of whether you allow an on-stream alert.</p>

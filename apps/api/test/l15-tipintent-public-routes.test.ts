@@ -5,7 +5,6 @@ import rateLimit from '@fastify/rate-limit';
 import { registerPublicRoutes } from '../src/routes/public.js';
 import { generateTipIntentToken, hashTipIntentToken } from '../src/db/tipintent-store.js';
 import type {
-  ConsumedTipIntent,
   CreateTipIntentInput,
   ResolvedTipIntent,
   TipIntentRepository,
@@ -23,6 +22,7 @@ type IntentRecord = {
   message: string | null;
   consumed: boolean;
   expired: boolean;
+  checkout: { orderId: string; idempotencyKey: string } | null;
 };
 
 // Faithful in-memory TipIntentRepository: uses the SAME token generation
@@ -44,6 +44,7 @@ function fakeTipIntents() {
         message: input.message ?? null,
         consumed: false,
         expired: false,
+        checkout: null,
       });
       return { token, expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString() };
     },
@@ -62,17 +63,40 @@ function fakeTipIntents() {
         message: record.message,
       };
     },
-    async consume(token: string, _orderId: string): Promise<ConsumedTipIntent | null> {
+    async reserveCheckout(token: string, idempotencyKey: string, orderId: string) {
       const record = byHash.get(hashTipIntentToken(token));
-      if (!record || record.consumed || record.expired) return null;
-      record.consumed = true;
+      if (!record || record.expired) return null;
+      if (record.consumed) {
+        if (!record.checkout || record.checkout.idempotencyKey !== idempotencyKey) return { state: 'used' as const };
+        return {
+          state: 'completed' as const,
+          orderId: record.checkout.orderId,
+          idempotencyKey: record.checkout.idempotencyKey,
+          channelId: record.channelId,
+          amountPaise: record.amountPaise,
+          currency: 'INR' as const,
+          donorDisplayName: record.donorDisplayName,
+          message: record.message,
+        };
+      }
+      if (record.checkout && record.checkout.idempotencyKey !== idempotencyKey) return { state: 'in_progress' as const };
+      record.checkout ??= { orderId, idempotencyKey };
       return {
+        state: 'reserved' as const,
+        orderId: record.checkout.orderId,
+        idempotencyKey: record.checkout.idempotencyKey,
         channelId: record.channelId,
         amountPaise: record.amountPaise,
         currency: 'INR',
         donorDisplayName: record.donorDisplayName,
         message: record.message,
       };
+    },
+    async completeCheckout(token: string, orderId: string, idempotencyKey: string) {
+      const record = byHash.get(hashTipIntentToken(token));
+      if (!record || record.consumed || !record.checkout || record.checkout.orderId !== orderId || record.checkout.idempotencyKey !== idempotencyKey) return false;
+      record.consumed = true;
+      return true;
     },
   };
   return { repository, byHash };
@@ -187,7 +211,7 @@ test('tamper resistance: a client-supplied amountPaise in the confirm body is re
   const paymentOrders: PaymentOrderService = {
     async createTipOrder(input) {
       createdOrders.push(input);
-      return { schemaVersion: 'v1', orderId: '00000000-0000-4000-8000-000000000099', provider: 'razorpay', providerOrderId: 'order_x', amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+      return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: 'order_x', amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
     },
   };
   const app = await buildTestApp({ tipIntents: repository, paymentOrders });
@@ -222,7 +246,7 @@ test('tamper resistance: a client-supplied amountPaise in the confirm body is re
 
 test('confirm on an already-used token 409s, on an expired token 410s, on an unknown token 404s, and single-use is enforced', async () => {
   const { repository } = fakeTipIntents();
-  const paymentOrders: PaymentOrderService = { async createTipOrder(input) { return { schemaVersion: 'v1', orderId: 'o1', provider: 'razorpay', providerOrderId: 'p1', amountPaise: input.amountPaise, currency: input.currency, status: 'created' }; } };
+  const paymentOrders: PaymentOrderService = { async createTipOrder(input) { return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: 'p1', amountPaise: input.amountPaise, currency: input.currency, status: 'created' }; } };
   const app = await buildTestApp({ tipIntents: repository, paymentOrders });
   const created = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 5000, sourcePlatform: 'youtube' } })).json();
 
@@ -234,6 +258,123 @@ test('confirm on an already-used token 409s, on an expired token 410s, on an unk
 
   const unknown = await app.inject({ method: 'POST', url: '/v1/public/tip-intents/ZZZZZZZZZZ/orders', headers: { 'idempotency-key': 'synthetic-tipintent-single-use-03' }, payload: {} });
   assert.equal(unknown.statusCode, 404);
+  await app.close();
+});
+
+test('a transient payment-order failure leaves the TipIntent ready, and only the original idempotency key can recover its one reservation', async () => {
+  const { repository } = fakeTipIntents();
+  const calls: Array<{ intentId: string; idempotencyKey: string }> = [];
+  let failOnce = true;
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      calls.push({ intentId: input.intentId, idempotencyKey: input.idempotencyKey });
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('synthetic upstream outage');
+      }
+      return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: `order_${input.intentId}`, amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+    },
+  };
+  const app = await buildTestApp({ tipIntents: repository, paymentOrders });
+  const created = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 5000, sourcePlatform: 'youtube' } })).json();
+  const originalKey = 'synthetic-tipintent-recovery-0001';
+
+  const first = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': originalKey }, payload: {} });
+  assert.equal(first.statusCode, 503);
+  assert.equal((await app.inject({ method: 'GET', url: `/v1/public/tip-intents/${created.token}` })).json().state, 'ready');
+
+  const otherKey = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': 'synthetic-tipintent-recovery-0002' }, payload: {} });
+  assert.equal(otherKey.statusCode, 409);
+  assert.equal(otherKey.json().errorCode, 'tip_intent_checkout_in_progress');
+  assert.equal(calls.length, 1, 'a different key must not reach a second payment-order attempt');
+
+  const recovered = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': originalKey }, payload: {} });
+  assert.equal(recovered.statusCode, 201);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.intentId, calls[1]?.intentId, 'retry must retain the reserved local intent id');
+  assert.equal(calls[0]?.idempotencyKey, calls[1]?.idempotencyKey, 'retry must retain the payment-service idempotency key');
+  assert.equal((await app.inject({ method: 'GET', url: `/v1/public/tip-intents/${created.token}` })).json().state, 'used');
+  const replayAfterLostResponse = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': originalKey }, payload: {} });
+  assert.equal(replayAfterLostResponse.statusCode, 201, 'same key can recover a successful order after a lost HTTP response');
+  assert.equal(replayAfterLostResponse.json().orderId, recovered.json().orderId);
+  const wrongKeyAfterCompletion = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': 'synthetic-tipintent-recovery-0003' }, payload: {} });
+  assert.equal(wrongKeyAfterCompletion.statusCode, 409);
+  await app.close();
+});
+
+test('a mismatched payment-service order id does not consume the link and can be recovered with the same reservation', async () => {
+  const { repository } = fakeTipIntents();
+  let mismatchOnce = true;
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      if (mismatchOnce) {
+        mismatchOnce = false;
+        return { schemaVersion: 'v1', orderId: '00000000-0000-4000-8000-000000000099', provider: 'razorpay', providerOrderId: 'order_bad', amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+      }
+      return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: `order_${input.intentId}`, amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+    },
+  };
+  const app = await buildTestApp({ tipIntents: repository, paymentOrders });
+  const created = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 5000, sourcePlatform: 'youtube' } })).json();
+  const key = 'synthetic-tipintent-mismatch-0001';
+  assert.equal((await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': key }, payload: {} })).statusCode, 503);
+  assert.equal((await app.inject({ method: 'GET', url: `/v1/public/tip-intents/${created.token}` })).json().state, 'ready');
+  assert.equal((await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': key }, payload: {} })).statusCode, 201);
+  await app.close();
+});
+
+test('a finalization failure is retryable and never exposes an unrecorded checkout as success', async () => {
+  const { repository } = fakeTipIntents();
+  const actualComplete = repository.completeCheckout.bind(repository);
+  let failCompletionOnce = true;
+  repository.completeCheckout = async (...args) => {
+    if (failCompletionOnce) {
+      failCompletionOnce = false;
+      return false;
+    }
+    return actualComplete(...args);
+  };
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: `order_${input.intentId}`, amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+    },
+  };
+  const app = await buildTestApp({ tipIntents: repository, paymentOrders });
+  const created = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 5000, sourcePlatform: 'youtube' } })).json();
+  const key = 'synthetic-tipintent-finalize-0001';
+  const incomplete = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': key }, payload: {} });
+  assert.equal(incomplete.statusCode, 503);
+  assert.equal((await app.inject({ method: 'GET', url: `/v1/public/tip-intents/${created.token}` })).json().state, 'ready');
+  const retried = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': key }, payload: {} });
+  assert.equal(retried.statusCode, 201);
+  assert.equal((await app.inject({ method: 'GET', url: `/v1/public/tip-intents/${created.token}` })).json().state, 'used');
+  await app.close();
+});
+
+test('concurrent competing keys can reserve at most one TipIntent checkout and dispatch at most one provider call', async () => {
+  const { repository } = fakeTipIntents();
+  let releaseProvider: (() => void) | undefined;
+  let signalProviderStarted: (() => void) | undefined;
+  const providerStarted = new Promise<void>((resolve) => { signalProviderStarted = resolve; });
+  const providerRelease = new Promise<void>((resolve) => { releaseProvider = resolve; });
+  let calls = 0;
+  const paymentOrders: PaymentOrderService = {
+    async createTipOrder(input) {
+      calls += 1;
+      signalProviderStarted?.();
+      await providerRelease;
+      return { schemaVersion: 'v1', orderId: input.intentId, provider: 'razorpay', providerOrderId: `order_${input.intentId}`, amountPaise: input.amountPaise, currency: input.currency, status: 'created' };
+    },
+  };
+  const app = await buildTestApp({ tipIntents: repository, paymentOrders });
+  const created = (await app.inject({ method: 'POST', url: '/v1/public/internal/tip-intents', headers: { 'x-connector-secret': CREATION_SECRET }, payload: { channelId: '00000000-0000-4000-8000-000000000003', amountPaise: 5000, sourcePlatform: 'youtube' } })).json();
+  const first = app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': 'synthetic-tipintent-race-0001' }, payload: {} });
+  await providerStarted;
+  const competing = await app.inject({ method: 'POST', url: `/v1/public/tip-intents/${created.token}/orders`, headers: { 'idempotency-key': 'synthetic-tipintent-race-0002' }, payload: {} });
+  assert.equal(competing.statusCode, 409);
+  assert.equal(calls, 1);
+  releaseProvider?.();
+  assert.equal((await first).statusCode, 201);
   await app.close();
 });
 

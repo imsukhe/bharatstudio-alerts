@@ -1,10 +1,10 @@
 import type { Sql } from 'postgres';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type {
-  ConsumedTipIntent,
   CreateTipIntentInput,
   CreatedTipIntent,
   ResolvedTipIntent,
+  TipIntentCheckoutReservation,
   TipIntentRepository,
 } from '../domain/tipintent-types.js';
 
@@ -17,8 +17,9 @@ import type {
 // Length: 10 symbols => log2(32) * 10 = 50 bits of entropy per token.
 // Lifetime: 30 minutes (set server-side in
 // app_private.create_tip_intent — never trusted from the caller).
-// Single-use: yes — app_private.consume_tip_intent is an atomic
-// SELECT ... FOR UPDATE that can only ever succeed once per token.
+// Single-use: yes — app_private.reserve_tip_intent_checkout and
+// complete_tip_intent_checkout lock the same row: one stable checkout can be
+// retried, but only a matching completed checkout transitions it to used.
 // Brute-force resistance: the token is looked up only through
 // GET /v1/public/tip-intents/:token, which is rate-limited (30/min per
 // caller, see routes/public.ts). At that ceiling, exhausting a 2^50
@@ -58,10 +59,13 @@ type ResolveRow = {
   message: string | null;
   state: 'ready' | 'used' | 'expired';
 };
-type ConsumeRow = {
+type ReserveRow = {
+  state: 'reserved' | 'completed' | 'in_progress' | 'used';
+  order_id: string | null;
+  checkout_idempotency_key: string | null;
   channel_id: string;
-  amount_paise: number;
-  currency: 'INR';
+  amount_paise: number | null;
+  currency: 'INR' | null;
   donor_display_name: string | null;
   message: string | null;
 };
@@ -105,21 +109,36 @@ export function createTipIntentStore(sql: Sql): TipIntentRepository {
       return { state: row.state, channelHandle: row.channel_handle, channelDisplayName: row.channel_display_name };
     },
 
-    async consume(token: string, orderId: string): Promise<ConsumedTipIntent | null> {
+    async reserveCheckout(token: string, idempotencyKey: string, orderId: string): Promise<TipIntentCheckoutReservation | null> {
       const tokenHash = hashTipIntentToken(token);
-      const rows = await sql<ConsumeRow[]>`
-        select channel_id, amount_paise, currency, donor_display_name, message
-          from app_private.consume_tip_intent(${tokenHash}, ${orderId}::uuid)
+      const rows = await sql<ReserveRow[]>`
+        select state, order_id, checkout_idempotency_key, channel_id, amount_paise, currency, donor_display_name, message
+          from app_private.reserve_tip_intent_checkout(${tokenHash}, ${idempotencyKey}, ${orderId}::uuid)
       `;
       const row = rows[0];
       if (!row) return null;
+      if (row.state === 'in_progress' || row.state === 'used') return { state: row.state };
+      if (!row.order_id || !row.checkout_idempotency_key || !row.channel_id || row.amount_paise === null || row.currency !== 'INR') {
+        throw new Error('tip intent checkout reservation returned incomplete data');
+      }
       return {
+        state: row.state,
+        orderId: row.order_id,
+        idempotencyKey: row.checkout_idempotency_key,
         channelId: row.channel_id,
         amountPaise: row.amount_paise,
         currency: row.currency,
         donorDisplayName: row.donor_display_name,
         message: row.message,
       };
+    },
+
+    async completeCheckout(token: string, orderId: string, idempotencyKey: string): Promise<boolean> {
+      const tokenHash = hashTipIntentToken(token);
+      const rows = await sql<{ completed: boolean }[]>`
+        select app_private.complete_tip_intent_checkout(${tokenHash}, ${orderId}::uuid, ${idempotencyKey}) as completed
+      `;
+      return rows[0]?.completed === true;
     },
   };
 }

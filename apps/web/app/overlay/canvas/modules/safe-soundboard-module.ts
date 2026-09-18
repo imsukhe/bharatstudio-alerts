@@ -152,7 +152,10 @@ export function createSafeSoundboardModule(options: SafeSoundboardModuleOptions)
       unsubscribeConnection = undefined;
       fetchToken += 1;
       stopAudio();
-      lastPlayedId = null;
+      // `latestPlay` is a latest-supersedes snapshot, not a consumed queue.
+      // Keep this page instance's de-duplication boundary across an OBS
+      // hide/show: reactivation will re-read the same durable latest play, but
+      // must not replay historical audio merely because rendering paused.
       captionUntilMs = 0;
     },
     // No `dirty` short-circuit, matching the giveaway/tournament card: the

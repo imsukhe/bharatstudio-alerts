@@ -100,6 +100,31 @@ test('two subscribers share exactly one connection attempt — adding a module a
   assert.equal(connection.getSubscriberCount(), 2);
 });
 
+test('a connection-lifecycle subscriber shares the one SSE transport, receives only connection markers, and tears down cleanly', async () => {
+  let fetchCalls = 0;
+  let connectedCalls = 0;
+  const timers = createManualTimers();
+  const connection = createMasterCanvasConnection({
+    overlayId: 'ov1', token: 'tok', apiOrigin: 'https://api.example.test',
+    fetchImpl: neverEndingStreamFetch(() => { fetchCalls += 1; }),
+    setTimeoutImpl: timers.setTimeoutImpl, clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+
+  const unsubscribeLifecycle = connection.subscribeToConnection(() => { connectedCalls += 1; });
+  await flush();
+  assert.equal(fetchCalls, 1, 'bootstrap recovery must use the existing one transport');
+  assert.equal(connectedCalls, 1, 'one successful stream connection yields one retry signal');
+  assert.equal(connection.getSubscriberCount(), 1);
+
+  connection.subscribe(() => {});
+  await flush();
+  assert.equal(fetchCalls, 1, 'adding a snapshot module after bootstrap creates no second SSE fetch');
+  assert.equal(connection.getSubscriberCount(), 2);
+
+  unsubscribeLifecycle();
+  assert.equal(connection.getSubscriberCount(), 1);
+});
+
 test('tearing down the last subscriber closes the stream; a fresh subscribe reopens it (a new connection, not a leaked one)', async () => {
   let calls = 0;
   const timers = createManualTimers();

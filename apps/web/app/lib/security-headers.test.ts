@@ -13,5 +13,7 @@ test('static Alerts deployment ships a browser security-header contract', () => 
   assert.match(headers, /frame-ancestors 'none'/);
   assert.match(headers, /https:\/\/accounts\.google\.com/);
   assert.match(headers, /https:\/\/checkout\.razorpay\.com/);
+  assert.match(headers, /script-src[^\n]*https:\/\/challenges\.cloudflare\.com/);
+  assert.match(headers, /frame-src[^\n]*https:\/\/challenges\.cloudflare\.com/);
   assert.doesNotMatch(headers, /RAZORPAY_KEY_SECRET|DATABASE_URL|NOTIFICATION_TOKEN/);
 });

@@ -619,54 +619,82 @@ export async function registerPublicRoutes(
 
       // Pre-check via the read-only resolve() so a client gets the right
       // human-readable state (used/expired/unknown) instead of a generic
-      // failure when the token cannot be redeemed. The actual claim below
-      // is still atomic and authoritative — this check narrows the error
-      // code, it never widens what consume() is willing to accept.
+      // failure when the token cannot be redeemed. The reservation below is
+      // still atomic and authoritative — this check narrows the error code,
+      // it never widens what reserveCheckout() is willing to accept.
       const preCheck = await tipIntents.resolve(request.params.token);
       if (preCheck.state === 'unknown') {
         return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'This support link does not exist', traceId: request.id });
-      }
-      if (preCheck.state === 'used') {
-        return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'tip_intent_already_used', message: 'This support link has already been used', traceId: request.id });
       }
       if (preCheck.state === 'expired') {
         return reply.code(410).send({ schemaVersion: 'v1', errorCode: 'tip_intent_expired', message: 'This support link has expired', traceId: request.id });
       }
 
-      const intentId = randomUUID();
-      const consumed = await tipIntents.consume(request.params.token, intentId);
-      if (!consumed) {
-        // Lost a race with another request for the same single-use token
-        // between the pre-check above and this atomic claim.
+      const reservation = await tipIntents.reserveCheckout(request.params.token, idempotencyKey, randomUUID());
+      if (!reservation) {
+        // Lost a race with completion/expiry after the read-only pre-check.
+        // Resolve one more time to preserve the public state contract; a
+        // still-ready row would violate the reservation invariant, so fail
+        // closed rather than accidentally issuing another order.
+        const current = await tipIntents.resolve(request.params.token);
+        if (current.state === 'unknown') {
+          return reply.code(404).send({ schemaVersion: 'v1', errorCode: 'not_found', message: 'This support link does not exist', traceId: request.id });
+        }
+        if (current.state === 'expired') {
+          return reply.code(410).send({ schemaVersion: 'v1', errorCode: 'tip_intent_expired', message: 'This support link has expired', traceId: request.id });
+        }
+        if (current.state === 'used') {
+          return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'tip_intent_already_used', message: 'This support link has already been used', traceId: request.id });
+        }
+        logSafeError(request, 'tip_intent_checkout_reservation_invariant_failed', new Error('ready TipIntent could not be reserved'));
+        return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_unavailable', message: 'Secure checkout is temporarily unavailable', traceId: request.id, retryable: true });
+      }
+      if (reservation.state !== 'reserved' && reservation.state !== 'completed') {
+        if (reservation.state === 'in_progress') {
+          // Never route a second idempotency key to a different payment order.
+          // The original in-memory page key can retry its reservation safely.
+          return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'tip_intent_checkout_in_progress', message: 'A secure checkout is already being prepared for this support link', traceId: request.id, retryable: true });
+        }
         return reply.code(409).send({ schemaVersion: 'v1', errorCode: 'tip_intent_already_used', message: 'This support link has already been used', traceId: request.id });
       }
 
-      const providerReceipt = `bsati_${createHash('sha256').update(`${consumed.channelId}:${intentId}`).digest('hex').slice(0, 32)}`;
+      const providerReceipt = `bsati_${createHash('sha256').update(`${reservation.channelId}:${reservation.orderId}`).digest('hex').slice(0, 32)}`;
       const priorAnonymousToken = anonymousTokenFromCookie(request.headers.cookie);
       const issuedAnonymousToken = priorAnonymousToken ? undefined : randomBytes(32).toString('base64url');
       const anonymousIdentityTokenHash = anonymousTokenHash(priorAnonymousToken ?? issuedAnonymousToken!);
       try {
         const result = await razorpayProvider.createPayment({
-          channelId: consumed.channelId,
+          channelId: reservation.channelId,
           environment: paymentEnvironment,
-          idempotencyKey,
-          intentId,
+          idempotencyKey: reservation.idempotencyKey,
+          intentId: reservation.orderId,
           providerReceipt,
-          amountPaise: consumed.amountPaise,
-          currency: consumed.currency,
-          donorDisplayName: consumed.donorDisplayName ?? '',
-          message: consumed.message ?? '',
+          amountPaise: reservation.amountPaise,
+          currency: reservation.currency,
+          donorDisplayName: reservation.donorDisplayName ?? '',
+          message: reservation.message ?? '',
           alertConsent: true,
           anonymousIdentityTokenHash,
           expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         }, request.id);
+        const order = toTipOrder(result);
+        if (order.orderId !== reservation.orderId) {
+          logSafeError(request, 'tip_intent_order_id_mismatch', new Error('payment service returned a different local order id'));
+          return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_unavailable', message: 'Secure checkout is temporarily unavailable', traceId: request.id, retryable: true });
+        }
+        if (reservation.state === 'reserved' && !(await tipIntents.completeCheckout(request.params.token, reservation.orderId, reservation.idempotencyKey))) {
+          // The durable order is intentionally not exposed until the
+          // TipIntent records that exact order as its one use. The retry has
+          // the same reservation/key and will return the same local order.
+          logSafeError(request, 'tip_intent_checkout_completion_failed', new Error('reserved TipIntent could not be completed'));
+          return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_unavailable', message: 'Secure checkout is temporarily unavailable', traceId: request.id, retryable: true });
+        }
         if (issuedAnonymousToken) reply.header('set-cookie', anonymousCookie(issuedAnonymousToken));
-        return reply.code(201).send(toTipOrder(result));
+        return reply.code(201).send(order);
       } catch (error) {
-        // The TipIntent is now consumed but no order exists — the token
-        // cannot be replayed (single-use, by design). Logged for
-        // operator follow-up; see "Remaining open" in the delivery
-        // report for this known tradeoff.
+        // Reservation intentionally remains durable and unconsumed. A retry
+        // with the same key reaches the payment service's existing local
+        // intent/lease; a transient failure can no longer burn a support link.
         logSafeError(request, 'tip_intent_order_creation_failed', error);
         return reply.code(503).send({ schemaVersion: 'v1', errorCode: 'payment_unavailable', message: 'Secure checkout is temporarily unavailable', traceId: request.id, retryable: true });
       }

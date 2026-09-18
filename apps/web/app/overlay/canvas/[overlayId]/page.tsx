@@ -18,12 +18,14 @@
  * reusing the SAME goal endpoint/fetch function the goal ladder uses —
  * no second progress computation (this task's §1(c)).
  *
- * ENTITLEMENT (§30.3, this task's §3): which of the two built modules is
- * actually active for this overlay is read once from the new
- * `/v1/overlay-widgets/:overlayId/master-canvas/modules` endpoint. A
- * module the server does not return is never activated — the runtime
- * never subscribes it to the connection, never fetches its snapshot,
- * never renders it (PRF-02.10). The server, not this page, owns the cap.
+ * ENTITLEMENT (§30.3, this task's §3): which built modules are actually
+ * active for this overlay is read from
+ * `/v1/overlay-widgets/:overlayId/master-canvas/modules`. A bounded
+ * bootstrap reconciler retries only after the same shared SSE transport
+ * (re)connects — never through polling or a second session. A module the
+ * server does not return is never activated — the runtime never subscribes
+ * it to the connection, never fetches its snapshot, never renders it
+ * (PRF-02.10). The server, not this page, owns the cap.
  *
  * KILL SWITCH: this page is additive. Every existing standalone widget
  * route (apps/web/app/overlay/widgets/*) is untouched and fully
@@ -211,14 +213,15 @@
  * PRF-02 SLICE 7, §6 MODULE #14 (VERTICAL STREAM LAYOUT, migration
  * 0147) — A LAYOUT IS NOT A MODULE, so it is NOT one more entry in
  * BUILT_MODULE_KEYS below and NOT one more runtime.registerModule()
- * call. It is a single fetched value (`horizontal` | `vertical`) read
- * ONCE from the new `/v1/overlay-widgets/:overlayId/canvas-layout`
- * endpoint, turned into a class name on THIS page's own root element by
+ * call. It is a server-fetched value (`horizontal` | `vertical`) from
+ * `/v1/overlay-widgets/:overlayId/canvas-layout`, turned into a class
+ * name on THIS page's own root element by
  * `canvasRootClassName` (../modules/canvas-layout-logic.ts). Every
  * module already on this page keeps fetching, subscribing and rendering
  * exactly as it did before this slice — §12.7's "a narrower viewport
  * must not fetch more, subscribe more, or retain more" holds because
- * this slice adds exactly one read and touches no module's data path.
+ * this slice adds no module data path; bounded recovery shares the
+ * existing connection lifecycle and touches no module's data path.
  *
  * THE PRO+ GATE IS SERVER-SIDE (§30.3, 00_LAUNCH_SCOPE_AUTHORITY.md).
  * This page never computes or checks a tier: the endpoint above always
@@ -250,6 +253,8 @@ import { useParams } from 'next/navigation';
 import { getApiOrigin } from '../../../lib/api-origin';
 import { createMasterCanvasConnection } from '../master-canvas-connection';
 import { createDocumentVisibilitySource, createMasterCanvasRuntime } from '../master-canvas-runtime';
+import { createCanvasBootstrapReconciler } from '../canvas-bootstrap-reconciler';
+import { createCanvasBootstrapRecovery } from '../canvas-bootstrap-recovery';
 import { createSupporterTickerModule, type SupporterTickerEntry } from '../modules/supporter-ticker-module';
 import { createGoalLadderModule } from '../modules/goal-ladder-module';
 import { createTugOfWarVoteModule } from '../modules/tug-of-war-vote-module';
@@ -892,46 +897,55 @@ export default function MasterCanvasPage() {
         reducedMotion: reducedMotionPreferred,
       }));
     }
-    (async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
-          headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
-        });
-        if (!response.ok || cancelled) return;
-        const body = await response.json() as { moduleKeys?: unknown };
-        const active = new Set(Array.isArray(body.moduleKeys) ? body.moduleKeys : []);
+    // These two values are server-authoritative Canvas bootstrap state, not
+    // modules themselves. The first read is immediate; later attempts happen
+    // only after the ONE existing SSE connection succeeds/reconnects. That
+    // repairs a transient-startup failure without polling, an extra transport,
+    // or an event-payload subscription for configuration.
+    const bootstrap = createCanvasBootstrapReconciler({
+      async readModules(): Promise<Set<string> | undefined> {
+        try {
+          const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/master-canvas/modules`, {
+            headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+          });
+          if (!response.ok || cancelled) return undefined;
+          const body = await response.json() as { moduleKeys?: unknown };
+          return new Set(Array.isArray(body.moduleKeys) ? body.moduleKeys : []);
+        } catch {
+          return undefined;
+        }
+      },
+      async readLayout(): Promise<CanvasLayout | undefined> {
+        try {
+          const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/canvas-layout`, {
+            headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
+          });
+          if (!response.ok || cancelled) return undefined;
+          const body = await response.json() as { canvasLayout?: unknown };
+          return isCanvasLayoutSnapshot(body.canvasLayout) ? body.canvasLayout.layout : undefined;
+        } catch {
+          return undefined;
+        }
+      },
+      applyModules(active) {
         for (const key of BUILT_MODULE_KEYS) runtime.setModuleEntitled(key, active.has(key));
-      } catch {
-        // Entitlement read failed — both built modules stay un-entitled
-        // (the runtime's own default), never activated. Never guess a
-        // module is active when the server hasn't confirmed it.
-      }
-    })();
-
-    // §6 module #14 (Vertical Stream Layout, migration 0147). ONE read,
-    // outside runtime.registerModule() entirely — a layout is not a
-    // module, so it is never subscribed to the connection and never
-    // counted by getSubscriberCount(). A failed or missing answer keeps
-    // canvasLayout at its 'horizontal' default (set above), never
-    // guessed as vertical.
-    (async () => {
-      try {
-        const response = await fetch(`${apiOrigin}/v1/overlay-widgets/${encodeURIComponent(overlayId)}/canvas-layout`, {
-          headers: { authorization: `Bearer ${token}` }, cache: 'no-store',
-        });
-        if (!response.ok || cancelled) return;
-        const body = await response.json() as { canvasLayout?: unknown };
-        if (isCanvasLayoutSnapshot(body.canvasLayout)) setCanvasLayout(body.canvasLayout.layout);
-      } catch {
-        // Read failed — stays 'horizontal', the same fail-safe posture
-        // every other overlay read on this page already has.
-      }
-    })();
+      },
+      applyLayout(layout) {
+        setCanvasLayout(layout);
+      },
+    });
+    const bootstrapRecovery = createCanvasBootstrapRecovery({
+      connection,
+      reconciler: bootstrap,
+      visibilitySource: createDocumentVisibilitySource(document),
+    });
+    bootstrapRecovery.start();
 
     runtime.start();
 
     return () => {
       cancelled = true;
+      bootstrapRecovery.dispose();
       runtime.stop();
       removeDocumentClasses();
     };
